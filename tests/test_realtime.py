@@ -5,9 +5,6 @@ import websockets
 import json
 import time
 from typing import Dict, Any
-import sys
-import os
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 class TestRealtimeFeatures:
     """Real-time features test"""
@@ -45,13 +42,13 @@ class TestRealtimeFeatures:
             
             # Send a ping
             ping_msg: Dict[str, Any] = {"type": "ping", "ts": time.time()}
-            await websocket.send(str(ping_msg))
+            await websocket.send(json.dumps(ping_msg))
             
             # Wait for pong response
             try:
-                response: str = await asyncio.wait_for(websocket.recv(), timeout=2.0)
-                data: Dict[str, Any] = eval(response)  # Convert string back to dict
-                assert data["type"] == "pong"
+                ws_response = await asyncio.wait_for(websocket.recv(), timeout=2.0)
+                response_data: Dict[str, Any] = json.loads(ws_response)
+                assert response_data["type"] == "pong"
                 print("✅ Ping/pong working correctly")
             except asyncio.TimeoutError:
                 print("❌ No pong response received")
@@ -78,7 +75,7 @@ class TestRealtimeFeatures:
                 "room_id": room_id,
                 "token": "dummy-id-token"
             }
-            await websocket.send(str(hello_msg))
+            await websocket.send(json.dumps(hello_msg))
             
             # Send typing_start
             typing_start_msg: Dict[str, Any] = {
@@ -88,7 +85,7 @@ class TestRealtimeFeatures:
                     "user_name": "Test User"
                 }
             }
-            await websocket.send(str(typing_start_msg))
+            await websocket.send(json.dumps(typing_start_msg))
             
             # Send typing_stop
             typing_stop_msg: Dict[str, Any] = {
@@ -97,7 +94,7 @@ class TestRealtimeFeatures:
                     "user_id": "test-user-1"
                 }
             }
-            await websocket.send(str(typing_stop_msg))
+            await websocket.send(json.dumps(typing_stop_msg))
             
             print("✅ Typing events sent successfully")
     
@@ -107,15 +104,15 @@ class TestRealtimeFeatures:
         async with aiohttp.ClientSession() as session:
             async with session.get('http://127.0.0.1:8000/health/ws') as response:
                 assert response.status == 200
-                data: Dict[str, Any] = await response.json()
+                health_data: Dict[str, Any] = await response.json()
                 
                 # Check required fields
-                assert "active_rooms" in data
-                assert "active_ws_total" in data
-                assert "active_ws_by_room" in data
-                assert "close_code_histogram" in data
+                assert "active_rooms" in health_data
+                assert "active_ws_total" in health_data
+                assert "active_ws_by_room" in health_data
+                assert "close_code_histogram" in health_data
                 
-                print(f"✅ Health WS endpoint working: {data['active_ws_total']} active connections")
+                print(f"✅ Health WS endpoint working: {health_data['active_ws_total']} active connections")
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
