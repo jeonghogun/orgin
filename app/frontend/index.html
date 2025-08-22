@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Origin Project - AI Review Platform</title>
+    <link rel="stylesheet" href="/static/styles/main.css">
+    <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
+</head>
+<body>
+    <div class="split-container">
+        <!-- Left Panel - Main Chat -->
+        <div class="left-panel">
+            <header class="header">
+                <h1>Origin Project</h1>
+                <div class="auth-section">
+                    <button id="login-button" class="login-button">로그인</button>
+                    <button id="logout-button" class="logout-button" style="display: none;">로그아웃</button>
+                    <div id="user-info" class="user-info" style="display: none;">
+                        <img src="" alt="Profile" class="user-avatar">
+                        <span></span>
+                    </div>
+                </div>
+            </header>
+            
+            <div class="chat-container">
+                <div id="messages" class="messages">
+                    <!-- Messages will be dynamically added here -->
+                </div>
+                
+                <div class="input-area">
+                    <textarea 
+                        id="message-input" 
+                        class="message-input" 
+                        placeholder="메시지를 입력하세요... (검토를 시작하려면 '검토' 또는 '리뷰'를 포함하세요)"
+                        rows="3"
+                    ></textarea>
+                    <button id="send-button" class="send-button">전송</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Right Panel - Review Chat -->
+        <div id="review-panel" class="right-panel">
+            <div class="review-panel-header">
+                <h2>검토 채팅방</h2>
+                <div>
+                    <button id="review-export-btn" class="review-export-btn">내보내기</button>
+                    <button id="close-review-panel" class="close-review-panel">닫기</button>
+                </div>
+            </div>
+            
+            <div class="review-chat-container">
+                <div id="review-chat-messages" class="review-chat-messages">
+                    <!-- Review chat messages will be dynamically added here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/9.0.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.0.0/firebase-auth-compat.js"></script>
+    
+    <!-- Application Scripts -->
+    <script src="/static/components/auth.js"></script>
+    <script src="/static/components/chat.js"></script>
+    <script src="/static/components/review-panel.js"></script>
+    
+    <script>
+        // Initialize components when DOM is loaded
+        document.addEventListener('DOMContentLoaded', function() {
+            // Initialize components
+            window.auth = new AuthComponent();
+            window.chat = new ChatComponent();
+            window.reviewPanel = new ReviewPanelComponent();
+            
+            // Create initial room
+            createInitialRoom();
+            
+            // Auto-open review panel if there's a saved review
+            const lastReviewId = localStorage.getItem('lastReviewId');
+            if (lastReviewId) {
+                window.reviewPanel.openReviewPanel(lastReviewId);
+            }
+        });
+        
+        async function createInitialRoom() {
+            try {
+                const response = await window.chat.apiCall('/api/rooms', {
+                    method: 'POST'
+                });
+                
+                if (response.data && response.data.room_id) {
+                    window.chat.setRoomId(response.data.room_id);
+                }
+            } catch (error) {
+                console.error('Failed to create initial room:', error);
+            }
+        }
+    </script>
+</body>
+</html>
+

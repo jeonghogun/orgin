@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+ulid-py
+openai
+python-dotenv
+python-ulid
+pydantic-settings
+tenacity
+slowapi
+firebase-admin
+google-cloud-firestore
