@@ -1,9 +1,8 @@
 import pytest
 import asyncio
 import aiohttp
-import json
 import time
-from typing import Dict, Any
+from typing import List, Tuple, Dict, Any
 import sys
 import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
@@ -23,15 +22,15 @@ class TestUserFlow:
             async with session.post('http://127.0.0.1:8000/api/rooms',
                                   json={'title': '사용자 여정 테스트 룸'}) as response:
                 assert response.status == 200
-                room_data = await response.json()
-                room_id = room_data['room_id']
+                room_data: Dict[str, Any] = await response.json()
+                room_id: str = room_data['room_id']
                 print(f"   ✅ 룸 생성 완료: {room_id} ({time.time() - start_time:.2f}초)")
             
             # 2. 메시지 전송 (인증 토큰 필요)
-            headers = {'Authorization': 'Bearer dummy-id-token'}
+            headers: Dict[str, str] = {'Authorization': 'Bearer dummy-id-token'}
             print("2. 메시지 전송 중...")
             
-            messages = [
+            messages: List[str] = [
                 "안녕하세요! 새로운 프로젝트에 대해 상담받고 싶습니다.",
                 "우리 회사는 AI 기반 교육 플랫폼을 개발하려고 합니다.",
                 "주요 기능은 개인화된 학습 경로, 실시간 피드백, 그리고 게이미피케이션입니다.",
@@ -44,7 +43,7 @@ class TestUserFlow:
                                       json={'role': 'user', 'content': message},
                                       headers=headers) as response:
                     assert response.status == 200
-                    response_data = await response.json()
+                    response_data: Dict[str, Any] = await response.json()
                     print(f"   ✅ 메시지 {i} 전송 완료 ({time.time() - start_time:.2f}초)")
             
             # 3. 대화 기록 확인
@@ -52,13 +51,13 @@ class TestUserFlow:
             start_time = time.time()
             async with session.get(f'http://127.0.0.1:8000/api/rooms/{room_id}/memory') as response:
                 assert response.status == 200
-                memory = await response.json()
+                memory: List[Dict[str, Any]] = await response.json()
                 print(f"   ✅ 대화 기록 {len(memory)}개 조회 완료 ({time.time() - start_time:.2f}초)")
             
             # 4. 리뷰 생성
             print("4. 리뷰 생성 중...")
             start_time = time.time()
-            review_request = {
+            review_request: Dict[str, Any] = {
                 "topic": "AI 기반 교육 플랫폼 개발 프로젝트 검토",
                 "rounds": [
                     {
@@ -87,8 +86,8 @@ class TestUserFlow:
                                   json=review_request,
                                   headers=headers) as response:
                 assert response.status == 200
-                review_data = await response.json()
-                review_id = review_data['review_id']
+                review_data: Dict[str, Any] = await response.json()
+                review_id: str = review_data['review_id']
                 print(f"   ✅ 리뷰 생성 완료: {review_id} ({time.time() - start_time:.2f}초)")
             
             # 5. 리뷰 실행 및 결과 대기
@@ -97,7 +96,7 @@ class TestUserFlow:
             async with session.post(f'http://127.0.0.1:8000/api/reviews/{review_id}/generate',
                                   headers=headers) as response:
                 assert response.status == 200
-                generate_data = await response.json()
+                generate_data: Dict[str, Any] = await response.json()
                 print(f"   ✅ 리뷰 실행 시작 ({time.time() - start_time:.2f}초)")
             
             # 6. 최종 결과 확인
@@ -105,14 +104,14 @@ class TestUserFlow:
             start_time = time.time()
             
             # 결과가 완료될 때까지 대기 (최대 60초)
-            max_wait = 60
-            wait_time = 0
+            max_wait: int = 60
+            wait_time: int = 0
             while wait_time < max_wait:
                 try:
                     async with session.get(f'http://127.0.0.1:8000/api/reviews/{review_id}',
                                           headers=headers) as response:
                         if response.status == 200:
-                            review_status = await response.json()
+                            review_status: Dict[str, Any] = await response.json()
                             if review_status.get('status') == 'completed':
                                 print(f"   ✅ 리뷰 완료! ({time.time() - start_time:.2f}초)")
                                 break
@@ -138,35 +137,36 @@ class TestUserFlow:
             print("\n=== 다중 사용자 시나리오 테스트 ===")
             
             # 여러 사용자가 동시에 룸 생성
-            users = ["user1", "user2", "user3"]
-            rooms = []
+            users: List[str] = ["user1", "user2", "user3"]
+            rooms: List[Tuple[str, str]] = []
             
             print("1. 다중 사용자 룸 생성...")
             for user in users:
-                headers = {'Authorization': f'Bearer dummy-id-token-{user}'}
+                headers: Dict[str, str] = {'Authorization': f'Bearer dummy-id-token-{user}'}
                 async with session.post('http://127.0.0.1:8000/api/rooms',
                                       json={'title': f'{user}의 룸'}) as response:
                     assert response.status == 200
-                    room_data = await response.json()
-                    rooms.append((user, room_data['room_id']))
-                    print(f"   ✅ {user}: 룸 {room_data['room_id']} 생성")
+                    room_data: Dict[str, Any] = await response.json()
+                    room_id: str = room_data['room_id']
+                    rooms.append((user, room_id))
+                    print(f"   ✅ {user}: 룸 {room_id} 생성")
             
             # 동시에 메시지 전송
             print("2. 동시 메시지 전송...")
-            async def send_message(user: str, room_id: str, message: str):
-                headers = {'Authorization': f'Bearer dummy-id-token-{user}'}
+            async def send_message(user: str, room_id: str, message: str) -> bool:
+                headers: Dict[str, str] = {'Authorization': f'Bearer dummy-id-token-{user}'}
                 async with session.post(f'http://127.0.0.1:8000/api/rooms/{room_id}/messages',
                                       json={'role': 'user', 'content': message},
                                       headers=headers) as response:
                     return response.status == 200
             
-            tasks = []
+            tasks: List[asyncio.Task[bool]] = []
             for user, room_id in rooms:
-                task = send_message(user, room_id, f"{user}의 테스트 메시지")
+                task: asyncio.Task[bool] = asyncio.create_task(send_message(user, room_id, f"{user}의 테스트 메시지"))
                 tasks.append(task)
             
-            results = await asyncio.gather(*tasks)
-            success_count = sum(results)
+            results: List[bool] = await asyncio.gather(*tasks)
+            success_count: int = sum(results)
             print(f"   ✅ {success_count}/{len(results)} 메시지 전송 성공")
             
             assert success_count == len(results), "일부 메시지 전송 실패"
@@ -179,7 +179,7 @@ class TestUserFlow:
             
             # 1. 존재하지 않는 룸에 메시지 전송
             print("1. 존재하지 않는 룸 테스트...")
-            headers = {'Authorization': 'Bearer dummy-id-token'}
+            headers: Dict[str, str] = {'Authorization': 'Bearer dummy-id-token'}
             async with session.post('http://127.0.0.1:8000/api/rooms/nonexistent-room/messages',
                                   json={'role': 'user', 'content': '테스트 메시지'},
                                   headers=headers) as response:
@@ -199,8 +199,8 @@ class TestUserFlow:
             async with session.post('http://127.0.0.1:8000/api/rooms',
                                   json={'title': '에러 테스트 룸'}) as response:
                 assert response.status == 200
-                room_data = await response.json()
-                room_id = room_data['room_id']
+                room_data: Dict[str, Any] = await response.json()
+                room_id: str = room_data['room_id']
             
             # 빈 메시지 전송
             async with session.post(f'http://127.0.0.1:8000/api/rooms/{room_id}/messages',
@@ -210,7 +210,7 @@ class TestUserFlow:
                 print("   ✅ 400 에러 정상 처리")
             
             # 4. 너무 긴 메시지
-            long_message = "A" * 1001  # 1000자 초과
+            long_message: str = "A" * 1001  # 1000자 초과
             async with session.post(f'http://127.0.0.1:8000/api/rooms/{room_id}/messages',
                                   json={'role': 'user', 'content': long_message},
                                   headers=headers) as response:
@@ -231,23 +231,25 @@ class TestUserFlow:
             async with session.post('http://127.0.0.1:8000/api/rooms',
                                   json={'title': '부하 테스트 룸'}) as response:
                 assert response.status == 200
-                room_data = await response.json()
-                room_id = room_data['room_id']
+                room_data: Dict[str, Any] = await response.json()
+                room_id: str = room_data['room_id']
             
-            headers = {'Authorization': 'Bearer dummy-id-token'}
+            headers: Dict[str, str] = {'Authorization': 'Bearer dummy-id-token'}
             
             # 20개의 빠른 메시지 전송
-            tasks = []
+            tasks: List[asyncio.Task[aiohttp.ClientResponse]] = []
             for i in range(20):
-                task = session.post(f'http://127.0.0.1:8000/api/rooms/{room_id}/messages',
-                                  json={'role': 'user', 'content': f'부하 테스트 메시지 {i}'},
-                                  headers=headers)
+                task: asyncio.Task[aiohttp.ClientResponse] = asyncio.create_task(
+                    session.post(f'http://127.0.0.1:8000/api/rooms/{room_id}/messages',
+                               json={'role': 'user', 'content': f'부하 테스트 메시지 {i}'},
+                               headers=headers)
+                )
                 tasks.append(task)
             
-            responses = await asyncio.gather(*tasks, return_exceptions=True)
-            success_count = sum(1 for r in responses if not isinstance(r, Exception) and r.status == 200)
+            responses: List[Any] = await asyncio.gather(*tasks, return_exceptions=True)
+            success_count: int = sum(1 for r in responses if not isinstance(r, Exception) and r.status == 200)
             
-            total_time = time.time() - start_time
+            total_time: float = time.time() - start_time
             print(f"   ✅ {success_count}/20 메시지 성공 ({total_time:.2f}초)")
             print(f"   📊 평균 처리 시간: {total_time/20:.2f}초/메시지")
             
@@ -255,16 +257,16 @@ class TestUserFlow:
             print("2. 동시 룸 생성 테스트...")
             start_time = time.time()
             
-            async def create_room(i: int):
+            async def create_room(i: int) -> bool:
                 async with session.post('http://127.0.0.1:8000/api/rooms',
                                       json={'title': f'동시 룸 {i}'}) as response:
                     return response.status == 200
             
-            room_tasks = [create_room(i) for i in range(10)]
-            room_results = await asyncio.gather(*room_tasks)
-            room_success = sum(room_results)
+            room_tasks: List[asyncio.Task[bool]] = [asyncio.create_task(create_room(i)) for i in range(10)]
+            room_results: List[bool] = await asyncio.gather(*room_tasks)
+            room_success: int = sum(room_results)
             
-            room_time = time.time() - start_time
+            room_time: float = time.time() - start_time
             print(f"   ✅ {room_success}/10 룸 생성 성공 ({room_time:.2f}초)")
             
             # 성능 기준 검증
