@@ -4,6 +4,7 @@ import aiohttp
 import websockets
 import json
 import time
+from typing import Dict, Any
 import sys
 import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
@@ -20,14 +21,14 @@ class TestRealtimeFeatures:
             async with session.post('http://127.0.0.1:8000/api/rooms', 
                                   json={'title': 'Realtime Test Room'}) as response:
                 assert response.status == 200
-                room_data = await response.json()
-                room_id = room_data['room_id']
+                room_data: Dict[str, Any] = await response.json()
+                room_id: str = room_data['room_id']
         
         # Connect to WebSocket
-        uri = f"ws://127.0.0.1:8000/ws/rooms/{room_id}"
+        uri: str = f"ws://127.0.0.1:8000/ws/rooms/{room_id}"
         async with websockets.connect(uri) as websocket:
             # Send hello message
-            hello_msg = {
+            hello_msg: Dict[str, Any] = {
                 "type": "hello",
                 "client_id": "test-client-1",
                 "room_id": room_id,
@@ -43,13 +44,13 @@ class TestRealtimeFeatures:
                 print("⚠️ No immediate response received (this is normal)")
             
             # Send a ping
-            ping_msg = {"type": "ping", "ts": time.time()}
-            await websocket.send(json.dumps(ping_msg))
+            ping_msg: Dict[str, Any] = {"type": "ping", "ts": time.time()}
+            await websocket.send(str(ping_msg))
             
             # Wait for pong response
             try:
-                response = await asyncio.wait_for(websocket.recv(), timeout=2.0)
-                data = json.loads(response)
+                response: str = await asyncio.wait_for(websocket.recv(), timeout=2.0)
+                data: Dict[str, Any] = eval(response)  # Convert string back to dict
                 assert data["type"] == "pong"
                 print("✅ Ping/pong working correctly")
             except asyncio.TimeoutError:
@@ -64,39 +65,39 @@ class TestRealtimeFeatures:
             async with session.post('http://127.0.0.1:8000/api/rooms', 
                                   json={'title': 'Typing Test Room'}) as response:
                 assert response.status == 200
-                room_data = await response.json()
-                room_id = room_data['room_id']
+                room_data: Dict[str, Any] = await response.json()
+                room_id: str = room_data['room_id']
         
         # Connect to WebSocket
-        uri = f"ws://127.0.0.1:8000/ws/rooms/{room_id}"
+        uri: str = f"ws://127.0.0.1:8000/ws/rooms/{room_id}"
         async with websockets.connect(uri) as websocket:
             # Send hello
-            hello_msg = {
+            hello_msg: Dict[str, Any] = {
                 "type": "hello",
                 "client_id": "test-client-2",
                 "room_id": room_id,
                 "token": "dummy-id-token"
             }
-            await websocket.send(json.dumps(hello_msg))
+            await websocket.send(str(hello_msg))
             
             # Send typing_start
-            typing_start_msg = {
+            typing_start_msg: Dict[str, Any] = {
                 "type": "typing_start",
                 "payload": {
                     "user_id": "test-user-1",
                     "user_name": "Test User"
                 }
             }
-            await websocket.send(json.dumps(typing_start_msg))
+            await websocket.send(str(typing_start_msg))
             
             # Send typing_stop
-            typing_stop_msg = {
+            typing_stop_msg: Dict[str, Any] = {
                 "type": "typing_stop",
                 "payload": {
                     "user_id": "test-user-1"
                 }
             }
-            await websocket.send(json.dumps(typing_stop_msg))
+            await websocket.send(str(typing_stop_msg))
             
             print("✅ Typing events sent successfully")
     
@@ -106,7 +107,7 @@ class TestRealtimeFeatures:
         async with aiohttp.ClientSession() as session:
             async with session.get('http://127.0.0.1:8000/health/ws') as response:
                 assert response.status == 200
-                data = await response.json()
+                data: Dict[str, Any] = await response.json()
                 
                 # Check required fields
                 assert "active_rooms" in data
@@ -118,6 +119,7 @@ class TestRealtimeFeatures:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
 
 
 
