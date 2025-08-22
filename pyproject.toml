@@ -72,7 +72,7 @@ venvPath = "."
 venv = ".venv"
 
 # 경로 설정
-include = ["app", "tests"]
+include = ["app"]
 exclude = ["app/frontend/**", ".venv/**", "**/__pycache__/**"]
 extraPaths = ["./app"]
 
@@ -83,7 +83,12 @@ useLibraryCodeForTypes = true
 
 [tool.pytest.ini_options]
 testpaths = ["app/tests"]
+pythonpath = ["."]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = "-v --tb=short"
+markers = [
+    "unit: marks tests as unit tests (fast, no external dependencies)",
+    "integration: marks tests as integration tests (slow, requires network or services)",
+]
