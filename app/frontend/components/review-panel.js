@@ -330,3 +330,5 @@ class ReviewPanelComponent {
 // Export for global use
 window.ReviewPanelComponent = ReviewPanelComponent;
 
+
+

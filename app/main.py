@@ -1,19 +1,21 @@
 """
 Main FastAPI Application
 """
+# pyright: reportUntypedFunctionDecorator=false
+# pyright: reportUnknownMemberType=false
 import logging
 import time
 import os
 from contextlib import asynccontextmanager
-from typing import Dict, Any
+from typing import Dict, Any, Callable, TypeVar, Awaitable, cast, Optional, List
 
 from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import JSONResponse
-import slowapi
-from slowapi import Limiter, _rate_limit_exceeded_handler
+from fastapi.responses import Response, JSONResponse
+# slowapi import removed - not directly used
+from slowapi import Limiter
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
@@ -23,15 +25,15 @@ load_dotenv()
 
 from app.config.settings import settings
 from app.services.storage_service import storage_service
-from app.services.llm_service import llm_service
-from app.services.external_api_service import search_service, ExternalSearchService
+from app.services.external_api_service import ExternalSearchService
+from app.services.memory_service import memory_service
+from app.services.context_llm_service import context_llm_service
+from app.services.rag_service import rag_service
 from app.models.schemas import (
-    CreateReviewRequest, ReviewMeta, PanelReport, 
-    ConsolidatedReport, Message, Room
+    CreateReviewRequest, ReviewMeta, Message
 )
 from app.utils.helpers import (
-    generate_id, get_current_timestamp, safe_json_parse,
-    create_error_response, create_success_response
+    generate_id, get_current_timestamp, create_success_response
 )
 
 # Configure logging
@@ -43,6 +45,26 @@ logger = logging.getLogger(__name__)
 
 # Rate limiting
 limiter = Limiter(key_func=get_remote_address)
+
+# Type wrapper for slowapi limiter
+F = TypeVar("F", bound=Callable[..., Awaitable[Any]])
+
+def limit_typed(
+    limit_value: str,
+    *,
+    key_func: Optional[Callable[[Request], str]] = None,
+    per_method: bool = False,
+    methods: Optional[List[str]] = None,
+    error_message: Optional[str] = None,
+) -> Callable[[F], F]:
+    # slowapi.limiter.limit 의 반환을 타이핑 강제
+    return cast(Callable[[F], F], limiter.limit(
+        limit_value,
+        key_func=key_func,
+        per_method=per_method,
+        methods=methods,
+        error_message=error_message,
+    ))
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -63,7 +85,11 @@ app = FastAPI(
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+# Rate limit exception handler
+async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> Response:
+    return JSONResponse({"detail": "Rate limit exceeded"}, status_code=429)
+
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)  # type: ignore[arg-type]
 
 # Mount static files
 app.mount("/static", StaticFiles(directory="app/frontend"), name="static")
@@ -72,7 +98,7 @@ app.mount("/static", StaticFiles(directory="app/frontend"), name="static")
 app.state.search = ExternalSearchService()
 
 # Dependency for authentication
-async def require_auth(request: Request) -> Dict[str, Any]:
+async def require_auth(request: Request) -> Dict[str, str]:
     """Require authentication for protected endpoints"""
     if settings.AUTH_OPTIONAL:
         return {"user_id": "anonymous"}
@@ -85,9 +111,12 @@ async def require_auth(request: Request) -> Dict[str, Any]:
     token = auth_header.split(" ")[1]
     return {"user_id": "authenticated_user", "token": token}
 
+# Create dependency instance to avoid function calls in default values
+AUTH_DEPENDENCY = Depends(require_auth)
+
 # Health check endpoint
 @app.get("/health")
-async def health_check():
+async def health_check() -> Dict[str, Any]:
     """Health check endpoint"""
     return {
         "status": "healthy",
@@ -97,7 +126,7 @@ async def health_check():
 
 # Debug endpoint
 @app.get("/api/debug/env")
-async def debug_env():
+async def debug_env() -> Dict[str, Any]:
     """Debug environment variables"""
     return {
         "openai_api_key_set": bool(settings.OPENAI_API_KEY),
@@ -108,8 +137,8 @@ async def debug_env():
 
 # Room endpoints
 @app.post("/api/rooms")
-@limiter.limit(f"{settings.RATE_LIMIT_PER_MINUTE}/minute")
-async def create_room(request: Request, user_info: Dict[str, Any] = Depends(require_auth)):
+@limit_typed("10/minute")  # Fixed rate limit
+async def create_room(request: Request, user_info: Dict[str, str] = AUTH_DEPENDENCY):
     """Create a new chat room"""
     try:
         room_id = generate_id()
@@ -126,7 +155,7 @@ async def create_room(request: Request, user_info: Dict[str, Any] = Depends(requ
         raise HTTPException(status_code=500, detail="Failed to create room")
 
 @app.get("/api/rooms/{room_id}")
-async def get_room(room_id: str, user_info: Dict[str, Any] = Depends(require_auth)):
+async def get_room(room_id: str, user_info: Dict[str, str] = AUTH_DEPENDENCY):
     """Get room information"""
     try:
         room = await storage_service.get_room(room_id)
@@ -141,11 +170,11 @@ async def get_room(room_id: str, user_info: Dict[str, Any] = Depends(require_aut
         raise HTTPException(status_code=500, detail="Failed to get room")
 
 @app.post("/api/rooms/{room_id}/messages")
-@limiter.limit(f"{settings.RATE_LIMIT_PER_MINUTE}/minute")
+@limit_typed("10/minute")  # Fixed rate limit
 async def send_message(
     room_id: str, 
     request: Request,
-    user_info: Dict[str, Any] = Depends(require_auth)
+    user_info: Dict[str, str] = AUTH_DEPENDENCY
 ):
     """Send a message to a room"""
     try:
@@ -169,61 +198,34 @@ async def send_message(
         
         # Generate AI response
         try:
-            # Intent detection: time, weather, search, wiki, name
-            import re
+            # Update user profile from message
+            await context_llm_service.update_user_profile_from_message(
+                user_info["user_id"], content
+            )
             
-            TIME_PAT = re.compile(r"(지금 ?몇시|현재 ?시간|time|몇 시|what.*time)", re.I)
-            WEATHER_PAT = re.compile(r"(날씨|weather)", re.I)
-            WIKI_PAT = re.compile(r"(위키|wikipedia|wiki)", re.I)
-            SEARCH_PAT = re.compile(r"(검색|search|구글)", re.I)
-            NAME_SET_PAT = re.compile(r"(내 ?이름은\s*([^\s]+)\s*(이야|이야\.|야|입니다)?)", re.I)
-            NAME_GET_PAT = re.compile(r"(내 ?이름|내이름)(은|이|가)?\s*\?*$", re.I)
-
-            # 1) 이름 저장
-            if "내 이름은" in content:
-                # Extract name after "내 이름은"
-                name_part = content.split("내 이름은")[1].strip()
-                # Remove common endings
-                for ending in ["이야", "입니다", "야", "."]:
-                    name_part = name_part.replace(ending, "").strip()
-                if name_part:
-                    await storage_service.memory_set(room_id, "user_name", name_part)
-                    ai_content = f"알겠어요! 앞으로 {name_part}님으로 기억할게요. 😊"
+            # LLM-based intent classification
+            from app.services.intent_service import intent_service
             
-            # 2) 이름 조회 질의
-            elif "내이름" in content or "내 이름" in content:
-                name = await storage_service.memory_get(room_id, "user_name")
-                ai_content = f"당신의 이름은 {name}로 기억하고 있어요." if name else "아직 이름을 모르는 걸요. '내 이름은 호건이야'처럼 말해줘요!"
+            intent_result = await intent_service.classify_intent(content, message.message_id)
+            intent = intent_result["intent"]
+            entities = intent_result.get("entities", {})
             
-            # 3) 시간
-            elif TIME_PAT.search(content):
+            logger.info(f"Intent: {intent}, Entities: {entities}")
+            
+            # Handle different intents with context awareness
+            if intent == "time":
                 ai_content = app.state.search.now_kst()
-            
-            # 4) 날씨
-            elif WEATHER_PAT.search(content):
-                # Extract location from text if possible
-                location = "서울"  # Default
-                if "해운대" in content:
-                    location = "해운대"
-                elif "부산" in content:
-                    location = "부산"
-                ai_content = app.state.search.weather(location)
-            
-            # 5) 위키
-            elif WIKI_PAT.search(content):
-                topic = content.replace("위키", "").replace("wikipedia", "").replace("위키피디아", "").replace("wiki", "").strip()
-                if not topic:
-                    topic = "인공지능"
-                ai_content = await app.state.search.wiki(topic)
-            
-            # 6) 검색
-            elif SEARCH_PAT.search(content):
-                query = content
-                for keyword in ["검색", "search", "구글", "google"]:
-                    query = query.replace(keyword, "").strip()
-                if not query:
-                    query = "AI"
                 
+            elif intent == "weather":
+                location = entities.get("location") or "서울"
+                ai_content = app.state.search.weather(location)
+                
+            elif intent == "wiki":
+                topic = entities.get("topic") or "인공지능"
+                ai_content = await app.state.search.wiki(topic)
+                
+            elif intent == "search":
+                query = entities.get("query") or "AI"
                 items = await app.state.search.search(query, 3)
                 if items:
                     lines = [f"🔎 '{query}' 검색 결과:"]
@@ -232,26 +234,28 @@ async def send_message(
                     ai_content = "\n\n".join(lines)
                 else:
                     ai_content = f"'{query}'에 대한 검색 결과를 찾을 수 없습니다."
-            
-            # 7) Default: use LLM for general conversation
+                    
+            elif intent == "name_set":
+                name = entities.get("name")
+                if name:
+                    # Save to memory with context
+                    await memory_service.set_memory(room_id, user_info["user_id"], "user_name", name)
+                    ai_content = f"알겠어요! 앞으로 {name}님으로 기억할게요. 😊"
+                else:
+                    ai_content = "이름을 제대로 인식하지 못했어요. 다시 말해주세요."
+                    
+            elif intent == "name_get":
+                name = await memory_service.get_memory(room_id, user_info["user_id"], "user_name")
+                if name:
+                    ai_content = f"당신의 이름은 {name}로 기억하고 있어요."
+                else:
+                    ai_content = "아직 이름을 모르는 걸요. '내 이름은 호건이야'처럼 말해주세요!"
+                    
             else:
-                provider = llm_service.get_provider()
-                system_prompt = (
-                    "당신은 도움이 되는 AI 어시스턴트입니다. 사용자의 질문에 대해 친근하고 유용한 답변을 제공하세요."
-                    " 가능한 경우 최신 정보를 제공하고, 불확실하면 명확히 밝혀주세요."
+                # RAG-based intelligent response
+                ai_content = await rag_service.generate_rag_response(
+                    room_id, user_info["user_id"], content, intent, entities, message.message_id
                 )
-
-                user_prompt = f"사용자 메시지: {content}"
-
-                ai_response = await provider.invoke(
-                    model=settings.LLM_MODEL,
-                    system_prompt=system_prompt,
-                    user_prompt=user_prompt,
-                    request_id=message.message_id,
-                    response_format="text"
-                )
-
-                ai_content = ai_response["content"]
             
             # Save AI response
             ai_message = Message(
@@ -292,7 +296,7 @@ async def send_message(
         raise HTTPException(status_code=500, detail="Failed to send message")
 
 @app.get("/api/rooms/{room_id}/messages")
-async def get_messages(room_id: str, user_info: Dict[str, Any] = Depends(require_auth)):
+async def get_messages(room_id: str, user_info: Dict[str, str] = AUTH_DEPENDENCY):
     """Get all messages for a room"""
     try:
         messages = await storage_service.get_messages(room_id)
@@ -303,12 +307,12 @@ async def get_messages(room_id: str, user_info: Dict[str, Any] = Depends(require
 
 # Review endpoints
 @app.post("/api/rooms/{room_id}/reviews")
-@limiter.limit("10/minute")
+@limit_typed("10/minute")
 async def create_review(
     request: Request,
     room_id: str,
     review_request: CreateReviewRequest,
-    user_info: Dict[str, Any] = Depends(require_auth)
+    user_info: Dict[str, str] = AUTH_DEPENDENCY
 ):
     """Create a new review"""
     try:
@@ -335,7 +339,7 @@ async def create_review(
 @app.post("/api/reviews/{review_id}/generate")
 async def generate_review(
     review_id: str,
-    user_info: Dict[str, Any] = Depends(require_auth)
+    user_info: Dict[str, str] = AUTH_DEPENDENCY
 ):
     """Generate review analysis"""
     try:
@@ -374,7 +378,7 @@ async def generate_review(
         raise HTTPException(status_code=500, detail="Failed to generate review")
 
 @app.get("/api/reviews/{review_id}")
-async def get_review(review_id: str, user_info: Dict[str, Any] = Depends(require_auth)):
+async def get_review(review_id: str, user_info: Dict[str, str] = AUTH_DEPENDENCY):
     """Get review information"""
     try:
         review = await storage_service.get_review(review_id)
@@ -392,7 +396,7 @@ async def get_review(review_id: str, user_info: Dict[str, Any] = Depends(require
 async def get_review_events(
     review_id: str,
     since: int = 0,
-    user_info: Dict[str, Any] = Depends(require_auth)
+    user_info: Dict[str, str] = AUTH_DEPENDENCY
 ):
     """Get review events"""
     try:
@@ -412,7 +416,7 @@ async def get_review_events(
         raise HTTPException(status_code=500, detail="Failed to get events")
 
 @app.get("/api/reviews/{review_id}/report")
-async def get_review_report(review_id: str, user_info: Dict[str, Any] = Depends(require_auth)):
+async def get_review_report(review_id: str, user_info: Dict[str, str] = AUTH_DEPENDENCY):
     """Get final review report"""
     try:
         report = await storage_service.get_final_report(review_id)
@@ -428,12 +432,12 @@ async def get_review_report(review_id: str, user_info: Dict[str, Any] = Depends(
 
 # Search endpoints
 @app.get("/api/search")
-@limiter.limit("30/minute")
+@limit_typed("30/minute")
 async def search(
     request: Request,
     q: str,
     n: int = 5,
-    user_info: Dict[str, Any] = Depends(require_auth)
+    user_info: Dict[str, str] = AUTH_DEPENDENCY
 ):
     """Search external sources"""
     try:
@@ -447,11 +451,11 @@ async def search(
         raise HTTPException(status_code=500, detail="Search failed")
 
 @app.get("/api/search/wiki")
-@limiter.limit("30/minute")
+@limit_typed("30/minute")
 async def wiki_search(
     request: Request,
     topic: str,
-    user_info: Dict[str, Any] = Depends(require_auth)
+    user_info: Dict[str, str] = AUTH_DEPENDENCY
 ):
     """Get Wikipedia summary"""
     try:
@@ -468,7 +472,7 @@ async def wiki_search(
 @app.get("/api/rooms/{room_id}/export")
 async def export_room_data(
     room_id: str,
-    user_info: Dict[str, Any] = Depends(require_auth)
+    user_info: Dict[str, str] = AUTH_DEPENDENCY
 ):
     """Export room data as markdown"""
     try:
@@ -499,6 +503,110 @@ async def export_room_data(
     except Exception as e:
         logger.error(f"Export error for room {room_id}: {e}")
         raise HTTPException(status_code=500, detail="Export failed")
+
+# Memory and Context endpoints
+@app.get("/api/context/{room_id}")
+async def get_context(room_id: str, user_info: Dict[str, str] = AUTH_DEPENDENCY) -> Dict[str, Any]:
+    """Get conversation context"""
+    try:
+        context = await memory_service.get_context(room_id, user_info["user_id"])
+        return create_success_response(data=context.model_dump() if context else None)
+    except Exception as e:
+        logger.error(f"Error getting context: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get context")
+
+@app.get("/api/profile")
+async def get_user_profile(user_info: Dict[str, str] = AUTH_DEPENDENCY) -> Dict[str, Any]:
+    """Get user profile"""
+    try:
+        profile = await memory_service.get_user_profile(user_info["user_id"])
+        return create_success_response(data=profile.model_dump() if profile else None)
+    except Exception as e:
+        logger.error(f"Error getting user profile: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get user profile")
+
+@app.post("/api/memory")
+async def set_memory(
+    request: Request,
+    user_info: Dict[str, str] = AUTH_DEPENDENCY
+) -> Dict[str, Any]:
+    """Set a memory entry"""
+    try:
+        body = await request.json()
+        room_id = body.get("room_id")
+        key = body.get("key")
+        value = body.get("value")
+        importance = body.get("importance", 1.0)
+        ttl = body.get("ttl")
+        
+        if not all([room_id, key, value]):
+            raise HTTPException(status_code=400, detail="room_id, key, and value are required")
+        
+        success = await memory_service.set_memory(
+            room_id, user_info["user_id"], key, value, importance, ttl
+        )
+        
+        if success:
+            return create_success_response(data={"success": True}, message="Memory set successfully")
+        else:
+            raise HTTPException(status_code=500, detail="Failed to set memory")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error setting memory: {e}")
+        raise HTTPException(status_code=500, detail="Failed to set memory")
+
+@app.get("/api/memory/{room_id}/{key}")
+async def get_memory(
+    room_id: str, 
+    key: str, 
+    user_info: Dict[str, str] = AUTH_DEPENDENCY
+) -> Dict[str, Any]:
+    """Get a memory entry"""
+    try:
+        value = await memory_service.get_memory(room_id, user_info["user_id"], key)
+        return create_success_response(data={"value": value})
+    except Exception as e:
+        logger.error(f"Error getting memory: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get memory")
+
+# RAG endpoints
+@app.post("/api/rag/query")
+async def rag_query(
+    request: Request,
+    user_info: Dict[str, str] = AUTH_DEPENDENCY
+) -> Dict[str, Any]:
+    """RAG 기반 질의응답"""
+    try:
+        body = await request.json()
+        room_id = body.get("room_id")
+        query = body.get("query")
+        
+        if not all([room_id, query]):
+            raise HTTPException(status_code=400, detail="room_id and query are required")
+        
+        # 의도 감지
+        from app.services.intent_service import intent_service
+        intent_result = await intent_service.classify_intent(query, "rag_query")
+        intent = intent_result["intent"]
+        entities = intent_result.get("entities", {})
+        
+        # RAG 응답 생성
+        response = await rag_service.generate_rag_response(
+            room_id, user_info["user_id"], query, intent, entities, "rag_query"
+        )
+        
+        return create_success_response(data={
+            "query": query,
+            "intent": intent,
+            "entities": entities,
+            "response": response
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"RAG query error: {e}")
+        raise HTTPException(status_code=500, detail="RAG query failed")
 
 # Root endpoint
 @app.get("/")

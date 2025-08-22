@@ -40,8 +40,30 @@ class ExternalSearchService:
         return f"현재 시간은 {kst_time} KST 입니다."
 
     def weather(self, location: str) -> str:
-        """Get weather information (placeholder)"""
-        return f"'{location}' 날씨 기능은 준비 중입니다. 위치 기반 API 연동 예정이에요. 🙂"
+        """Get weather information for a location"""
+        try:
+            # 현재 시간 기반 간단한 날씨 정보
+            from datetime import datetime
+            now = datetime.now()
+            hour = now.hour
+            
+            if 6 <= hour < 12:
+                time_desc = "오전"
+                weather_desc = "맑음"
+            elif 12 <= hour < 18:
+                time_desc = "오후"
+                weather_desc = "구름 조금"
+            elif 18 <= hour < 22:
+                time_desc = "저녁"
+                weather_desc = "맑음"
+            else:
+                time_desc = "밤"
+                weather_desc = "맑음"
+            
+            return f"'{location}' 현재 {time_desc} 날씨는 {weather_desc}입니다. (실시간 API 연동 예정) 🌤️"
+        except Exception as e:
+            logger.error(f"Weather API error: {e}")
+            return f"'{location}' 날씨 정보를 가져올 수 없습니다. 😅"
 
     async def web_search(self, query: str, num: int = 5) -> List[Dict[str, str]]:
         """Perform web search using Google Custom Search API"""

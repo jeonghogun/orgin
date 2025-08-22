@@ -31,3 +31,5 @@ class AuthService:
         """Check if user is authenticated"""
         return user_info is not None and user_info.get("user_id") != "anonymous"
 
+
+
