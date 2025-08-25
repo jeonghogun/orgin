@@ -1,88 +1,101 @@
 """
 Review-related API endpoints
 """
+
 import logging
-from typing import Dict, Any
-from fastapi import APIRouter, HTTPException, Request
+from typing import Dict, Any, List, Optional
+from fastapi import APIRouter, HTTPException, Request, Depends, BackgroundTasks
 
 from app.services.storage_service import storage_service
+from app.services.review_service import review_service
 from app.utils.helpers import generate_id, get_current_timestamp, create_success_response
-from app.models.schemas import CreateReviewRequest, ReviewMeta
+from app.models.schemas import CreateReviewRequest, ReviewMeta, ReviewEvent
+from app.api.dependencies import AUTH_DEPENDENCY
 
 logger = logging.getLogger(__name__)
 
 # Create router
-router = APIRouter(prefix="", tags=["reviews"])
+router = APIRouter(tags=["reviews"])
 
-# Dependency for authentication (will be imported from main)
-auth_dependency: Any = None
 
-def set_auth_dependency(auth_dep: Any) -> None:
-    """Set authentication dependency from main app"""
-    global auth_dependency
-    auth_dependency = auth_dep
-
-@router.post("")
+@router.post("/rooms/{sub_room_id}/reviews", response_model=ReviewMeta)
 async def create_review(
-    request: Request,
-    user_info: Dict[str, str] = auth_dependency
+    sub_room_id: str,
+    review_request: CreateReviewRequest,
+    user_info: Dict[str, str] = AUTH_DEPENDENCY,
 ):
-    """Create a new review"""
+    """Create a new review within a sub-room."""
+    # Verify sub-room exists and belongs to user (simplified check)
+    sub_room = await storage_service.get_room(sub_room_id)
+    if not sub_room or sub_room.owner_id != user_info.get("user_id"):
+        raise HTTPException(status_code=404, detail="Sub-room not found or access denied.")
+    if sub_room.type != "sub":
+        raise HTTPException(status_code=400, detail="Reviews can only be created from sub-rooms.")
+
     try:
-        body = await request.json()
-        review_request = CreateReviewRequest(**body)
-        
-        # Generate review ID
         review_id = generate_id()
-        
-        # Create review metadata
         review_meta = ReviewMeta(
             review_id=review_id,
-            room_id=review_request.topic,  # Using topic as room_id for now
+            room_id=sub_room_id,  # The review is associated with the sub-room
             topic=review_request.topic,
+            instruction=review_request.instruction, # Storing instruction
             status="in_progress",
-            total_rounds=len(review_request.rounds),
+            total_rounds=3,  # Hardcoded as per spec
             current_round=0,
-            created_at=get_current_timestamp()
+            created_at=get_current_timestamp(),
         )
-        
-        # Save review metadata
         await storage_service.save_review_meta(review_meta)
-        
-        return create_success_response(
-            data={"review_id": review_id},
-            message="Review created successfully"
-        )
+        return review_meta
     except Exception as e:
-        logger.error(f"Error creating review: {e}")
+        logger.error(f"Error creating review: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to create review")
 
-@router.get("/{review_id}")
-async def get_review(review_id: str, user_info: Dict[str, str] = auth_dependency):
-    """Get review information"""
-    try:
-        review = await storage_service.get_review_meta(review_id)
-        if not review:
-            raise HTTPException(status_code=404, detail="Review not found")
-        
-        return create_success_response(data=review.model_dump())
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting review {review_id}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to get review")
+@router.post("/reviews/{review_id}/generate")
+async def generate_review(
+    review_id: str,
+    background_tasks: BackgroundTasks,
+    user_info: Dict[str, str] = AUTH_DEPENDENCY,
+):
+    """Trigger the multi-agent review process."""
+    review = await storage_service.get_review_meta(review_id)
+    if not review:
+        raise HTTPException(status_code=404, detail="Review not found")
 
-@router.get("/{review_id}/report")
-async def get_review_report(review_id: str, user_info: Dict[str, str] = auth_dependency):
-    """Get review report"""
-    try:
-        report = await storage_service.get_consolidated_report(review_id)
-        if not report:
-            raise HTTPException(status_code=404, detail="Report not found")
-        
-        return create_success_response(data=report.model_dump())
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting report for review {review_id}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to get report")
+    # Optional: Check if user has permission for this review
+
+    background_tasks.add_task(review_service.execute_review, review_id)
+
+    return create_success_response(
+        data={"review_id": review_id, "status": "processing_started"},
+        message="Review generation has been started in the background.",
+    )
+
+@router.get("/reviews/{review_id}", response_model=ReviewMeta)
+async def get_review(review_id: str, user_info: Dict[str, str] = AUTH_DEPENDENCY):
+    """Get review information"""
+    review = await storage_service.get_review_meta(review_id)
+    if not review:
+        raise HTTPException(status_code=404, detail="Review not found")
+    return review
+
+@router.get("/reviews/{review_id}/events", response_model=List[ReviewEvent])
+async def get_review_events(
+    review_id: str,
+    since: Optional[int] = None,
+    user_info: Dict[str, str] = AUTH_DEPENDENCY,
+):
+    """Get review progress events."""
+    events_data = await storage_service.get_review_events(review_id, since)
+    return [ReviewEvent(**event) for event in events_data]
+
+@router.get("/reviews/{review_id}/report")
+async def get_review_report(
+    review_id: str, user_info: Dict[str, str] = AUTH_DEPENDENCY
+):
+    """Get the final consolidated review report."""
+    report = await storage_service.get_final_report(review_id)
+    if not report:
+        raise HTTPException(
+            status_code=404, detail="Report not found. It may still be generating."
+        )
+    return create_success_response(data=report)

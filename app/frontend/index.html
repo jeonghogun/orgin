@@ -23,16 +23,30 @@
                 </div>
             </header>
             
+            <div id="room-list-container" class="room-list-container">
+                <h3>Rooms</h3>
+                <div id="room-list">
+                    <!-- Room list will be dynamically added here -->
+                </div>
+            </div>
+
             <div class="chat-container">
                 <div id="messages" class="messages">
                     <!-- Messages will be dynamically added here -->
                 </div>
                 
+                <div class="chat-header">
+                    <button id="start-review-btn" style="display: none;">Start Review</button>
+                </div>
+                <div id="messages" class="messages">
+                    <!-- Messages will be dynamically added here -->
+                </div>
+
                 <div class="input-area">
                     <textarea 
                         id="message-input" 
                         class="message-input" 
-                        placeholder="메시지를 입력하세요... (검토를 시작하려면 '검토' 또는 '리뷰'를 포함하세요)"
+                        placeholder="메시지를 입력하세요..."
                         rows="3"
                     ></textarea>
                     <button id="send-button" class="send-button">전송</button>
@@ -43,16 +57,28 @@
         <!-- Right Panel - Review Chat -->
         <div id="review-panel" class="right-panel">
             <div class="review-panel-header">
-                <h2>검토 채팅방</h2>
+                <h2>Review</h2>
+                <div class="review-panel-tabs">
+                    <button class="tab-button active" data-tab="progress">Progress Log</button>
+                    <button class="tab-button" data-tab="report">Final Report</button>
+                </div>
                 <div>
-                    <button id="review-export-btn" class="review-export-btn">내보내기</button>
-                    <button id="close-review-panel" class="close-review-panel">닫기</button>
+                    <button id="review-export-btn" class="review-export-btn">Export</button>
+                    <button id="close-review-panel" class="close-review-panel">Close</button>
                 </div>
             </div>
             
-            <div class="review-chat-container">
-                <div id="review-chat-messages" class="review-chat-messages">
-                    <!-- Review chat messages will be dynamically added here -->
+            <div id="review-progress-tab" class="review-tab-content active">
+                <div class="review-chat-container">
+                    <div id="review-chat-messages" class="review-chat-messages">
+                        <!-- Review chat messages will be dynamically added here -->
+                    </div>
+                </div>
+            </div>
+
+            <div id="review-report-tab" class="review-tab-content">
+                <div id="final-report-content" class="final-report-content">
+                    <!-- Final report will be rendered here -->
                 </div>
             </div>
         </div>
@@ -75,8 +101,8 @@
             window.chat = new ChatComponent();
             window.reviewPanel = new ReviewPanelComponent();
             
-            // Create initial room
-            createInitialRoom();
+            // Initialize the chat component and room list
+            window.chat.initialize();
             
             // Auto-open review panel if there's a saved review
             const lastReviewId = localStorage.getItem('lastReviewId');
@@ -84,20 +110,6 @@
                 window.reviewPanel.openReviewPanel(lastReviewId);
             }
         });
-        
-        async function createInitialRoom() {
-            try {
-                const response = await window.chat.apiCall('/api/rooms', {
-                    method: 'POST'
-                });
-                
-                if (response.data && response.data.room_id) {
-                    window.chat.setRoomId(response.data.room_id);
-                }
-            } catch (error) {
-                console.error('Failed to create initial room:', error);
-            }
-        }
     </script>
 </body>
 </html>

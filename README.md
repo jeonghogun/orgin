@@ -4,6 +4,11 @@ AI 기반 다중 라운드 검토 및 분석 플랫폼
 
 ## 🚀 주요 개선사항 (v2.0.0)
 
+### 🌟 신규 기능: AI 다중 에이전트 검토 시스템
+- **Main/Sub/Review 룸 계층 구조**: 사용자의 메인 룸 아래에 프로젝트별 서브 룸을, 서브 룸 아래에 특정 주제에 대한 검토 룸을 생성하여 체계적인 컨텍스트 관리.
+- **3-라운드 AI 토론**: 3개의 다른 AI(GPT, Gemini, Claude)가 독립적으로 의견을 제시(1라운드)하고, 서로의 의견을 비평하며 자신의 관점을 발전시킨 후(2라운드), 최종 결론을 도출(3라운드)하는 심층 분석 프로세스.
+- **자동화된 최종 보고서**: 3명의 AI가 도출한 최종 결론을 종합하여 실행 가능한 최종 보고서를 자동으로 생성하고 내보내기.
+
 ### 🧠 AI 지능화 (Phase 4-6.5)
 - **LLM 기반 의도 감지**: 자연어로 사용자 의도를 정확히 파악
 - **맥락 메모리 시스템**: 대화의 연속성을 보장하는 지능적 메모리
@@ -12,35 +17,31 @@ AI 기반 다중 라운드 검토 및 분석 플랫폼
 
 ### 📁 프로젝트 구조 개선
 - **모듈화된 아키텍처**: 백엔드와 프론트엔드를 명확히 분리
-- **서비스 지향 설계**: 각 기능별로 독립적인 서비스 모듈
-- **일관된 네이밍**: 변수, 함수, 컴포넌트 이름 통일
-- **중복 코드 제거**: 공통 로직을 유틸리티로 통합
+- **서비스 지향 설계**: 각 기능별로 독립적인 서비스 모듈 (`review_service` 추가)
+- **API 종속성 관리**: `app/api/dependencies.py`를 통해 API 종속성을 중앙에서 관리
+- **테스트 디렉토리 통합**: `tests/`로 테스트 구조를 일원화하여 명확성 증진
 
 ### 🔧 기술적 개선
 - **통합 설정 관리**: 모든 환경 변수를 중앙화된 설정으로 관리
 - **데이터 모델 통합**: Pydantic 스키마를 통한 일관된 데이터 검증
 - **저장소 추상화**: 파일 시스템과 Firebase를 통합 인터페이스로 관리
 - **LLM 서비스 통합**: 다양한 AI 제공자를 통합된 인터페이스로 관리
-- **Pyright 타입 안전성**: 모든 타입 경고 제거 및 코드 품질 향상
-
-### 🎨 UI/UX 개선
-- **컴포넌트 기반 프론트엔드**: 재사용 가능한 JavaScript 컴포넌트
-- **모듈화된 CSS**: 기능별로 분리된 스타일시트
-- **반응형 디자인**: 모바일 친화적인 레이아웃
-- **실시간 채팅 UI**: AI 간 대화를 자연스럽게 표시
 
 ## 📋 기능
 
 ### 🤖 AI 다중 라운드 검토
-- **라운드별 분석**: Critic → Optimist → Synthesizer 순서로 진행
-- **실시간 대화**: AI들이 실제로 토론하는 것처럼 표시
-- **최종 종합 보고서**: Consolidator가 모든 의견을 종합
+- **3-라운드 심층 분석**:
+  - **1라운드**: 3개의 AI(GPT, Gemini, Claude)가 독립적으로 의견 제시.
+  - **2라운드**: 각 AI가 1라운드의 모든 의견을 확인하고 자신의 관점을 비평 및 보완.
+  - **3라운드**: 각 AI가 2라운드까지의 토론을 바탕으로 최종 결론 작성.
+- **실시간 대화**: AI들이 실제로 토론하는 것처럼 표시 (이벤트 기반 API 제공).
+- **최종 종합 보고서**: 3개의 최종 결론을 종합하여 실행 가능한 보고서 자동 생성 및 내보내기.
 
 ### 💬 지능형 대화 시스템
+- **계층적 룸 구조**: Main Room → Sub Room → Review Room으로 컨텍스트가 상속되는 구조.
 - **맥락 인식 대화**: 이전 대화를 기억하고 연속성 보장
 - **개인화된 응답**: 사용자 이름과 선호도를 고려한 맞춤형 응답
 - **의도 기반 분기**: 시간, 날씨, 검색, 위키 등 다양한 기능 자동 분기
-- **실시간 채팅**: 메인 채팅방 및 검토 채팅방 지원
 
 ### 🔍 지능형 검색 및 정보 통합
 - **Context-Aware 검색**: 이전 대화 맥락을 고려한 지능적 검색
@@ -63,35 +64,27 @@ AI 기반 다중 라운드 검토 및 분석 플랫폼
 
 ```
 app/
-├── config/                 # 설정 관리
-│   └── settings.py        # 환경 변수 및 설정
+├── api/                   # API 라우터
+│   ├── dependencies.py    # 공통 API 종속성
+│   └── routes/
+├── config/                # 설정 관리
+│   └── settings.py
 ├── models/                # 데이터 모델
-│   ├── schemas.py         # Pydantic 스키마
-│   └── memory_schemas.py  # 메모리 관련 스키마
+│   ├── schemas.py
+│   └── memory_schemas.py
 ├── services/              # 비즈니스 로직
-│   ├── llm_service.py     # LLM 통합 서비스
-│   ├── intent_service.py  # 의도 감지 서비스
-│   ├── memory_service.py  # 맥락 메모리 서비스
-│   ├── context_llm_service.py # 맥락 기반 LLM 서비스
-│   ├── rag_service.py     # RAG 통합 서비스
-│   ├── storage_service.py # 데이터 저장소
-│   ├── firebase_service.py # Firebase 연동
-│   └── external_api_service.py # 외부 API
+│   ├── llm_service.py
+│   ├── review_service.py  # 신규 리뷰 서비스
+│   ├── storage_service.py
+│   └── ...
 ├── utils/                 # 유틸리티
-│   └── helpers.py         # 공통 헬퍼 함수
+│   └── helpers.py
 ├── frontend/              # 프론트엔드
-│   ├── components/        # JavaScript 컴포넌트
-│   │   ├── auth.js        # 인증 컴포넌트
-│   │   ├── chat.js        # 채팅 컴포넌트
-│   │   └── review-panel.js # 리뷰 패널 컴포넌트
-│   ├── styles/            # CSS 스타일
-│   │   └── main.css       # 메인 스타일시트
-│   └── index.html         # 메인 HTML
-├── tests/                 # 테스트
-│   ├── unit/              # 단위 테스트
-│   └── integration/       # 통합 테스트
-├── docs/                  # 문서
-└── main.py               # FastAPI 애플리케이션
+│   └── ...
+└── main.py                # FastAPI 애플리케이션
+tests/                     # 통합 테스트 디렉토리
+├── unit/                  # 단위 테스트
+└── integration/           # 통합 테스트
 ```
 
 ## 📚 문서
@@ -125,10 +118,8 @@ GOOGLE_CSE_ID=your_custom_search_engine_id
 
 ### 3. 애플리케이션 실행
 ```bash
-# 개발 모드 실행
-python app/main.py
-
-# 또는 uvicorn 직접 실행
+# 개발 모드 실행 (PYTHONPATH 설정 필수)
+export PYTHONPATH=$PWD
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
@@ -166,49 +157,47 @@ http://127.0.0.1:8000/redoc # ReDoc
 ### 1. 지능형 대화
 - 메인 채팅창에 자연어로 메시지 입력
 - AI가 의도를 파악하고 맥락을 고려한 응답 생성
-- 시간, 날씨, 검색, 위키 등 다양한 기능 자동 분기
 
-### 2. 맥락 인식 대화
-- 이전 대화 내용을 기억하고 연속성 보장
-- 사용자 이름과 선호도를 고려한 개인화된 응답
-- 같은 주제에 대한 후속 질문도 맥락 유지
+### 2. 검토 시작
+- Sub Room에서 검토 시작 API 호출
+- 예: `POST /api/rooms/{sub_room_id}/reviews`
+- Body: `{ "topic": "AI의 미래", "instruction": "장단점을 분석해줘" }`
 
-### 3. 검토 시작
-- 메시지에 "검토", "리뷰", "토론" 포함
-- 예: "AI의 미래에 대해 검토해주세요"
-- 우측 패널에 검토 채팅방 자동 열림
-
-### 4. 검토 과정 관찰
-- 라운드별로 AI 패널들이 순차적으로 발언
-- 각 AI의 의견을 실시간으로 확인
+### 3. 검토 과정 관찰
+- `POST /api/reviews/{review_id}/generate`를 호출하여 리뷰 프로세스 시작
+- `GET /api/reviews/{review_id}/events`를 폴링하여 라운드별 AI 패널 발언 실시간 확인
 - 최종 종합 보고서 자동 생성
 
-### 5. 결과 내보내기
-- 검토 완료 후 "내보내기" 버튼 클릭
+### 4. 결과 내보내기
+- `GET /api/reviews/{review_id}/report`로 최종 보고서 확인
+- "내보내기" 버튼 클릭
 - Markdown 형식으로 다운로드
 
 ## 🧪 테스트
 
+### 전체 테스트 실행
+```bash
+# PYTHONPATH 설정이 필수적입니다.
+export PYTHONPATH=$PWD
+pytest tests/
+```
+
 ### 단위 테스트
 ```bash
-pytest app/tests/unit/
+export PYTHONPATH=$PWD
+pytest tests/unit/
 ```
 
 ### 통합 테스트
 ```bash
-pytest app/tests/integration/
-```
-
-### 전체 테스트
-```bash
-pytest app/tests/
+export PYTHONPATH=$PWD
+pytest tests/integration/
 ```
 
 ## 📊 성능 최적화
 
 ### 백엔드
 - **비동기 처리**: FastAPI의 비동기 특성 활용
-- **캐싱**: Redis를 통한 응답 캐싱
 - **압축**: GZip 미들웨어로 응답 압축
 - **속도 제한**: API 요청 속도 제한
 

@@ -5,7 +5,7 @@ def test_message_dedupe_by_id():
     shown: Set[str] = set()
 
     def should_append(msg: Dict[str, Any]) -> bool:
-        mid: str = msg.get('message_id', '')
+        mid: str = msg.get("message_id", "")
         if mid and mid in shown:
             return False
         if mid:
@@ -19,8 +19,3 @@ def test_message_dedupe_by_id():
     assert should_append(m1) is True
     assert should_append(m2) is False
     assert should_append(m3) is True
-
-
-
-
-
