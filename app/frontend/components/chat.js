@@ -122,10 +122,12 @@ class ChatComponent {
                 body: JSON.stringify({ content })
             });
             
-            // Handle response structure: {data: {ai_response: "..."}, error: false, message: "..."}
+            // Handle response structure: {data: {ai_response: {...}}, error: false, message: "..."}
             const aiResponse = response.data?.ai_response;
             if (aiResponse) {
-                this.addMessage('ai', aiResponse);
+                // Extract content from ai_response object
+                const aiContent = aiResponse.content || aiResponse;
+                this.addMessage('ai', aiContent);
             }
         } catch (error) {
             console.error('AI response failed:', error);
@@ -180,7 +182,9 @@ class ChatComponent {
             
             if (Array.isArray(messages)) {
                 messages.forEach(msg => {
-                    this.addMessage(msg.role, msg.content, new Date(msg.timestamp * 1000).toLocaleTimeString());
+                    const content = msg.content || msg;
+                    const timestamp = msg.timestamp ? new Date(msg.timestamp * 1000).toLocaleTimeString() : null;
+                    this.addMessage(msg.role || 'user', content, timestamp);
                 });
             } else {
                 console.warn('Messages is not an array:', messages);

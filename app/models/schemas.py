@@ -48,7 +48,7 @@ class CreateReviewRequest(BaseModel):
 
 class ReviewMeta(BaseModel):
     """Review metadata"""
-    model_config = ConfigDict(exclude_none=True)
+    model_config = ConfigDict()
     
     review_id: str
     room_id: str
@@ -133,6 +133,8 @@ class ExportData(BaseModel):
     reviews: List[Dict[str, Any]]
     export_timestamp: int
     format: Literal["markdown", "json"] = "markdown"
+
+
 
 
 
