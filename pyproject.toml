@@ -68,8 +68,8 @@ reportImplicitStringConcatenation = true
 reportUndefinedVariable = true
 
 # 워크스페이스/가상환경
-venvPath = "."
-venv = ".venv"
+# venvPath = "."
+# venv = ".venv"
 
 # 경로 설정
 include = ["app", "tests"]
@@ -82,8 +82,12 @@ pythonPlatform = "Darwin"
 useLibraryCodeForTypes = true
 
 [tool.pytest.ini_options]
-testpaths = ["app/tests"]
+testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = "-v --tb=short"
+asyncio_mode = "auto"
+markers = [
+    "asyncio: mark a test as being asyncio-driven.",
+]
