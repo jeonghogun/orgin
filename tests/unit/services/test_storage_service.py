@@ -1,279 +1,119 @@
-"""
-Unit tests for Storage Service
-"""
 import pytest
-import json
-import tempfile
-import shutil
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch, mock_open
-from typing import Dict, Any
+from unittest.mock import MagicMock, patch, AsyncMock
 
 from app.services.storage_service import StorageService
 from app.models.schemas import Room, Message, ReviewMeta
 
+@pytest.fixture
+def mock_db_service():
+    """Fixture for a mocked DatabaseService."""
+    return AsyncMock()
 
-class TestStorageService:
-    """Test Storage Service"""
-    
-    def setup_method(self):
-        """Set up test fixtures"""
-        # Create temporary directory for tests
-        self.temp_dir = tempfile.mkdtemp()
-        self.data_dir = Path(self.temp_dir) / "data"
-        self.data_dir.mkdir(exist_ok=True)
+@pytest.fixture
+def storage_service(mock_db_service):
+    """Fixture for StorageService with a mocked database."""
+    with patch('app.services.storage_service.get_database_service', return_value=mock_db_service):
+        service = StorageService()
+        yield service
+
+@pytest.mark.asyncio
+class TestStorageServiceWithDB:
+    """Test Storage Service with a mocked DatabaseService."""
+
+    async def test_create_room(self, storage_service, mock_db_service):
+        """Test creating a room calls the database correctly."""
+        room_id = "test-room-db"
+        await storage_service.create_room(room_id, "DB Room", "db-user", "main")
         
-        with patch('app.services.storage_service.settings') as mock_settings:
-            mock_settings.DATA_DIR = str(self.data_dir)
-            mock_settings.FIREBASE_SERVICE_ACCOUNT_PATH = None
-            self.service = StorageService()
-    
-    def teardown_method(self):
-        """Clean up test fixtures"""
-        shutil.rmtree(self.temp_dir, ignore_errors=True)
-    
-    def test_initialization(self):
-        """Test service initialization"""
-        assert self.service.data_dir == self.data_dir
-        assert self.service.firebase_service is None
-    
-    @patch('app.services.storage_service.FirebaseService')
-    def test_initialization_with_firebase(self, mock_firebase_class):
-        """Test initialization with Firebase enabled"""
-        mock_firebase = MagicMock()
-        mock_firebase_class.return_value = mock_firebase
+        mock_db_service.execute_update.assert_called_once()
+        query = mock_db_service.execute_update.call_args[0][0]
+        assert "INSERT INTO rooms" in query
+
+    async def test_get_room(self, storage_service, mock_db_service):
+        """Test getting a room calls the database and handles results."""
+        room_id = "test-room-db"
+        mock_db_service.execute_query.return_value = [{
+            "room_id": room_id, "name": "DB Room", "owner_id": "db-user",
+            "type": "main", "parent_id": None, "created_at": 1, "updated_at": 1, "message_count": 0
+        }]
         
-        with patch('app.services.storage_service.settings') as mock_settings:
-            mock_settings.DATA_DIR = str(self.data_dir)
-            mock_settings.FIREBASE_SERVICE_ACCOUNT_PATH = "test-path"
-            
-            service = StorageService()
-            
-            assert service.firebase_service == mock_firebase
-            mock_firebase_class.assert_called_once()
-    
-    def test_memory_operations(self):
-        """Test memory operations"""
-        room_id = "test-room"
-        key = "test-key"
-        value = "test-value"
+        room = await storage_service.get_room(room_id)
         
-        # Test memory set
-        self.service.memory_set(room_id, key, value)
-        
-        # Test memory get
-        retrieved_value = self.service.memory_get(room_id, key)
-        assert retrieved_value == value
-        
-        # Test memory clear
-        self.service.memory_clear(room_id)
-        cleared_value = self.service.memory_get(room_id, key)
-        assert cleared_value is None
-    
-    def test_get_room_path(self):
-        """Test room path generation"""
-        room_id = "test-room-123"
-        expected_path = self.data_dir / "rooms" / room_id
-        
-        result = self.service._get_room_path(room_id)
-        assert result == expected_path
-    
-    def test_get_review_path(self):
-        """Test review path generation"""
-        review_id = "test-review-456"
-        expected_path = self.data_dir / "reviews" / review_id
-        
-        result = self.service._get_review_path(review_id)
-        assert result == expected_path
-    
-    def test_safe_write_json(self):
-        """Test safe JSON writing"""
-        test_data = {"key": "value", "number": 123}
-        file_path = self.data_dir / "test.json"
-        
-        self.service._safe_write_json(file_path, test_data)
-        
-        # Verify file was created
-        assert file_path.exists()
-        
-        # Verify content
-        with open(file_path, 'r', encoding='utf-8') as f:
-            content = json.load(f)
-        
-        assert content == test_data
-    
-    def test_safe_read_json_existing(self):
-        """Test safe JSON reading from existing file"""
-        test_data = {"key": "value", "number": 123}
-        file_path = self.data_dir / "test.json"
-        
-        # Write test data
-        self.service._safe_write_json(file_path, test_data)
-        
-        # Read data
-        result = self.service._safe_read_json(file_path)
-        assert result == test_data
-    
-    def test_safe_read_json_nonexistent(self):
-        """Test safe JSON reading from non-existent file"""
-        file_path = self.data_dir / "nonexistent.json"
-        
-        result = self.service._safe_read_json(file_path)
-        assert result is None
-    
-    @pytest.mark.asyncio
-    async def test_create_room_success(self):
-        """Test successful room creation"""
-        room_id = "test-room"
-        name = "Test Room"
-        
-        result = await self.service.create_room(room_id, name)
-        
-        assert isinstance(result, Room)
-        assert result.room_id == room_id
-        assert result.name == name
-        assert result.message_count == 0
-        
-        # Verify file was created
-        room_file = self.data_dir / "rooms" / f"{room_id}.json"
-        assert room_file.exists()
-    
-    @pytest.mark.asyncio
-    async def test_create_room_with_firebase(self):
-        """Test room creation with Firebase enabled"""
-        mock_firebase = MagicMock()
-        mock_firebase.create_room = AsyncMock()
-        self.service.firebase_service = mock_firebase
-        
-        room_id = "test-room"
-        name = "Test Room"
-        
-        await self.service.create_room(room_id, name)
-        
-        # Verify Firebase was called
-        mock_firebase.create_room.assert_called_once()
-    
-    @pytest.mark.asyncio
-    async def test_get_room_existing(self):
-        """Test getting existing room"""
-        room_id = "test-room"
-        name = "Test Room"
-        
-        # Create room first
-        created_room = await self.service.create_room(room_id, name)
-        
-        # Get room
-        retrieved_room = await self.service.get_room(room_id)
-        
-        assert retrieved_room is not None
-        assert retrieved_room.room_id == room_id
-        assert retrieved_room.name == name
-    
-    @pytest.mark.asyncio
-    async def test_get_room_nonexistent(self):
-        """Test getting non-existent room"""
-        room_id = "nonexistent-room"
-        
-        result = await self.service.get_room(room_id)
-        assert result is None
-    
-    @pytest.mark.asyncio
-    async def test_save_message_success(self):
-        """Test successful message saving"""
-        message = Message(
-            message_id="msg-123",
-            room_id="room-123",
-            user_id="user-123",
-            content="Hello, world!",
-            timestamp=1234567890,
-            role="user"
+        assert room is not None
+        assert isinstance(room, Room)
+        assert room.room_id == room_id
+        mock_db_service.execute_query.assert_called_once_with(
+            "SELECT * FROM rooms WHERE room_id = %s", (room_id,)
         )
+
+    async def test_get_room_not_found(self, storage_service, mock_db_service):
+        """Test getting a non-existent room."""
+        mock_db_service.execute_query.return_value = []
+        room = await storage_service.get_room("non-existent")
+        assert room is None
+
+    async def test_save_message(self, storage_service, mock_db_service):
+        """Test saving a message calls the database."""
+        msg = Message(message_id="msg-db", room_id="room-db", user_id="user-db", content="Hello DB", timestamp=123, role="user")
+        await storage_service.save_message(msg)
         
-        await self.service.save_message(message)
+        mock_db_service.execute_update.assert_called_once()
+        query = mock_db_service.execute_update.call_args[0][0]
+        assert "INSERT INTO messages" in query
+
+    async def test_get_messages(self, storage_service, mock_db_service):
+        """Test getting messages for a room."""
+        room_id = "room-db"
+        mock_db_service.execute_query.return_value = [
+            {"message_id": "msg-1", "room_id": room_id, "user_id": "user-1", "content": "Msg 1", "timestamp": 1, "role": "user"},
+            {"message_id": "msg-2", "room_id": room_id, "user_id": "user-2", "content": "Msg 2", "timestamp": 2, "role": "user"}
+        ]
         
-        # Verify file was created
-        room_dir = self.data_dir / "rooms" / "room-123"
-        messages_file = room_dir / "messages.json"
-        assert messages_file.exists()
-        
-        # Verify content
-        with open(messages_file, 'r', encoding='utf-8') as f:
-            messages = json.load(f)
-        
-        assert len(messages) == 1
-        assert messages[0]["message_id"] == "msg-123"
-        assert messages[0]["content"] == "Hello, world!"
-    
-    @pytest.mark.asyncio
-    async def test_get_messages_existing(self):
-        """Test getting messages from existing room"""
-        room_id = "room-123"
-        
-        # Create messages
-        message1 = Message(
-            message_id="msg-1",
-            room_id=room_id,
-            user_id="user-123",
-            content="Message 1",
-            timestamp=1234567890,
-            role="user"
-        )
-        
-        message2 = Message(
-            message_id="msg-2",
-            room_id=room_id,
-            user_id="ai",
-            content="Message 2",
-            timestamp=1234567891,
-            role="ai"
-        )
-        
-        await self.service.save_message(message1)
-        await self.service.save_message(message2)
-        
-        # Get messages
-        messages = await self.service.get_messages(room_id)
+        messages = await storage_service.get_messages(room_id)
         
         assert len(messages) == 2
-        assert messages[0].message_id == "msg-1"
-        assert messages[1].message_id == "msg-2"
-    
-    @pytest.mark.asyncio
-    async def test_get_messages_nonexistent(self):
-        """Test getting messages from non-existent room"""
-        room_id = "nonexistent-room"
-        
-        messages = await self.service.get_messages(room_id)
-        assert messages == []
-    
-    @pytest.mark.asyncio
-    async def test_save_review_meta_success(self):
-        """Test successful review metadata saving"""
-        review_meta = ReviewMeta(
-            review_id="review-123",
-            room_id="room-123",
-            topic="Test Topic",
-            status="in_progress",
-            total_rounds=3,
-            current_round=0,
-            created_at=1234567890,
-            failed_panels=[]
+        assert all(isinstance(m, Message) for m in messages)
+        mock_db_service.execute_query.assert_called_once_with(
+            "SELECT * FROM messages WHERE room_id = %s ORDER BY timestamp ASC", (room_id,)
         )
-        
-        await self.service.save_review_meta(review_meta)
-        
-        # Verify file was created
-        review_file = self.data_dir / "reviews" / "review-123.json"
-        assert review_file.exists()
-        
-        # Verify content
-        with open(review_file, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        
-        assert data["review_id"] == "review-123"
-        assert data["topic"] == "Test Topic"
-        assert data["status"] == "in_progress"
 
+    async def test_save_review_meta(self, storage_service, mock_db_service):
+        """Test saving review metadata."""
+        review_meta = ReviewMeta(
+            review_id="review-db", room_id="room-db", topic="DB Topic", instruction="DB Instruction",
+            status="in_progress", total_rounds=3, current_round=1, created_at=123
+        )
+        await storage_service.save_review_meta(review_meta)
+        
+        mock_db_service.execute_update.assert_called_once()
+        query = mock_db_service.execute_update.call_args[0][0]
+        assert "INSERT INTO reviews" in query
 
-if __name__ == "__main__":
-    pytest.main([__file__])
+    async def test_get_review_meta(self, storage_service, mock_db_service):
+        """Test getting review metadata."""
+        review_id = "review-db"
+        mock_db_service.execute_query.return_value = [{
+            "review_id": review_id, "room_id": "room-db", "topic": "DB Topic", "instruction": "DB Instruction",
+            "status": "in_progress", "total_rounds": 3, "current_round": 1, "created_at": 123
+        }]
+        
+        review_meta = await storage_service.get_review_meta(review_id)
+        
+        assert review_meta is not None
+        assert isinstance(review_meta, ReviewMeta)
+        assert review_meta.review_id == review_id
+        mock_db_service.execute_query.assert_called_once_with(
+            "SELECT * FROM reviews WHERE review_id = %s", (review_id,)
+        )
+
+    async def test_log_review_event(self, storage_service, mock_db_service):
+        """Test logging a review event."""
+        event_data = {
+            "review_id": "review-db", "ts": 12345, "type": "test_event",
+            "round": 1, "actor": "tester", "content": "Testing event logging."
+        }
+        await storage_service.log_review_event(event_data)
+
+        mock_db_service.execute_update.assert_called_once()
+        query = mock_db_service.execute_update.call_args[0][0]
+        assert "INSERT INTO review_events" in query

@@ -1,11 +1,12 @@
 """
 Utility Helper Functions
 """
+
 import json
 import time
 import uuid
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -32,24 +33,24 @@ def safe_json_parse(data: str, default: Any = None) -> Any:
 
 def format_timestamp(timestamp: int) -> str:
     """Format timestamp to readable string"""
-    return time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(timestamp))
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp))
 
 
 def truncate_text(text: str, max_length: int = 100) -> str:
     """Truncate text to specified length"""
     if len(text) <= max_length:
         return text
-    return text[:max_length-3] + "..."
+    return text[: max_length - 3] + "..."
 
 
 def get_recommendation_text(recommendation: str) -> str:
     """Convert recommendation to Korean text"""
     recommendations = {
-        'adopt': '✅ 채택 권고',
-        'hold': '⏸️ 보류 권고',
-        'discard': '❌ 폐기 권고'
+        "adopt": "✅ 채택 권고",
+        "hold": "⏸️ 보류 권고",
+        "discard": "❌ 폐기 권고",
     }
-    return recommendations.get(recommendation, recommendation or '권고 없음')
+    return recommendations.get(recommendation, recommendation or "권고 없음")
 
 
 def create_directory_if_not_exists(path: Path) -> None:
@@ -65,8 +66,9 @@ def validate_required_fields(data: Dict[str, Any], required_fields: list) -> boo
 def sanitize_filename(filename: str) -> str:
     """Sanitize filename for safe file operations"""
     import re
+
     # Remove or replace unsafe characters
-    sanitized = re.sub(r'[<>:"/\\|?*]', '_', filename)
+    sanitized = re.sub(r'[<>:"/\\|?*]', "_", filename)
     # Limit length
     if len(sanitized) > 255:
         sanitized = sanitized[:255]
@@ -83,17 +85,19 @@ def get_file_size_mb(file_path: Path) -> float:
 
 def log_function_call(func_name: str, **kwargs) -> None:
     """Log function call with parameters"""
-    params = ', '.join([f"{k}={v}" for k, v in kwargs.items()])
+    params = ", ".join([f"{k}={v}" for k, v in kwargs.items()])
     logger.debug(f"Function call: {func_name}({params})")
 
 
-def create_error_response(message: str, error_code: str = "UNKNOWN_ERROR") -> Dict[str, Any]:
+def create_error_response(
+    message: str, error_code: str = "UNKNOWN_ERROR"
+) -> Dict[str, Any]:
     """Create standardized error response"""
     return {
         "error": True,
         "message": message,
         "error_code": error_code,
-        "timestamp": get_current_timestamp()
+        "timestamp": get_current_timestamp(),
     }
 
 
@@ -103,11 +107,5 @@ def create_success_response(data: Any, message: str = "Success") -> Dict[str, An
         "error": False,
         "message": message,
         "data": data,
-        "timestamp": get_current_timestamp()
+        "timestamp": get_current_timestamp(),
     }
-
-
-
-
-
-

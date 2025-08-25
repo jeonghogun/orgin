@@ -6,10 +6,44 @@ class ChatComponent {
         this.messagesContainer = document.getElementById('messages');
         this.messageInput = document.getElementById('message-input');
         this.sendButton = document.getElementById('send-button');
+        this.roomListContainer = document.getElementById('room-list');
         this.currentRoomId = null;
         this.isProcessing = false;
         
         this.initializeEventListeners();
+    }
+
+    async renderRoomList() {
+        try {
+            const response = await this.apiCall('/api/rooms');
+            const rooms = response.data || [];
+
+            const mainRooms = rooms.filter(r => r.type === 'main');
+            const subRoomsByParent = rooms.filter(r => r.type === 'sub').reduce((acc, r) => {
+                if (!acc[r.parent_id]) acc[r.parent_id] = [];
+                acc[r.parent_id].push(r);
+                return acc;
+            }, {});
+
+            let html = '<ul>';
+            mainRooms.forEach(main => {
+                html += `<li class="room-item main-room" data-room-id="${main.room_id}" data-room-type="${main.type}"><span>${main.name}</span>`;
+                const children = subRoomsByParent[main.room_id] || [];
+                if (children.length > 0) {
+                    html += '<ul class="sub-room-list">';
+                    children.forEach(sub => {
+                        html += `<li class="room-item sub-room" data-room-id="${sub.room_id}" data-room-type="${sub.type}"><span>${sub.name}</span></li>`;
+                    });
+                    html += '</ul>';
+                }
+                html += '</li>';
+            });
+            html += '</ul>';
+            this.roomListContainer.innerHTML = html;
+        } catch (error) {
+            console.error('Failed to render room list:', error);
+            this.roomListContainer.innerHTML = '<p class="error">Could not load rooms.</p>';
+        }
     }
     
     initializeEventListeners() {
@@ -20,16 +54,57 @@ class ChatComponent {
                 this.sendMessage();
             }
         });
+
+        this.roomListContainer.addEventListener('click', (e) => {
+            const roomItem = e.target.closest('.room-item');
+            if (roomItem) {
+                const roomId = roomItem.dataset.roomId;
+                const roomType = roomItem.dataset.roomType;
+                this.selectRoom(roomId, roomType);
+            }
+        });
+
+        document.getElementById('start-review-btn').addEventListener('click', () => this.promptForReview());
     }
-    
-    setRoomId(roomId) {
+
+    async initialize() {
+        await this.renderRoomList();
+        const rooms = await this.apiCall('/api/rooms').then(res => res.data || []);
+        const mainRoom = rooms.find(r => r.type === 'main');
+
+        if (!mainRoom) {
+            try {
+                const newMainRoom = await this.apiCall('/api/rooms', {
+                    method: 'POST',
+                    body: JSON.stringify({ name: 'Main Room', type: 'main' })
+                });
+                await this.renderRoomList();
+                this.selectRoom(newMainRoom.room_id, newMainRoom.type);
+            } catch (error) {
+                this.addErrorMessage("Could not initialize main room.");
+            }
+        } else {
+            this.selectRoom(mainRoom.room_id, mainRoom.type);
+        }
+    }
+
+    selectRoom(roomId, roomType) {
         this.currentRoomId = roomId;
+
+        document.querySelectorAll('.room-item').forEach(item => item.classList.remove('active'));
+        const roomElement = this.roomListContainer.querySelector(`[data-room-id="${roomId}"]`);
+        if (roomElement) roomElement.classList.add('active');
+
+        this.messagesContainer.innerHTML = '';
+        this.addSystemMessage(`Entered room: ${roomElement ? roomElement.textContent.trim() : roomId}`);
         this.loadMessages();
+
+        const startReviewBtn = document.getElementById('start-review-btn');
+        startReviewBtn.style.display = (roomType === 'sub') ? 'block' : 'none';
     }
     
     async sendMessage() {
         if (!this.currentRoomId || this.isProcessing) return;
-        
         const content = this.messageInput.value.trim();
         if (!content) return;
         
@@ -37,72 +112,44 @@ class ChatComponent {
         this.sendButton.disabled = true;
         
         try {
-            // Add user message to UI immediately
             this.addMessage('user', content);
             this.messageInput.value = '';
-            
-            // Check if this is a review command
-            if (this.isReviewCommand(content)) {
-                await this.handleReviewCommand(content);
-            } else {
-                // Send to AI for response
-                await this.sendToAI(content);
-            }
+            await this.sendToAI(content);
         } catch (error) {
-            console.error('Error sending message:', error);
             this.addErrorMessage('메시지 전송에 실패했습니다.');
         } finally {
             this.isProcessing = false;
             this.sendButton.disabled = false;
         }
     }
-    
-    isReviewCommand(content) {
-        const reviewKeywords = ['검토', '리뷰', '토론', '/review'];
-        return reviewKeywords.some(keyword => content.includes(keyword));
+
+    async promptForReview() {
+        const topic = prompt("Enter the review topic:", "The future of AI");
+        if (!topic) return;
+        const instruction = prompt("Enter the initial instruction for the AI panel:", "Analyze the pros and cons.");
+        if (!instruction) return;
+
+        await this.handleReviewCommand(topic, instruction);
     }
     
-    async handleReviewCommand(content) {
+    async handleReviewCommand(topic, instruction) {
+        if (!this.currentRoomId) {
+            this.addErrorMessage("Please select a sub-room to start a review.");
+            return;
+        }
         try {
             const response = await this.apiCall(`/api/rooms/${this.currentRoomId}/reviews`, {
                 method: 'POST',
-                body: JSON.stringify({
-                    topic: content,
-                    rounds: this.getDefaultRounds()
-                })
+                body: JSON.stringify({ topic, instruction })
             });
             
             if (response.review_id) {
-                this.addSystemMessage('검토를 시작하고 있습니다...');
+                this.addSystemMessage('Review process initiated...');
                 await this.startReview(response.review_id);
             }
         } catch (error) {
-            console.error('Review creation failed:', error);
-            this.addErrorMessage('검토 시작에 실패했습니다.');
+            this.addErrorMessage('Failed to start review.');
         }
-    }
-    
-    getDefaultRounds() {
-        return [
-            {
-                round_number: 1,
-                mode: "divergent",
-                instruction: "주어진 토픽에 대해 다양한 시각에서 분석해라",
-                panel_personas: [
-                    { name: "Critic", provider: "openai" },
-                    { name: "Optimist", provider: "openai" },
-                    { name: "Synthesizer", provider: "openai" }
-                ]
-            },
-            {
-                round_number: 2,
-                mode: "convergent",
-                instruction: "앞선 분석들을 종합해 결론을 요약해라",
-                panel_personas: [
-                    { name: "Consolidator", provider: "openai" }
-                ]
-            }
-        ];
     }
     
     async startReview(reviewId) {
@@ -110,8 +157,7 @@ class ChatComponent {
             await this.apiCall(`/api/reviews/${reviewId}/generate`, { method: 'POST' });
             window.reviewPanel.openReviewPanel(reviewId);
         } catch (error) {
-            console.error('Review generation failed:', error);
-            this.addErrorMessage('검토 생성에 실패했습니다.');
+            this.addErrorMessage('Failed to generate review.');
         }
     }
     
@@ -122,15 +168,11 @@ class ChatComponent {
                 body: JSON.stringify({ content })
             });
             
-            // Handle response structure: {data: {ai_response: {...}}, error: false, message: "..."}
             const aiResponse = response.data?.ai_response;
             if (aiResponse) {
-                // Extract content from ai_response object
-                const aiContent = aiResponse.content || aiResponse;
-                this.addMessage('ai', aiContent);
+                this.addMessage('ai', aiResponse.content || aiResponse);
             }
         } catch (error) {
-            console.error('AI response failed:', error);
             this.addErrorMessage('AI 응답을 받지 못했습니다.');
         }
     }
@@ -138,17 +180,12 @@ class ChatComponent {
     addMessage(role, content, timestamp = null) {
         const messageDiv = document.createElement('div');
         messageDiv.className = `message ${role}`;
-        
         const timeStr = timestamp || new Date().toLocaleTimeString();
-        const roleText = role === 'user' ? '사용자' : 'AI';
+        const roleText = role === 'user' ? 'You' : 'AI';
         
         messageDiv.innerHTML = `
-            <div class="message-header">
-                <span class="role">${roleText}</span>
-                <span class="timestamp">${timeStr}</span>
-            </div>
-            <div class="message-content">${content}</div>
-        `;
+            <div class="message-header"><span class="role">${roleText}</span><span class="timestamp">${timeStr}</span></div>
+            <div class="message-content">${content}</div>`;
         
         this.messagesContainer.appendChild(messageDiv);
         this.scrollToBottom();
@@ -172,22 +209,16 @@ class ChatComponent {
     
     async loadMessages() {
         if (!this.currentRoomId) return;
-        
         try {
             const response = await this.apiCall(`/api/rooms/${this.currentRoomId}/messages`);
             this.messagesContainer.innerHTML = '';
-            
-            // Handle response structure: {data: [...], error: false, message: "..."}
             const messages = response.data || [];
             
             if (Array.isArray(messages)) {
                 messages.forEach(msg => {
-                    const content = msg.content || msg;
                     const timestamp = msg.timestamp ? new Date(msg.timestamp * 1000).toLocaleTimeString() : null;
-                    this.addMessage(msg.role || 'user', content, timestamp);
+                    this.addMessage(msg.role || 'user', msg.content, timestamp);
                 });
-            } else {
-                console.warn('Messages is not an array:', messages);
             }
         } catch (error) {
             console.error('Failed to load messages:', error);
@@ -206,20 +237,14 @@ class ChatComponent {
             ...options.headers
         };
         
-        const response = await fetch(endpoint, {
-            ...options,
-            headers
-        });
+        const response = await fetch(endpoint, { ...options, headers });
         
         if (!response.ok) {
             const errorData = await response.json().catch(() => ({}));
             throw new Error(`HTTP error ${response.status}: ${JSON.stringify(errorData)}`);
         }
-        
-        return await response.json();
+        return response.json();
     }
 }
 
-// Export for global use
 window.ChatComponent = ChatComponent;
-

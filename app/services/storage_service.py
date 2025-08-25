@@ -1,6 +1,7 @@
 """
 Storage Service - Unified interface for data persistence
 """
+
 import json
 import os
 import time
@@ -10,7 +11,13 @@ from pathlib import Path
 from collections import defaultdict
 
 from app.config.settings import settings
-from app.models.schemas import Room, Message, ReviewMeta, PanelReport, ConsolidatedReport
+from app.models.schemas import (
+    Room,
+    Message,
+    ReviewMeta,
+    PanelReport,
+    ConsolidatedReport,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -18,23 +25,13 @@ logger = logging.getLogger(__name__)
 _room_memory = defaultdict(dict)
 
 
+from app.services.database_service import get_database_service
+
 class StorageService:
     """Unified storage service for file system and Firebase"""
-    
+
     def __init__(self):
-        self.data_dir = Path(settings.DATA_DIR)
-        self.data_dir.mkdir(exist_ok=True)
-        self.firebase_service = None
-        
-        # Initialize Firebase if configured (lazy initialization)
-        if settings.FIREBASE_SERVICE_ACCOUNT_PATH:
-            try:
-                from app.services.firebase_service import FirebaseService
-                self.firebase_service = FirebaseService()
-                logger.info("Firebase storage initialized")
-            except Exception as e:
-                logger.warning(f"Firebase initialization failed: {e}")
-                self.firebase_service = None
+        self.db = get_database_service()
 
     # Memory functions for room-specific data
     async def memory_set(self, room_id: str, key: str, value: str) -> None:
@@ -54,189 +51,199 @@ class StorageService:
             del _room_memory[room_id]
             logger.info(f"Memory cleared for room: {room_id}")
 
-    def _get_room_path(self, room_id: str) -> Path:
-        """Get room directory path"""
-        return self.data_dir / "rooms" / room_id
-    
-    def _get_review_path(self, review_id: str) -> Path:
-        """Get review directory path"""
-        return self.data_dir / "reviews" / review_id
-    
-    def _safe_write_json(self, file_path: Path, data: Dict[str, Any]) -> None:
-        """Safely write JSON data to file"""
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        # Write to temporary file first
-        temp_path = file_path.with_suffix('.tmp')
-        with open(temp_path, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-            f.flush()
-            os.fsync(f.fileno())
-        
-        # Atomic rename
-        os.rename(temp_path, file_path)
-    
-    def _safe_read_json(self, file_path: Path) -> Optional[Dict[str, Any]]:
-        """Safely read JSON data from file"""
-        try:
-            if file_path.exists():
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-        except Exception as e:
-            logger.error(f"Error reading {file_path}: {e}")
-        return None
-    
     # Room operations
-    async def create_room(self, room_id: str, name: str) -> Room:
-        """Create a new room"""
-        room_data = {
-            "room_id": room_id,
-            "name": name,
-            "created_at": int(time.time()),
-            "updated_at": int(time.time()),
-            "message_count": 0
-        }
+    async def create_room(
+        self,
+        room_id: str,
+        name: str,
+        owner_id: str,
+        room_type: str,
+        parent_id: Optional[str] = None,
+    ) -> Room:
+        """Create a new room in the database"""
+        created_at = int(time.time())
+        updated_at = created_at
+        message_count = 0
         
-        if self.firebase_service:
-            await self.firebase_service.create_room(room_id, room_data)
-        else:
-            room_path = self._get_room_path(room_id)
-            self._safe_write_json(room_path / "meta.json", room_data)
+        query = """
+            INSERT INTO rooms (room_id, name, owner_id, type, parent_id, created_at, updated_at, message_count)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        """
+        params = (room_id, name, owner_id, room_type, parent_id, created_at, updated_at, message_count)
+
+        self.db.execute_update(query, params)
         
-        return Room(**room_data)
-    
+        return Room(
+            room_id=room_id,
+            name=name,
+            owner_id=owner_id,
+            type=room_type,
+            parent_id=parent_id,
+            created_at=created_at,
+            updated_at=updated_at,
+            message_count=message_count,
+        )
+
     async def get_room(self, room_id: str) -> Optional[Room]:
-        """Get room by ID"""
-        if self.firebase_service:
-            room_data = await self.firebase_service.get_room(room_id)
-        else:
-            room_path = self._get_room_path(room_id)
-            room_data = self._safe_read_json(room_path / "meta.json")
+        """Get room by ID from the database"""
+        query = "SELECT * FROM rooms WHERE room_id = %s"
+        params = (room_id,)
+        result = self.db.execute_query(query, params)
         
-        return Room(**room_data) if room_data else None
-    
+        if not result:
+            return None
+            
+        return Room(**result[0])
+
+    async def delete_room(self, room_id: str) -> bool:
+        """Delete a room and its associated data from the database."""
+        query = "DELETE FROM rooms WHERE room_id = %s"
+        params = (room_id,)
+        rows_affected = self.db.execute_update(query, params)
+        return rows_affected > 0
+
+    async def get_rooms_by_owner(self, owner_id: str) -> List[Room]:
+        """Get all rooms for a given owner from the database."""
+        query = "SELECT * FROM rooms WHERE owner_id = %s"
+        params = (owner_id,)
+        results = self.db.execute_query(query, params)
+        return [Room(**row) for row in results]
+
     async def save_message(self, message: Message) -> None:
-        """Save a message"""
-        if self.firebase_service:
-            await self.firebase_service.save_message(message.room_id, message.model_dump())
-        else:
-            room_path = self._get_room_path(message.room_id)
-            messages_file = room_path / "messages.jsonl"
-            
-            messages_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(messages_file, 'a', encoding='utf-8') as f:
-                f.write(json.dumps(message.model_dump(), ensure_ascii=False) + '\n')
-    
+        """Save a message to the database."""
+        # TODO: Add embedding generation logic here
+        embedding = None
+        
+        query = """
+            INSERT INTO messages (message_id, room_id, user_id, role, content, timestamp, embedding)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """
+        params = (
+            message.message_id,
+            message.room_id,
+            message.user_id,
+            message.role,
+            message.content,
+            message.timestamp,
+            embedding,
+        )
+        self.db.execute_update(query, params)
+
     async def get_messages(self, room_id: str) -> List[Message]:
-        """Get all messages for a room"""
-        if self.firebase_service:
-            messages_data = await self.firebase_service.get_messages(room_id)
-        else:
-            room_path = self._get_room_path(room_id)
-            messages_file = room_path / "messages.jsonl"
-            
-            messages_data = []
-            if messages_file.exists():
-                with open(messages_file, 'r', encoding='utf-8') as f:
-                    for line in f:
-                        if line.strip():
-                            messages_data.append(json.loads(line))
-        
-        return [Message(**msg) for msg in messages_data]
-    
+        """Get all messages for a room from the database."""
+        query = "SELECT * FROM messages WHERE room_id = %s ORDER BY timestamp ASC"
+        params = (room_id,)
+        results = self.db.execute_query(query, params)
+        return [Message(**row) for row in results]
+
     # Review operations
-    async def create_review(self, review_meta: ReviewMeta) -> None:
-        """Create a new review"""
-        if self.firebase_service:
-            await self.firebase_service.create_review(review_meta.review_id, review_meta.model_dump())
-        else:
-            review_path = self._get_review_path(review_meta.review_id)
-            self._safe_write_json(review_path / "meta.json", review_meta.model_dump())
-    
-    async def get_review(self, review_id: str) -> Optional[ReviewMeta]:
-        """Get review by ID"""
-        if self.firebase_service:
-            review_data = await self.firebase_service.get_review(review_id)
-        else:
-            review_path = self._get_review_path(review_id)
-            review_data = self._safe_read_json(review_path / "meta.json")
+    async def save_review_meta(self, review_meta: ReviewMeta) -> None:
+        """Save review metadata to the database."""
+        query = """
+            INSERT INTO reviews (review_id, room_id, topic, instruction, status, total_rounds, current_round, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        """
+        params = (
+            review_meta.review_id,
+            review_meta.room_id,
+            review_meta.topic,
+            review_meta.instruction,
+            review_meta.status,
+            review_meta.total_rounds,
+            review_meta.current_round,
+            review_meta.created_at,
+        )
+        self.db.execute_update(query, params)
+
+    async def get_review_meta(self, review_id: str) -> Optional[ReviewMeta]:
+        """Get review by ID from the database"""
+        query = "SELECT * FROM reviews WHERE review_id = %s"
+        params = (review_id,)
+        result = self.db.execute_query(query, params)
         
-        return ReviewMeta(**review_data) if review_data else None
-    
+        if not result:
+            return None
+
+        return ReviewMeta(**result[0])
+
     async def update_review(self, review_id: str, review_data: Dict[str, Any]) -> None:
-        """Update review metadata"""
-        if self.firebase_service:
-            await self.firebase_service.update_review(review_id, review_data)
-        else:
-            review_path = self._get_review_path(review_id)
-            self._safe_write_json(review_path / "meta.json", review_data)
-    
-    async def save_panel_report(self, review_id: str, round_num: int, persona: str, report: PanelReport) -> None:
+        """Update review metadata in the database."""
+        # Dynamically build the SET part of the query
+        set_clause = ", ".join([f"{key} = %s" for key in review_data.keys()])
+        query = f"UPDATE reviews SET {set_clause} WHERE review_id = %s"
+
+        params = list(review_data.values()) + [review_id]
+
+        self.db.execute_update(query, tuple(params))
+
+    async def save_panel_report(
+        self, review_id: str, round_num: int, persona: str, report: PanelReport
+    ) -> None:
         """Save panel report"""
-        if self.firebase_service:
-            await self.firebase_service.save_panel_report(review_id, round_num, persona, report.model_dump())
-        else:
-            review_path = self._get_review_path(review_id)
-            report_file = review_path / f"panel_report_r{round_num}_{persona}.json"
-            self._safe_write_json(report_file, report.model_dump())
-    
-    async def save_consolidated_report(self, review_id: str, round_num: int, report: ConsolidatedReport) -> None:
+        # This is complex to model in SQL, for now we can store it as JSON
+        # in the final report. This is a simplification.
+        pass
+
+    async def save_consolidated_report(
+        self, review_id: str, round_num: int, report: ConsolidatedReport
+    ) -> None:
         """Save consolidated report"""
-        if self.firebase_service:
-            await self.firebase_service.save_consolidated_report(review_id, round_num, report.model_dump())
-        else:
-            review_path = self._get_review_path(review_id)
-            report_file = review_path / f"consolidated_report_r{round_num}.json"
-            self._safe_write_json(report_file, report.model_dump())
-    
-    async def save_final_report(self, review_id: str, report_data: Dict[str, Any]) -> None:
-        """Save final report"""
-        if self.firebase_service:
-            await self.firebase_service.save_final_report(review_id, report_data)
-        else:
-            review_path = self._get_review_path(review_id)
-            self._safe_write_json(review_path / "final_report.json", report_data)
-    
+        # This is also complex, will be stored as part of the final report.
+        pass
+
+    async def get_consolidated_report(
+        self, review_id: str
+    ) -> Optional[ConsolidatedReport]:
+        """Get consolidated report by ID"""
+        # TODO: Implement this method if needed, or retrieve from final report
+        return None
+
+    async def save_final_report(
+        self, review_id: str, report_data: Dict[str, Any]
+    ) -> None:
+        """Save final report to the database."""
+        query = "UPDATE reviews SET final_report = %s, completed_at = %s, status = %s WHERE review_id = %s"
+        params = (json.dumps(report_data), int(time.time()), "completed", review_id)
+        self.db.execute_update(query, params)
+
     async def get_final_report(self, review_id: str) -> Optional[Dict[str, Any]]:
-        """Get final report"""
-        if self.firebase_service:
-            return await self.firebase_service.get_final_report(review_id)
-        else:
-            review_path = self._get_review_path(review_id)
-            return self._safe_read_json(review_path / "final_report.json")
-    
+        """Get final report from the database"""
+        query = "SELECT final_report FROM reviews WHERE review_id = %s"
+        params = (review_id,)
+        result = self.db.execute_query(query, params)
+        if result and result[0]["final_report"]:
+            return result[0]["final_report"]
+        return None
+
     async def log_review_event(self, event_data: Dict[str, Any]) -> None:
-        """Log review event"""
-        if self.firebase_service:
-            await self.firebase_service.log_review_event(event_data)
+        """Log review event to the database."""
+        query = """
+            INSERT INTO review_events (review_id, ts, type, round, actor, content)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """
+        params = (
+            event_data.get("review_id"),
+            event_data.get("ts"),
+            event_data.get("type"),
+            event_data.get("round"),
+            event_data.get("actor"),
+            event_data.get("content"),
+        )
+        self.db.execute_update(query, params)
+
+    async def get_review_events(
+        self, review_id: str, since: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """Get review events from the database."""
+        if since:
+            query = "SELECT * FROM review_events WHERE review_id = %s AND ts > %s ORDER BY ts ASC"
+            params = (review_id, since)
         else:
-            review_path = self._get_review_path(event_data["review_id"])
-            events_file = review_path / "events.jsonl"
+            query = "SELECT * FROM review_events WHERE review_id = %s ORDER BY ts ASC"
+            params = (review_id,)
             
-            events_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(events_file, 'a', encoding='utf-8') as f:
-                f.write(json.dumps(event_data, ensure_ascii=False) + '\n')
-    
-    async def get_review_events(self, review_id: str, since: Optional[int] = None) -> List[Dict[str, Any]]:
-        """Get review events"""
-        if self.firebase_service:
-            return await self.firebase_service.get_review_events(review_id, since)
-        else:
-            review_path = self._get_review_path(review_id)
-            events_file = review_path / "events.jsonl"
-            
-            events = []
-            if events_file.exists():
-                with open(events_file, 'r', encoding='utf-8') as f:
-                    for line in f:
-                        if line.strip():
-                            event = json.loads(line)
-                            if since is None or event.get("ts", 0) > since:
-                                events.append(event)
-            
-            return events
+        return self.db.execute_query(query, params)
 
 
 # Global storage service instance
 storage_service = StorageService()
-

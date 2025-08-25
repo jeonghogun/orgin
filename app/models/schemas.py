@@ -1,6 +1,7 @@
 """
 Data Models and Schemas
 """
+
 from datetime import datetime
 from typing import List, Optional, Literal, Dict, Any
 from pydantic import BaseModel, ConfigDict, Field
@@ -8,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class Message(BaseModel):
     """Chat message model"""
+
     message_id: str
     room_id: str
     user_id: str
@@ -18,41 +20,41 @@ class Message(BaseModel):
 
 class Room(BaseModel):
     """Chat room model"""
+
     room_id: str
     name: str
+    owner_id: str
+    type: Literal["main", "sub", "review"] = "sub"
+    parent_id: Optional[str] = None
     created_at: int
     updated_at: int
     message_count: int = 0
 
 
-class Persona(BaseModel):
-    """AI persona configuration"""
+class CreateRoomRequest(BaseModel):
+    """Room creation request"""
+
     name: str
-    provider: str = "openai"
-    description: Optional[str] = None
-
-
-class RoundConfig(BaseModel):
-    """Review round configuration"""
-    round_number: int
-    mode: Literal["divergent", "convergent"]
-    instruction: str
-    panel_personas: List[Persona]
+    type: Literal["main", "sub", "review"] = "sub"
+    parent_id: Optional[str] = None
 
 
 class CreateReviewRequest(BaseModel):
     """Review creation request"""
+
     topic: str
-    rounds: List[RoundConfig]
+    instruction: str
 
 
 class ReviewMeta(BaseModel):
     """Review metadata"""
+
     model_config = ConfigDict()
-    
+
     review_id: str
     room_id: str
     topic: str
+    instruction: str
     status: Literal["in_progress", "completed", "failed"] = "in_progress"
     total_rounds: int
     current_round: int = 0
@@ -64,32 +66,36 @@ class ReviewMeta(BaseModel):
 
 class PanelReport(BaseModel):
     """Individual panel analysis report"""
-    model_config = ConfigDict(extra='forbid')
-    
+
+    model_config = ConfigDict(extra="forbid")
+
     prompt_version: str = "1.0"
     model_name: str
     run_id: str
     persona: str
-    
+
     # Analysis content
     summary: str
     key_points: List[str]
     concerns: List[str]
     recommendations: List[str]
-    
+
     # Metadata
-    analysis_timestamp: int = Field(default_factory=lambda: int(datetime.now().timestamp()))
+    analysis_timestamp: int = Field(
+        default_factory=lambda: int(datetime.now().timestamp())
+    )
 
 
 class ConsolidatedReport(BaseModel):
     """Consolidated analysis report"""
-    model_config = ConfigDict(extra='forbid')
-    
+
+    model_config = ConfigDict(extra="forbid")
+
     # Metadata
     prompt_version: str = "1.0"
     model_name: str
     run_id: str
-    
+
     # Core content
     topic: str
     executive_summary: str
@@ -97,7 +103,7 @@ class ConsolidatedReport(BaseModel):
     alternatives: List[str]
     recommendation: Literal["adopt", "hold", "discard"]
     failed_panels: List[str] = []
-    
+
     # Additional fields
     round_summary: Optional[str] = None
     evidence_sources: Optional[List[str]] = None
@@ -107,6 +113,7 @@ class ConsolidatedReport(BaseModel):
 
 class ReviewEvent(BaseModel):
     """Review progress event"""
+
     ts: int
     type: str
     review_id: str
@@ -120,6 +127,7 @@ class ReviewEvent(BaseModel):
 
 class SearchResult(BaseModel):
     """External search result"""
+
     title: str
     link: str
     snippet: str
@@ -128,14 +136,9 @@ class SearchResult(BaseModel):
 
 class ExportData(BaseModel):
     """Export data structure"""
+
     room_id: str
     messages: List[Message]
     reviews: List[Dict[str, Any]]
     export_timestamp: int
     format: Literal["markdown", "json"] = "markdown"
-
-
-
-
-
-

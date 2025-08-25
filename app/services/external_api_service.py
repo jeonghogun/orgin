@@ -1,6 +1,7 @@
 """
 External API Service - Google Search and Wikipedia integration
 """
+
 from __future__ import annotations
 import logging
 import httpx
@@ -17,20 +18,24 @@ KST = timezone(timedelta(hours=9))
 
 class ExternalSearchService:
     """External search service for Google CSE and Wikipedia"""
-    
+
     def __init__(self, timeout: int = 20) -> None:
         super().__init__()  # object 부모 클래스 호출로 경고 제거
         self.key: Optional[str] = settings.GOOGLE_API_KEY
         self.cse: Optional[str] = settings.GOOGLE_CSE_ID
         self.timeout: int = timeout
-        
+
         # Log configuration status
         if not (self.key and self.cse):
-            logger.warning("Google API keys not configured - search functionality disabled")
+            logger.warning(
+                "Google API keys not configured - search functionality disabled"
+            )
         else:
             logger.info("External search service initialized with Google CSE")
 
-    def _safe_get(self, data: Dict[str, Any], key: str, default: Optional[Any] = None) -> Any:
+    def _safe_get(
+        self, data: Dict[str, Any], key: str, default: Optional[Any] = None
+    ) -> Any:
         """Safely get value from dictionary"""
         return data.get(key, default)
 
@@ -44,9 +49,10 @@ class ExternalSearchService:
         try:
             # 현재 시간 기반 간단한 날씨 정보
             from datetime import datetime
+
             now = datetime.now()
             hour = now.hour
-            
+
             if 6 <= hour < 12:
                 time_desc = "오전"
                 weather_desc = "맑음"
@@ -59,7 +65,7 @@ class ExternalSearchService:
             else:
                 time_desc = "밤"
                 weather_desc = "맑음"
-            
+
             return f"'{location}' 현재 {time_desc} 날씨는 {weather_desc}입니다. (실시간 API 연동 예정) 🌤️"
         except Exception as e:
             logger.error(f"Weather API error: {e}")
@@ -70,31 +76,32 @@ class ExternalSearchService:
         if not (self.key and self.cse):
             logger.warning("Web search requested but API keys not configured")
             return []
-        
+
         try:
             q = urllib.parse.quote(query)
             url = f"https://www.googleapis.com/customsearch/v1?q={q}&key={self.key}&cx={self.cse}&num={num}"
-            
+
             logger.info(f"Performing web search: {query}")
-            
+
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 r = await client.get(url)
                 r.raise_for_status()
                 data: Dict[str, Any] = r.json()
                 items: List[Dict[str, Any]] = self._safe_get(data, "items", []) or []
-                
+
                 results: List[Dict[str, str]] = [
                     {
                         "title": str(self._safe_get(it, "title", "")),
                         "link": str(self._safe_get(it, "link", "")),
                         "snippet": str(self._safe_get(it, "snippet", "")),
                         "displayLink": str(self._safe_get(it, "displayLink", "")),
-                    } for it in items
+                    }
+                    for it in items
                 ]
-                
+
                 logger.info(f"Web search completed: {len(results)} results")
                 return results
-                
+
         except Exception as e:
             logger.error(f"Web search failed: {e}")
             return []
@@ -107,13 +114,13 @@ class ExternalSearchService:
         """Get Wikipedia summary using REST API"""
         try:
             logger.info(f"Fetching Wikipedia summary for: {topic}")
-            
+
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 # Try Korean first, then English
                 for lang in ("ko", "en"):
                     t = urllib.parse.quote(topic.replace(" ", "_"))
                     url = f"https://{lang}.wikipedia.org/api/rest_v1/page/summary/{t}"
-                    
+
                     try:
                         r = await client.get(url)
                         if r.status_code == 200:
@@ -125,10 +132,10 @@ class ExternalSearchService:
                     except Exception as e:
                         logger.warning(f"Wikipedia {lang} request failed: {e}")
                         continue
-                
+
                 logger.warning(f"No Wikipedia summary found for: {topic}")
                 return None
-                
+
         except Exception as e:
             logger.error(f"Wikipedia summary failed: {e}")
             return None
