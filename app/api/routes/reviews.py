@@ -4,7 +4,7 @@ Review-related API endpoints
 
 import logging
 from typing import Dict, Any, List, Optional
-from fastapi import APIRouter, HTTPException, Request, Depends, BackgroundTasks
+from fastapi import APIRouter, HTTPException
 
 from app.services.storage_service import storage_service
 from app.services.review_service import review_service
@@ -19,13 +19,15 @@ router = APIRouter(tags=["reviews"])
 
 
 @router.post("/rooms/{sub_room_id}/reviews", response_model=ReviewMeta)
-async def create_review(
+async def create_review_and_start_process(
     sub_room_id: str,
     review_request: CreateReviewRequest,
     user_info: Dict[str, str] = AUTH_DEPENDENCY,
 ):
-    """Create a new review within a sub-room."""
-    # Verify sub-room exists and belongs to user (simplified check)
+    """
+    Create a new review and immediately start the asynchronous review process.
+    """
+    # Verify sub-room exists and belongs to user
     sub_room = await storage_service.get_room(sub_room_id)
     if not sub_room or sub_room.owner_id != user_info.get("user_id"):
         raise HTTPException(status_code=404, detail="Sub-room not found or access denied.")
@@ -36,39 +38,28 @@ async def create_review(
         review_id = generate_id()
         review_meta = ReviewMeta(
             review_id=review_id,
-            room_id=sub_room_id,  # The review is associated with the sub-room
+            room_id=sub_room_id,
             topic=review_request.topic,
-            instruction=review_request.instruction, # Storing instruction
-            status="in_progress",
-            total_rounds=3,  # Hardcoded as per spec
+            instruction=review_request.instruction,
+            status="pending",  # Status is pending until the first task runs
+            total_rounds=3,
             current_round=0,
             created_at=get_current_timestamp(),
         )
         await storage_service.save_review_meta(review_meta)
+
+        # Start the async review process
+        review_service.start_review_process(
+            review_id=review_id,
+            topic=review_request.topic,
+            instruction=review_request.instruction
+        )
+
         return review_meta
     except Exception as e:
         logger.error(f"Error creating review: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to create review")
 
-@router.post("/reviews/{review_id}/generate")
-async def generate_review(
-    review_id: str,
-    background_tasks: BackgroundTasks,
-    user_info: Dict[str, str] = AUTH_DEPENDENCY,
-):
-    """Trigger the multi-agent review process."""
-    review = await storage_service.get_review_meta(review_id)
-    if not review:
-        raise HTTPException(status_code=404, detail="Review not found")
-
-    # Optional: Check if user has permission for this review
-
-    background_tasks.add_task(review_service.execute_review, review_id)
-
-    return create_success_response(
-        data={"review_id": review_id, "status": "processing_started"},
-        message="Review generation has been started in the background.",
-    )
 
 @router.get("/reviews/{review_id}", response_model=ReviewMeta)
 async def get_review(review_id: str, user_info: Dict[str, str] = AUTH_DEPENDENCY):

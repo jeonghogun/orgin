@@ -28,7 +28,7 @@ from app.services.external_api_service import ExternalSearchService
 from app.utils.helpers import get_current_timestamp
 
 # Import routers
-from app.api.routes import rooms, messages, search, memory, reviews, rag
+from app.api.routes import rooms, messages, search, memory, reviews, rag, metrics
 
 # Configure logging
 logging.basicConfig(
@@ -117,6 +117,7 @@ app.include_router(search.router, prefix="/api/search")
 app.include_router(memory.router, prefix="/api")
 app.include_router(reviews.router, prefix="/api")
 app.include_router(rag.router, prefix="/api/rag")
+app.include_router(metrics.router, prefix="/api")
 
 
 # Health check endpoint

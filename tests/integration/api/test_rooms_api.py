@@ -1,68 +1,72 @@
 import pytest
-from unittest.mock import patch, MagicMock
+from fastapi.testclient import TestClient
 
 from app.models.schemas import Room
 from tests.conftest import USER_ID
 
-@patch("app.api.routes.rooms.storage_service.db", new_callable=MagicMock)
 class TestRoomsAPI:
-    """Test room API endpoints with mocked DB."""
+    """Test room API endpoints with a live database."""
 
-    test_room_id = "test-room-123"
-    test_room_name = "Test Room"
-
-    def test_get_room_success(self, mock_db, authenticated_client):
+    def test_get_room_success(self, authenticated_client: TestClient):
         """Test successful room retrieval."""
-        mock_room_data = {
-            "room_id": self.test_room_id, "name": self.test_room_name, "owner_id": USER_ID,
-            "type": "main", "parent_id": None, "created_at": 1, "updated_at": 1, "message_count": 5
-        }
-        mock_db.execute_query.return_value = [mock_room_data]
+        # 1. Create a room
+        create_res = authenticated_client.post("/api/rooms", json={"name": "Get Me Room", "type": "main"})
+        assert create_res.status_code == 200
+        room_id = create_res.json()["room_id"]
 
-        response = authenticated_client.get(f"/api/rooms/{self.test_room_id}")
-
+        # 2. Get the room
+        response = authenticated_client.get(f"/api/rooms/{room_id}")
         assert response.status_code == 200
         data = response.json()
-        assert data["room_id"] == self.test_room_id
-        assert data["name"] == self.test_room_name
-        mock_db.execute_query.assert_called_once_with(
-            "SELECT * FROM rooms WHERE room_id = %s", (self.test_room_id,)
-        )
+        assert data["room_id"] == room_id
+        assert data["name"] == "Get Me Room"
 
-    def test_get_room_not_found(self, mock_db, authenticated_client):
+    def test_get_room_not_found(self, authenticated_client: TestClient):
         """Test room retrieval for non-existent room."""
-        mock_db.execute_query.return_value = []
-        
-        response = authenticated_client.get(f"/api/rooms/{self.test_room_id}")
-        
+        response = authenticated_client.get("/api/rooms/non-existent-room-id")
         assert response.status_code == 404
 
-    def test_get_room_storage_error(self, mock_db, authenticated_client):
-        """Test room retrieval with storage error."""
-        mock_db.execute_query.side_effect = Exception("DB is down")
+    def test_get_room_storage_error(self, authenticated_client: TestClient, monkeypatch):
+        """Test room retrieval with a simulated storage error."""
+        # We can simulate a DB error by patching the underlying service method
+        async def mock_get_room_error(*args, **kwargs):
+            raise Exception("Simulated DB is down")
 
-        response = authenticated_client.get(f"/api/rooms/{self.test_room_id}")
+        monkeypatch.setattr(
+            "app.api.routes.rooms.storage_service.get_room",
+            mock_get_room_error
+        )
 
+        response = authenticated_client.get("/api/rooms/any-id")
         assert response.status_code == 500
         assert "Failed to retrieve room" in response.json()["detail"]
 
-    def test_export_room_data_success(self, mock_db, authenticated_client):
+    def test_export_room_data_success(self, authenticated_client: TestClient):
         """Test successful room data export."""
-        # This test is now more complex as it would involve multiple DB calls.
-        # For now, we simplify it to test the endpoint structure.
-        # A full integration test would require a test database.
-        pytest.skip("Skipping export test pending full integration test setup.")
+        # 1. Create a room and add a message
+        create_res = authenticated_client.post("/api/rooms", json={"name": "Export Room", "type": "main"})
+        assert create_res.status_code == 200
+        room_id = create_res.json()["room_id"]
 
-    def test_health_check(self, client):
+        msg_res = authenticated_client.post(f"/api/rooms/{room_id}/messages", json={"content": "Export this message"})
+        assert msg_res.status_code == 200
+
+        # 2. Export the data
+        response = authenticated_client.get(f"/api/rooms/{room_id}/export")
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["room_id"] == room_id
+        assert len(data["messages"]) > 0
+        assert data["messages"][0]["content"] == "Export this message"
+
+    def test_health_check(self, client: TestClient):
         """Test health check endpoint."""
         response = client.get("/health")
         assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "healthy"
+        assert response.json()["status"] == "healthy"
 
-    def test_debug_env(self, client):
+    def test_debug_env(self, client: TestClient):
         """Test debug environment endpoint."""
         response = client.get("/api/debug/env")
         assert response.status_code == 200
-        data = response.json()
-        assert "openai_api_key_set" in data
+        assert "openai_api_key_set" in response.json()

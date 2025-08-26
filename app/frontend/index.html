@@ -13,12 +13,15 @@
         <div class="left-panel">
             <header class="header">
                 <h1>Origin Project</h1>
-                <div class="auth-section">
-                    <button id="login-button" class="login-button">로그인</button>
-                    <button id="logout-button" class="logout-button" style="display: none;">로그아웃</button>
-                    <div id="user-info" class="user-info" style="display: none;">
-                        <img src="" alt="Profile" class="user-avatar">
-                        <span></span>
+                <div class="header-controls">
+                    <button id="metrics-button" class="metrics-button">Metrics</button>
+                    <div class="auth-section">
+                        <button id="login-button" class="login-button">로그인</button>
+                        <button id="logout-button" class="logout-button" style="display: none;">로그아웃</button>
+                        <div id="user-info" class="user-info" style="display: none;">
+                            <img src="" alt="Profile" class="user-avatar">
+                            <span></span>
+                        </div>
                     </div>
                 </div>
             </header>
@@ -84,7 +87,28 @@
         </div>
     </div>
 
-    <!-- Firebase SDK -->
+        <!-- Metrics Panel -->
+        <div id="metrics-panel" class="metrics-panel">
+            <div class="metrics-panel-header">
+                <h2>Metrics Dashboard</h2>
+                <button id="close-metrics-panel" class="close-metrics-panel">Close</button>
+            </div>
+            <div id="metrics-content" class="metrics-content">
+                <div class="metrics-summary">
+                    <h3>Summary</h3>
+                    <div id="metrics-summary-cards" class="summary-cards"></div>
+                </div>
+                <div class="metrics-charts">
+                    <h3>Charts</h3>
+                    <canvas id="token-usage-chart"></canvas>
+                    <canvas id="latency-chart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.0.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.0.0/firebase-auth-compat.js"></script>
     
@@ -92,6 +116,7 @@
     <script src="/static/components/auth.js"></script>
     <script src="/static/components/chat.js"></script>
     <script src="/static/components/review-panel.js"></script>
+    <script src="/static/components/metrics.js"></script>
     
     <script>
         // Initialize components when DOM is loaded
@@ -100,6 +125,7 @@
             window.auth = new AuthComponent();
             window.chat = new ChatComponent();
             window.reviewPanel = new ReviewPanelComponent();
+            window.metrics = new MetricsComponent();
             
             // Initialize the chat component and room list
             window.chat.initialize();

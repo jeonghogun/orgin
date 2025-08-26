@@ -7,7 +7,8 @@ from app.models.schemas import Room, Message, ReviewMeta
 @pytest.fixture
 def mock_db_service():
     """Fixture for a mocked DatabaseService."""
-    return AsyncMock()
+    # Use MagicMock because the underlying db service methods are synchronous
+    return MagicMock()
 
 @pytest.fixture
 def storage_service(mock_db_service):

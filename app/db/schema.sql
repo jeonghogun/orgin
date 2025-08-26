@@ -62,3 +62,22 @@ CREATE INDEX idx_reviews_room_id ON reviews(room_id);
 CREATE INDEX idx_review_events_review_id ON review_events(review_id);
 -- IVFFlat index for vector search on messages
 CREATE INDEX idx_messages_embedding ON messages USING ivfflat (embedding vector_l2_ops) WITH (lists = 100);
+
+-- User Profiles Table
+CREATE TABLE user_profiles (
+    user_id VARCHAR(255) PRIMARY KEY,
+    persona_summary TEXT,
+    interests JSONB,
+    updated_at BIGINT NOT NULL
+);
+
+-- Review Metrics Table
+CREATE TABLE review_metrics (
+    review_id VARCHAR(255) PRIMARY KEY,
+    total_duration_seconds FLOAT NOT NULL,
+    total_tokens_used INT NOT NULL,
+    total_cost_usd FLOAT NOT NULL,
+    round_metrics JSONB,
+    created_at BIGINT NOT NULL,
+    FOREIGN KEY (review_id) REFERENCES reviews(review_id) ON DELETE CASCADE
+);

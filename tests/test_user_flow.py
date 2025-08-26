@@ -1,87 +1,62 @@
 import pytest
-from unittest.mock import patch, AsyncMock
+from fastapi.testclient import TestClient
+from unittest.mock import AsyncMock
+import app.tasks.persona_tasks
 
-from app.models.schemas import Room, ReviewMeta, Message
-
-# Define a common set of mock services to patch across different API routes
-MOCK_ROOM_STORAGE = patch("app.api.routes.rooms.storage_service", new_callable=AsyncMock)
-MOCK_MSG_STORAGE = patch("app.api.routes.messages.storage_service", new_callable=AsyncMock)
-MOCK_REVIEW_STORAGE = patch("app.api.routes.reviews.storage_service", new_callable=AsyncMock)
-MOCK_REVIEW_SERVICE = patch("app.api.routes.reviews.review_service", new_callable=AsyncMock)
-MOCK_LLM_SERVICE = patch("app.api.routes.messages.context_llm_service", new_callable=AsyncMock)
-
-
-@MOCK_ROOM_STORAGE
-@MOCK_MSG_STORAGE
-@MOCK_REVIEW_STORAGE
-@MOCK_REVIEW_SERVICE
-@MOCK_LLM_SERVICE
-class TestFullUserJourney:
+@pytest.mark.asyncio
+async def test_full_user_journey(authenticated_client: TestClient, monkeypatch):
     """
-    Tests a simplified, mocked end-to-end user flow to ensure
-    API endpoints are connected correctly.
+    Tests a full user journey using the live test database.
+    1. Create a main room.
+    2. Create a sub-room within the main room.
+    3. Send a message to the sub-room.
+    4. Start a review in the sub-room.
+
+    The global patch_llm_service fixture handles mocking LLM calls.
     """
+    # We still need to mock the celery task for persona generation specifically for this test.
+    monkeypatch.setattr(app.tasks.persona_tasks, "generate_user_persona", AsyncMock())
 
-    def test_e2e_flow(self, mock_llm, mock_review_svc, mock_review_storage, mock_msg_storage, mock_room_storage, client):
-        """
-        Tests: Create Room -> Send Message -> Create Review -> Start Review
-        """
-        user_id = "test-user-e2e"
-        room_id = "test-room-e2e"
-        review_id = "test-review-e2e"
+    # --- 1. Create Main Room ---
+    main_room_name = "My Main E2E Room"
+    main_room_res = authenticated_client.post(
+        "/api/rooms",
+        json={"name": main_room_name, "type": "main"}
+    )
+    assert main_room_res.status_code == 200, f"Failed to create main room: {main_room_res.text}"
+    main_room_data = main_room_res.json()
+    main_room_id = main_room_data["room_id"]
+    assert main_room_data["name"] == main_room_name
 
-        # --- 1. Create Room ---
-        mock_room_storage.get_rooms_by_owner.return_value = []
-        mock_room_storage.create_room.return_value = Room(
-            room_id=room_id, name="E2E Test Room", owner_id=user_id, type="main",
-            created_at=123, updated_at=123, message_count=0
-        )
-        response = client.post("/api/rooms", json={"name": "E2E Test Room", "type": "main"})
-        assert response.status_code == 200
-        assert response.json()["room_id"] == room_id
+    # --- 2. Create Sub Room ---
+    sub_room_name = "My Sub-Room for Review"
+    sub_room_res = authenticated_client.post(
+        "/api/rooms",
+        json={"name": sub_room_name, "type": "sub", "parent_id": main_room_id}
+    )
+    assert sub_room_res.status_code == 200, f"Failed to create sub-room: {sub_room_res.text}"
+    sub_room_data = sub_room_res.json()
+    sub_room_id = sub_room_data["room_id"]
+    assert sub_room_data["name"] == sub_room_name
+    assert sub_room_data["parent_id"] == main_room_id
 
-        # --- 2. Send Message ---
-        mock_msg_storage.get_room.return_value = Room(
-            room_id=room_id, name="E2E Test Room", owner_id=user_id, type="main",
-            created_at=123, updated_at=123, message_count=1
-        )
-        mock_msg_storage.get_messages.return_value = []
-        mock_llm.invoke.return_value = "AI response"
-        response = client.post(
-            f"/api/rooms/{room_id}/messages",
-            json={"content": "Hello, this is a test message."}
-        )
-        assert response.status_code == 200
-        assert "ai_response" in response.json()["data"]
-        mock_msg_storage.save_message.assert_called()
+    # --- 3. Send a Message ---
+    message_content = "This is the message we will create a review for."
+    msg_res = authenticated_client.post(
+        f"/api/rooms/{sub_room_id}/messages",
+        json={"content": message_content}
+    )
+    assert msg_res.status_code == 200, f"Failed to send message: {msg_res.text}"
+    assert "ai_response" in msg_res.json()["data"]
 
-        # --- 3. Create Review ---
-        mock_review_storage.get_room.return_value = Room(
-            room_id=room_id, name="E2E Test Room", owner_id=user_id, type="sub",
-            created_at=123, updated_at=123, message_count=1
-        )
-        mock_review_svc.create_review_and_start.return_value = ReviewMeta(
-            review_id=review_id,
-            room_id=room_id,
-            topic="E2E Test",
-            instruction="Test instruction",
-            status="in_progress",
-            total_rounds=3,
-            current_round=0,
-            created_at=123,
-            failed_panels=[],
-        )
-        response = client.post(
-            f"/api/rooms/{room_id}/reviews",
-            json={"topic": "E2E Test", "instruction": "Test instruction"}
-        )
-        assert response.status_code == 200
-        review_meta = ReviewMeta(**response.json())
-        assert review_meta.review_id == review_id
-
-        # --- 4. Start Review Generation ---
-        mock_review_storage.get_review_meta.return_value = review_meta
-        response = client.post(f"/api/reviews/{review_meta.review_id}/generate")
-        assert response.status_code == 202
-        assert response.json()["message"] == "Review generation started in the background."
-        mock_review_svc.execute_review.assert_called_once_with(review_meta.review_id)
+    # --- 4. Create and Start a Review ---
+    review_topic = "Analyzing the test message"
+    review_instruction = "Please analyze the sentiment of the message."
+    review_res = authenticated_client.post(
+        f"/api/rooms/{sub_room_id}/reviews",
+        json={"topic": review_topic, "instruction": review_instruction}
+    )
+    assert review_res.status_code == 200, f"Failed to create review: {review_res.text}"
+    review_data = review_res.json()
+    assert review_data["topic"] == review_topic
+    assert review_data["status"] == "pending"

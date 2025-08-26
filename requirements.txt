@@ -11,3 +11,5 @@ firebase-admin
 google-cloud-firestore
 psycopg2-binary
 pgvector
+redis
+celery

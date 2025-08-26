@@ -245,5 +245,36 @@ class StorageService:
         return self.db.execute_query(query, params)
 
 
+    async def save_review_metrics(self, metrics: "ReviewMetrics") -> None:
+        """Save review metrics to the database."""
+        from app.models.schemas import ReviewMetrics
+        query = """
+            INSERT INTO review_metrics (review_id, total_duration_seconds, total_tokens_used, total_cost_usd, round_metrics, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """
+        params = (
+            metrics.review_id,
+            metrics.total_duration_seconds,
+            metrics.total_tokens_used,
+            metrics.total_cost_usd,
+            json.dumps(metrics.round_metrics),
+            metrics.created_at,
+        )
+        self.db.execute_update(query, params)
+
+    async def get_all_review_metrics(self, limit: int, since: Optional[int] = None) -> List["ReviewMetrics"]:
+        """Get all review metrics, with optional filters."""
+        from app.models.schemas import ReviewMetrics
+        if since:
+            query = "SELECT * FROM review_metrics WHERE created_at > %s ORDER BY created_at DESC LIMIT %s"
+            params = (since, limit)
+        else:
+            query = "SELECT * FROM review_metrics ORDER BY created_at DESC LIMIT %s"
+            params = (limit,)
+
+        results = self.db.execute_query(query, params)
+        return [ReviewMetrics(**row) for row in results]
+
+
 # Global storage service instance
 storage_service = StorageService()

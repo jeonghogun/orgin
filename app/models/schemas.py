@@ -55,7 +55,7 @@ class ReviewMeta(BaseModel):
     room_id: str
     topic: str
     instruction: str
-    status: Literal["in_progress", "completed", "failed"] = "in_progress"
+    status: Literal["pending", "in_progress", "completed", "failed"] = "pending"
     total_rounds: int
     current_round: int = 0
     created_at: int
