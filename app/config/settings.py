@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     # Redis Configuration
     REDIS_URL: str = "redis://localhost:6379"
 
+    # Celery Configuration
+    CELERY_BROKER_URL: str = "redis://localhost:6379/0"
+    CELERY_RESULT_BACKEND: str = "redis://localhost:6379/0"
+
     # Database Configuration
     DATABASE_URL: str = "postgresql://user:password@localhost/origin_db"
 
@@ -44,6 +48,12 @@ class Settings(BaseSettings):
 
     # Rate Limiting
     RATE_LIMIT_PER_MINUTE: int = 60
+
+    # Metrics and Alerting Configuration
+    METRICS_ENABLED: bool = True
+    ALERT_TOKEN_THRESHOLD: int = 10000  # Alert if a single review uses more than 10k tokens
+    ALERT_LATENCY_SECONDS_THRESHOLD: int = 300  # Alert if a single review takes more than 5 minutes
+    ALERT_FAILURE_RATE_THRESHOLD: float = 0.2  # Alert if failure rate exceeds 20%
 
     class Config:
         env_file = ".env"

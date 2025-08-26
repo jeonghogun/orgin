@@ -31,10 +31,11 @@ class DatabaseService:
                 return []
 
     def execute_update(self, query: str, params: Optional[tuple] = None) -> int:
-        with self.get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(query, params)
-                return cur.rowcount
+        conn = self.get_connection()
+        with conn.cursor() as cur:
+            cur.execute(query, params)
+            conn.commit()
+            return cur.rowcount
 
     def close(self):
         if self.conn and not self.conn.closed:

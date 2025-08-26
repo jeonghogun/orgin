@@ -1,59 +1,75 @@
 import pytest
-from unittest.mock import patch, MagicMock
-
+from fastapi.testclient import TestClient
 from app.models.schemas import Room
 from tests.conftest import USER_ID
 
-@patch("app.api.routes.rooms.storage_service.db", new_callable=MagicMock)
 class TestRoomHierarchy:
-    """Tests for room creation and hierarchy rules with mocked DB."""
+    """Tests for room creation and hierarchy rules using the live test database."""
 
-    def test_create_main_room_success(self, mock_db, authenticated_client):
+    def test_create_main_room_success(self, authenticated_client: TestClient):
         """Test creating a main room successfully."""
-        mock_db.execute_query.return_value = []  # No existing main room
-
         response = authenticated_client.post("/api/rooms", json={"name": "My Main Room", "type": "main"})
-
         assert response.status_code == 200
         data = response.json()
         assert data["type"] == "main"
         assert data["owner_id"] == USER_ID
-        mock_db.execute_query.assert_called_once()
-        mock_db.execute_update.assert_called_once()
 
-    def test_create_main_room_fails_if_already_exists(self, mock_db, authenticated_client):
+    def test_create_main_room_fails_if_already_exists(self, authenticated_client: TestClient):
         """A user cannot create more than one main room."""
-        mock_db.execute_query.return_value = [{'type': 'main'}] # Simulate existing main room
+        # First, create one main room, which should succeed.
+        response1 = authenticated_client.post("/api/rooms", json={"name": "First Main", "type": "main"})
+        assert response1.status_code == 200
 
-        response = authenticated_client.post("/api/rooms", json={"name": "New Main", "type": "main"})
+        # Now, try to create another, which should fail.
+        response2 = authenticated_client.post("/api/rooms", json={"name": "Second Main", "type": "main"})
+        assert response2.status_code == 400
+        assert "Main room already exists" in response2.json()["detail"]
 
-        assert response.status_code == 400
-        assert "Main room already exists" in response.json()["detail"]
-
-    def test_create_sub_room_success(self, mock_db, authenticated_client):
+    def test_create_sub_room_success(self, authenticated_client: TestClient):
         """Test creating a sub room successfully."""
-        main_room_data = {"room_id": "main-1", "name": "Main", "owner_id": USER_ID, "type": "main", "created_at": 1, "updated_at": 1, "message_count": 0}
-        mock_db.execute_query.return_value = [main_room_data] # Mock the parent room fetch
+        # Create a main room to be the parent
+        main_room_res = authenticated_client.post("/api/rooms", json={"name": "Main for Sub", "type": "main"})
+        assert main_room_res.status_code == 200
+        main_room_id = main_room_res.json()["room_id"]
 
-        response = authenticated_client.post("/api/rooms", json={"name": "My Sub Room", "type": "sub", "parent_id": "main-1"})
-
+        # Create the sub-room
+        response = authenticated_client.post("/api/rooms", json={"name": "My Sub Room", "type": "sub", "parent_id": main_room_id})
         assert response.status_code == 200
         data = response.json()
         assert data["type"] == "sub"
-        assert data["parent_id"] == "main-1"
-        mock_db.execute_query.assert_called_once() # For getting the parent
-        mock_db.execute_update.assert_called_once() # For creating the new sub-room
+        assert data["parent_id"] == main_room_id
 
-    def test_create_sub_room_fails_with_invalid_parent_type(self, mock_db, authenticated_client):
+    def test_create_sub_room_fails_with_invalid_parent_type(self, authenticated_client: TestClient):
         """Test creating a sub room fails if the parent is not a main room."""
-        not_main_room_data = {"room_id": "sub-1", "name": "Another Sub", "owner_id": USER_ID, "type": "sub", "created_at": 1, "updated_at": 1, "message_count": 0}
-        mock_db.execute_query.return_value = [not_main_room_data]
+        # Create a main room, and a sub-room within it.
+        main_room_res = authenticated_client.post("/api/rooms", json={"name": "Main Room", "type": "main"})
+        assert main_room_res.status_code == 200
+        main_room_id = main_room_res.json()["room_id"]
 
-        response = authenticated_client.post("/api/rooms", json={"name": "My Sub Room", "type": "sub", "parent_id": "sub-1"})
+        sub_room_res = authenticated_client.post("/api/rooms", json={"name": "Sub Room 1", "type": "sub", "parent_id": main_room_id})
+        assert sub_room_res.status_code == 200
+        sub_room_id = sub_room_res.json()["room_id"]
 
+        # Try to create a sub-room with another sub-room as its parent.
+        response = authenticated_client.post("/api/rooms", json={"name": "Sub Room 2", "type": "sub", "parent_id": sub_room_id})
         assert response.status_code == 400
         assert "must have a main room as a parent" in response.json()["detail"]
 
-    def test_delete_room_logic(self):
-        """Placeholder for delete tests once implemented."""
-        pytest.skip("Delete room API not yet fully integrated with DB.")
+    def test_delete_room_logic(self, authenticated_client: TestClient):
+        """Test deleting a sub-room."""
+        # Create a main room and a sub-room
+        main_room_res = authenticated_client.post("/api/rooms", json={"name": "Main for Delete", "type": "main"})
+        assert main_room_res.status_code == 200
+        main_room_id = main_room_res.json()["room_id"]
+
+        sub_room_res = authenticated_client.post("/api/rooms", json={"name": "Sub to Delete", "type": "sub", "parent_id": main_room_id})
+        assert sub_room_res.status_code == 200
+        sub_room_id = sub_room_res.json()["room_id"]
+
+        # Delete the sub-room
+        delete_res = authenticated_client.delete(f"/api/rooms/{sub_room_id}")
+        assert delete_res.status_code == 204
+
+        # Verify it's gone
+        get_res = authenticated_client.get(f"/api/rooms/{sub_room_id}")
+        assert get_res.status_code == 404

@@ -66,11 +66,17 @@ class OpenAIProvider(LLMProvider):
                 max_tokens=4000,
             )
 
+            usage_data = response.usage
             return {
                 "content": response.choices[0].message.content,
                 "model": model,
                 "provider": "openai",
                 "request_id": request_id,
+                "metrics": {
+                    "prompt_tokens": usage_data.prompt_tokens,
+                    "completion_tokens": usage_data.completion_tokens,
+                    "total_tokens": usage_data.total_tokens,
+                }
             }
 
         except Exception as e:
@@ -186,6 +192,42 @@ class LLMService:
         )
 
         return response
+
+
+    async def summarize_for_debate(self, panelist_output: str, request_id: str) -> str:
+        """
+        Summarizes a panelist's output for use in the next debate turn for other panelists.
+        """
+        provider = self.get_provider()
+
+        system_prompt = """You are a summarization AI for a multi-agent debate system. Your task is to create a concise summary of a panelist's argument for the other panelists to read. Follow these rules strictly:
+1.  Extract only the most essential elements: the main claim, key evidence/reasoning, and the overall tone (e.g., agree, oppose, propose an alternative).
+2.  Keep the summary very short, ideally 1-3 sentences and under 200 tokens.
+3.  **Crucially, you must preserve critical details exactly as they appear.** This includes:
+    - Code snippets (e.g., `function(arg)`)
+    - Dates and numbers (e.g., `2025-10-26`, `3.14159`)
+    - Specific names, JIRA tickets, or other identifiers.
+4.  Remove all filler, greetings, meta-comments, and conversational fluff.
+5.  If there are multiple points, focus on the 1-2 most important ones that are most relevant to the debate.
+"""
+
+        user_prompt = f"""Please summarize the following panelist's output:
+
+--- PANEL OUTPUT ---
+{panelist_output}
+--- END PANEL OUTPUT ---
+
+Concise summary for other panelists:"""
+
+        response = await provider.invoke(
+            model=settings.LLM_MODEL,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            request_id=request_id,
+            response_format="text",
+        )
+
+        return response.get("content", "")
 
 
 # Global LLM service instance
