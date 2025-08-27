@@ -4,29 +4,29 @@ RAG-related API endpoints
 
 import logging
 from typing import Dict, Any
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Depends
 
-from app.services.rag_service import rag_service
+from app.services.rag_service import RAGService
+from app.services.intent_service import IntentService
 from app.utils.helpers import create_success_response
+from app.api.dependencies import (
+    AUTH_DEPENDENCY,
+    get_rag_service,
+    get_intent_service,
+)
 
 logger = logging.getLogger(__name__)
 
 # Create router
 router = APIRouter(prefix="", tags=["rag"])
 
-# Dependency for authentication (will be imported from main)
-auth_dependency: Any = None
-
-
-def set_auth_dependency(auth_dep: Any) -> None:
-    """Set authentication dependency from main app"""
-    global auth_dependency
-    auth_dependency = auth_dep
-
 
 @router.post("/query")
 async def rag_query(
-    request: Request, user_info: Dict[str, str] = auth_dependency
+    request: Request,
+    user_info: Dict[str, str] = AUTH_DEPENDENCY,
+    rag_service: RAGService = Depends(get_rag_service),  # pyright: ignore[reportCallInDefaultInitializer]
+    intent_service: IntentService = Depends(get_intent_service),  # pyright: ignore[reportCallInDefaultInitializer]
 ) -> Dict[str, Any]:
     """RAG 기반 질의응답"""
     try:
@@ -40,8 +40,6 @@ async def rag_query(
             )
 
         # 의도 감지
-        from app.services.intent_service import intent_service
-
         intent_result = await intent_service.classify_intent(query, "rag_query")
         intent = intent_result["intent"]
         entities = intent_result.get("entities", {})

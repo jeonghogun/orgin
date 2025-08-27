@@ -26,6 +26,7 @@ class MemoryService:
     def __init__(
         self, db_path: str = "data/memory.db", redis_url: str = "redis://localhost:6379"
     ):
+        super().__init__()
         self.db_path = db_path
         self.redis_url = redis_url
         self._redis_client: Optional[redis.Redis] = None
@@ -100,8 +101,8 @@ class MemoryService:
         """Redis 클라이언트 컨텍스트 매니저"""
         if self._redis_client is None:
             try:
-                self._redis_client = redis.from_url(self.redis_url)
-                await self._redis_client.ping()
+                self._redis_client = redis.from_url(self.redis_url)  # type: ignore
+                await self._redis_client.ping()  # type: ignore
                 logger.info("Redis connection established")
             except Exception as e:
                 logger.warning(f"Redis connection failed: {e}")
@@ -422,7 +423,7 @@ class MemoryService:
                     ),
                 )
 
-                memories = []
+                memories: List[MemoryEntry] = []
                 for row in cursor.fetchall():
                     memory = MemoryEntry(
                         memory_id=row["memory_id"],
@@ -465,5 +466,3 @@ class MemoryService:
             return 0
 
 
-# 싱글톤 인스턴스
-memory_service = MemoryService()

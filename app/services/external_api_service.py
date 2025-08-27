@@ -159,5 +159,3 @@ class ExternalSearchService:
         return f"날씨 정보는 현재 준비 중입니다. 위치: {location}"
 
 
-# Global instance
-search_service = ExternalSearchService()

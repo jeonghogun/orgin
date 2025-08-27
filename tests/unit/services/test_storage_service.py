@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import MagicMock, patch, AsyncMock
+from unittest.mock import MagicMock, patch
 
 from app.services.storage_service import StorageService
 from app.models.schemas import Room, Message, ReviewMeta

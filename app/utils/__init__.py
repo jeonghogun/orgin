@@ -18,7 +18,7 @@ from .helpers import (
     create_success_response,
 )
 
-__all__ = [
+__all__ = [  # type: ignore
     "generate_id",
     "get_current_timestamp",
     "safe_json_parse",

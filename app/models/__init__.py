@@ -19,6 +19,7 @@ __all__ = [
     "Message",
     "Room",
     "CreateRoomRequest",
+    "CreateReviewRequest",
     "ReviewMeta",
     "PanelReport",
     "ConsolidatedReport",

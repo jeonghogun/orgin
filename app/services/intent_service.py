@@ -4,22 +4,30 @@ Intent Service - LLM-based intent classification and entity extraction
 
 import json
 import logging
-from typing import Dict, Any, Optional
-from app.services.llm_service import llm_service
+from typing import Dict, Any, Optional, TypedDict, cast
+from app.services.llm_service import LLMService
 from app.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
 
+class IntentResult(TypedDict):
+    intent: str
+    entities: Dict[str, Any]
+    confidence: float
+
+
 class IntentService:
     """LLM-based intent classification and entity extraction service"""
 
-    def __init__(self):
+    def __init__(self, llm_service: LLMService):
+        super().__init__()
+        self.llm_service = llm_service
         self.llm_provider = None
 
     async def classify_intent(
-        self, message: str, request_id: str = None
-    ) -> Dict[str, Any]:
+        self, message: str, request_id: Optional[str] = None
+    ) -> IntentResult:
         """
         Classify user intent and extract entities using LLM
 
@@ -56,9 +64,9 @@ class IntentService:
 중요: 메시지에 시간 관련 단어가 있으면 반드시 "time"으로 분류하세요.
 """
             if not self.llm_provider:
-                self.llm_provider = llm_service.get_provider()
+                self.llm_provider = self.llm_service.get_provider()
 
-            response = await self.llm_provider.invoke(
+            content, _ = await self.llm_provider.invoke(
                 model=settings.LLM_MODEL,
                 system_prompt="당신은 의도 분류 전문가입니다. 사용자 메시지를 분석하여 정확한 JSON만 응답하세요. 다른 텍스트나 설명은 절대 포함하지 마세요.",
                 user_prompt=prompt,
@@ -67,36 +75,36 @@ class IntentService:
             )
 
             # Parse JSON response
-            result = json.loads(response["content"])
-
-            # Validate result structure
-            if not isinstance(result, dict):
-                raise ValueError("Invalid response format")
+            result = cast(Dict[str, Any], json.loads(content))
 
             if "intent" not in result:
                 raise ValueError("Missing intent in response")
 
             # Ensure entities exist
-            if "entities" not in result:
+            if "entities" not in result or not isinstance(result["entities"], dict):
                 result["entities"] = {}
 
             # Set default confidence if missing
-            if "confidence" not in result:
+            if "confidence" not in result or not isinstance(result["confidence"], (int, float)):
                 result["confidence"] = 0.9
 
             logger.info(
                 f"Intent classified: {result['intent']} (confidence: {result['confidence']})"
             )
-            return result
+            return IntentResult(
+                intent=str(result["intent"]),
+                entities=cast(Dict[str, Any], result["entities"]),
+                confidence=float(result["confidence"]),
+            )
 
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse LLM response as JSON: {e}")
             # Fallback to general intent
-            return {"intent": "general", "entities": {}, "confidence": 0.5}
+            return IntentResult(intent="general", entities={}, confidence=0.5)
         except Exception as e:
             logger.error(f"Intent classification failed: {e}")
             # Fallback to general intent
-            return {"intent": "general", "entities": {}, "confidence": 0.3}
+            return IntentResult(intent="general", entities={}, confidence=0.3)
 
     def _extract_location_from_text(self, text: str) -> Optional[str]:
         """Extract location from text using simple pattern matching"""
@@ -120,5 +128,3 @@ class IntentService:
         return None
 
 
-# Global instance
-intent_service = IntentService()

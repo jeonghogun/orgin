@@ -3,10 +3,15 @@ Context-Aware LLM Service
 """
 
 import logging
-from typing import List, Optional, Any
-from app.services.llm_service import llm_service
-from app.services.memory_service import memory_service
-from app.models.memory_schemas import ConversationContext, UserProfile, ContextUpdate
+from typing import List, Optional
+from app.services.llm_service import LLMService
+from app.services.memory_service import MemoryService
+from app.models.memory_schemas import (
+    ConversationContext,
+    UserProfile,
+    ContextUpdate,
+    MemoryEntry,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +19,8 @@ logger = logging.getLogger(__name__)
 class ContextLLMService:
     """맥락을 고려한 LLM 서비스"""
 
-    def __init__(self):
+    def __init__(self, llm_service: LLMService, memory_service: MemoryService):
+        super().__init__()
         self.llm_service = llm_service
         self.memory_service = memory_service
 
@@ -41,19 +47,13 @@ class ContextLLMService:
 
             # 5. LLM 응답 생성
             provider = self.llm_service.get_provider()
-            response = await provider.invoke(
+            response_text, _ = await provider.invoke(
                 model="gpt-3.5-turbo",
                 system_prompt="당신은 맥락을 이해하고 기억하는 친근한 AI 어시스턴트입니다.",
                 user_prompt=context_prompt,
                 request_id=request_id,
                 response_format="text",
             )
-
-            # 응답에서 content 추출
-            if isinstance(response, dict) and "content" in response:
-                response_text = response["content"]
-            else:
-                response_text = str(response)
 
             # 6. 맥락 업데이트
             await self._update_context_after_response(
@@ -70,12 +70,12 @@ class ContextLLMService:
         self,
         user_profile: Optional[UserProfile],
         context: Optional[ConversationContext],
-        memories: List[Any],
+        memories: List[MemoryEntry],
         user_message: str,
     ) -> str:
         """맥락 기반 프롬프트 구성"""
 
-        prompt_parts = []
+        prompt_parts: List[str] = []
 
         # 시스템 역할 설정
         prompt_parts.append(
@@ -84,7 +84,7 @@ class ContextLLMService:
 
         # 사용자 프로필 정보
         if user_profile:
-            profile_info = []
+            profile_info: List[str] = []
             if user_profile.name:
                 profile_info.append(f"사용자 이름: {user_profile.name}")
             if user_profile.interests:
@@ -104,7 +104,7 @@ class ContextLLMService:
 
         # 관련 메모리 정보
         if memories:
-            memory_info = []
+            memory_info: List[str] = []
             for memory in memories:
                 memory_info.append(f"- {memory.key}: {memory.value}")
 
@@ -173,7 +173,7 @@ class ContextLLMService:
             "프로그래밍",
         ]
 
-        found_topics = []
+        found_topics: List[str] = []
         for keyword in keywords:
             if keyword in text:
                 found_topics.append(keyword)
@@ -233,8 +233,10 @@ class ContextLLMService:
                     for i, word in enumerate(words):
                         if keyword in word and i + 1 < len(words):
                             interest = words[i + 1]
-                            if interest not in profile.interests:
+                            if profile.interests and interest not in profile.interests:
                                 profile.interests.append(interest)
+                            elif not profile.interests:
+                                profile.interests = [interest]
                             break
 
             # 프로필 업데이트
@@ -242,7 +244,3 @@ class ContextLLMService:
 
         except Exception as e:
             logger.error(f"Failed to update user profile from message: {e}")
-
-
-# 싱글톤 인스턴스
-context_llm_service = ContextLLMService()
