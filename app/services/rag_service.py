@@ -3,12 +3,12 @@ RAG (Retrieval-Augmented Generation) Service
 """
 
 import logging
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 from app.services.external_api_service import ExternalSearchService
-from app.services.llm_service import llm_service
-from app.services.memory_service import memory_service
-from app.models.memory_schemas import ConversationContext, UserProfile
+from app.services.llm_service import LLMService
+from app.services.memory_service import MemoryService
+from app.models.memory_schemas import ConversationContext, UserProfile, MemoryEntry
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,7 @@ class RAGContext:
     conversation_context: Optional[ConversationContext]
     search_results: List[Dict[str, str]]
     wiki_summary: Optional[str]
-    relevant_memories: List[Any]
+    relevant_memories: List[MemoryEntry]
     user_query: str
     intent: str
     entities: Dict[str, str]
@@ -30,8 +30,14 @@ class RAGContext:
 class RAGService:
     """RAG (Retrieval-Augmented Generation) 서비스"""
 
-    def __init__(self):
-        self.search_service = ExternalSearchService()
+    def __init__(
+        self,
+        search_service: ExternalSearchService,
+        llm_service: LLMService,
+        memory_service: MemoryService,
+    ):
+        super().__init__()
+        self.search_service = search_service
         self.llm_service = llm_service
         self.memory_service = memory_service
 
@@ -179,7 +185,7 @@ class RAGService:
         base_query = rag_context.user_query.strip()
 
         # 맥락 정보 수집
-        context_parts = []
+        context_parts: List[str] = []
 
         # 이전 대화 요약이 있으면 추가
         if (
@@ -255,23 +261,25 @@ class RAGService:
 
     def _build_rag_prompt(self, rag_context: RAGContext) -> str:
         """RAG 프롬프트 구성"""
-        prompt_parts = []
+        prompt_parts: List[str] = []
 
         # 시스템 역할 설정
         prompt_parts.append(
-            "당신은 외부 정보를 활용하여 정확하고 유용한 답변을 제공하는 AI 어시스턴트입니다. "
-            "제공된 정보를 바탕으로 사용자의 질문에 답변하되, 다음 사항을 반드시 지켜주세요:\n"
-            "1. 검색 결과나 위키 정보가 있으면 그것을 우선적으로 참조하세요\n"
-            "2. 정보를 간결하고 명확하게 요약하여 제공하세요\n"
-            "3. 최신 정보임을 강조하고, 출처는 1-2개만 명시하세요\n"
-            "4. 이전 대화 맥락을 고려하여 연속성 있는 답변을 제공하세요\n"
-            "5. 사용자의 이름을 사용하여 친근하게 답변하세요\n"
-            "6. 검색 결과를 그대로 나열하지 말고, 핵심 내용만 요약하여 자연스럽게 답변하세요"
+            (
+                "당신은 외부 정보를 활용하여 정확하고 유용한 답변을 제공하는 AI 어시스턴트입니다. "
+                "제공된 정보를 바탕으로 사용자의 질문에 답변하되, 다음 사항을 반드시 지켜주세요:\n"
+                "1. 검색 결과나 위키 정보가 있으면 그것을 우선적으로 참조하세요\n"
+                "2. 정보를 간결하고 명확하게 요약하여 제공하세요\n"
+                "3. 최신 정보임을 강조하고, 출처는 1-2개만 명시하세요\n"
+                "4. 이전 대화 맥락을 고려하여 연속성 있는 답변을 제공하세요\n"
+                "5. 사용자의 이름을 사용하여 친근하게 답변하세요\n"
+                "6. 검색 결과를 그대로 나열하지 말고, 핵심 내용만 요약하여 자연스럽게 답변하세요"
+            )
         )
 
         # 사용자 프로필 정보
         if rag_context.user_profile:
-            profile_info = []
+            profile_info: List[str] = []
             if rag_context.user_profile.name:
                 profile_info.append(f"사용자 이름: {rag_context.user_profile.name}")
             if rag_context.user_profile.interests:
@@ -293,7 +301,7 @@ class RAGService:
 
         # 관련 메모리 정보
         if rag_context.relevant_memories:
-            memory_info = []
+            memory_info: List[str] = []
             for memory in rag_context.relevant_memories:
                 memory_info.append(f"- {memory.key}: {memory.value}")
 
@@ -328,20 +336,14 @@ class RAGService:
         """LLM 응답 생성"""
         try:
             provider = self.llm_service.get_provider()
-            response = await provider.invoke(
+            content, _ = await provider.invoke(
                 model="gpt-3.5-turbo",
                 system_prompt="당신은 외부 정보를 활용하여 정확하고 유용한 답변을 제공하는 AI 어시스턴트입니다.",
                 user_prompt=rag_prompt,
                 request_id=request_id,
                 response_format="text",
             )
-
-            # 응답에서 content 추출
-            if isinstance(response, dict) and "content" in response:
-                return response["content"]
-            else:
-                return str(response)
-
+            return content
         except Exception as e:
             logger.error(f"Failed to generate LLM response: {e}")
             return "죄송합니다. 응답을 생성할 수 없습니다."
@@ -430,7 +432,7 @@ class RAGService:
             "기법",
         ]
 
-        found_topics = []
+        found_topics: List[str] = []
         for keyword in keywords:
             if keyword in text:
                 found_topics.append(keyword)
@@ -444,7 +446,7 @@ class RAGService:
         if not results:
             return []
 
-        scored_results = []
+        scored_results: List[Tuple[int, Dict[str, str]]] = []
         query_lower = query.lower()
 
         for result in results:
@@ -529,7 +531,7 @@ class RAGService:
         # 상위 2개 결과만 사용
         top_results = results[:2]
 
-        summary_parts = []
+        summary_parts: List[str] = []
 
         for i, result in enumerate(top_results, 1):
             title = result.get("title", "")
@@ -549,7 +551,7 @@ class RAGService:
             domain = self._extract_domain(link)
 
             summary_parts.append(
-                f"{i}. {title}\n" f"   {snippet}\n" f"   출처: {domain}"
+                f"{i}. {title}\n   {snippet}\n   출처: {domain}"
             )
 
         return "\n\n".join(summary_parts)
@@ -605,5 +607,3 @@ class RAGService:
             return "neutral"
 
 
-# 싱글톤 인스턴스
-rag_service = RAGService()

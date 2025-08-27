@@ -6,7 +6,7 @@ import json
 import time
 import uuid
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, List
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -58,7 +58,7 @@ def create_directory_if_not_exists(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
-def validate_required_fields(data: Dict[str, Any], required_fields: list) -> bool:
+def validate_required_fields(data: Dict[str, Any], required_fields: List[str]) -> bool:
     """Validate that required fields are present"""
     return all(field in data and data[field] is not None for field in required_fields)
 
@@ -83,7 +83,7 @@ def get_file_size_mb(file_path: Path) -> float:
         return 0.0
 
 
-def log_function_call(func_name: str, **kwargs) -> None:
+def log_function_call(func_name: str, **kwargs: Any) -> None:
     """Log function call with parameters"""
     params = ", ".join([f"{k}={v}" for k, v in kwargs.items()])
     logger.debug(f"Function call: {func_name}({params})")

@@ -4,10 +4,12 @@ LLM Service - Unified interface for all LLM providers
 
 import json
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Tuple, List
 from abc import ABC, abstractmethod
 
 import openai
+from openai.types.chat import ChatCompletionMessageParam
+from openai.types.chat.completion_create_params import ResponseFormat
 from app.config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -24,7 +26,7 @@ class LLMProvider(ABC):
         user_prompt: str,
         request_id: str,
         response_format: str = "text",
-    ) -> Dict[str, Any]:
+    ) -> Tuple[str, Dict[str, Any]]:
         """Invoke LLM with prompts"""
         pass
 
@@ -33,6 +35,7 @@ class OpenAIProvider(LLMProvider):
     """OpenAI API provider implementation"""
 
     def __init__(self):
+        super().__init__()
         if not settings.OPENAI_API_KEY:
             raise ValueError(
                 "OpenAI API key is not configured. Please set OPENAI_API_KEY environment variable."
@@ -46,16 +49,16 @@ class OpenAIProvider(LLMProvider):
         user_prompt: str,
         request_id: str,
         response_format: str = "text",
-    ) -> Dict[str, Any]:
+    ) -> Tuple[str, Dict[str, Any]]:
         """Invoke OpenAI API"""
         try:
-            messages = [
+            messages: List[ChatCompletionMessageParam] = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ]
 
-            response_format_config = (
-                {"type": "json_object"} if response_format == "json" else None
+            response_format_config: ResponseFormat = (
+                {"type": "json_object"} if response_format == "json" else {"type": "text"}
             )
 
             response = await self.client.chat.completions.create(
@@ -67,17 +70,13 @@ class OpenAIProvider(LLMProvider):
             )
 
             usage_data = response.usage
-            return {
-                "content": response.choices[0].message.content,
-                "model": model,
-                "provider": "openai",
-                "request_id": request_id,
-                "metrics": {
-                    "prompt_tokens": usage_data.prompt_tokens,
-                    "completion_tokens": usage_data.completion_tokens,
-                    "total_tokens": usage_data.total_tokens,
-                }
+            content = response.choices[0].message.content or ""
+            metrics = {
+                "prompt_tokens": usage_data.prompt_tokens if usage_data else 0,
+                "completion_tokens": usage_data.completion_tokens if usage_data else 0,
+                "total_tokens": usage_data.total_tokens if usage_data else 0,
             }
+            return content, metrics
 
         except Exception as e:
             logger.error(f"OpenAI API error: {e}", extra={"req_id": request_id})
@@ -88,6 +87,7 @@ class LLMService:
     """Main LLM service orchestrator"""
 
     def __init__(self):
+        super().__init__()
         self.providers = {}
         self._initialized = False
 
@@ -119,7 +119,7 @@ class LLMService:
 
     async def generate_panel_analysis(
         self, topic: str, persona: str, instruction: str, request_id: str
-    ) -> Dict[str, Any]:
+    ) -> Tuple[str, Dict[str, Any]]:
         """Generate panel analysis using LLM"""
         provider = self.get_provider()
 
@@ -138,7 +138,7 @@ class LLMService:
     "recommendations": ["권고사항 1", "권고사항 2"]
 }}"""
 
-        response = await provider.invoke(
+        content, metrics = await provider.invoke(
             model=settings.LLM_MODEL,
             system_prompt=system_prompt,
             user_prompt=user_prompt,
@@ -146,16 +146,16 @@ class LLMService:
             response_format="json",
         )
 
-        return response
+        return content, metrics
 
     async def generate_consolidated_report(
         self,
         topic: str,
         round_number: int,
         mode: str,
-        panel_reports: list,
+        panel_reports: List[Any],
         request_id: str,
-    ) -> Dict[str, Any]:
+    ) -> Tuple[str, Dict[str, Any]]:
         """Generate consolidated report from panel reports"""
         provider = self.get_provider()
 
@@ -183,7 +183,7 @@ class LLMService:
     "evidence_sources": ["주요 근거와 출처들 (링크나 참고자료 포함)"]
 }}"""
 
-        response = await provider.invoke(
+        content, metrics = await provider.invoke(
             model=settings.LLM_MODEL,
             system_prompt=system_prompt,
             user_prompt=user_prompt,
@@ -191,10 +191,12 @@ class LLMService:
             response_format="json",
         )
 
-        return response
+        return content, metrics
 
 
-    async def summarize_for_debate(self, panelist_output: str, request_id: str) -> str:
+    async def summarize_for_debate(
+        self, panelist_output: str, request_id: str
+    ) -> Tuple[str, Dict[str, Any]]:
         """
         Summarizes a panelist's output for use in the next debate turn for other panelists.
         """
@@ -219,7 +221,7 @@ class LLMService:
 
 Concise summary for other panelists:"""
 
-        response = await provider.invoke(
+        content, metrics = await provider.invoke(
             model=settings.LLM_MODEL,
             system_prompt=system_prompt,
             user_prompt=user_prompt,
@@ -227,8 +229,6 @@ Concise summary for other panelists:"""
             response_format="text",
         )
 
-        return response.get("content", "")
+        return content, metrics
 
 
-# Global LLM service instance
-llm_service = LLMService()

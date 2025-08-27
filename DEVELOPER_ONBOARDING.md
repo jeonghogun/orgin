@@ -15,9 +15,32 @@ source .venv/bin/activate  # macOS/Linux
 
 # 의존성 설치
 pip install -r requirements.txt
+pip install -r requirements-dev.txt
 ```
 
-### 2. 환경 변수 설정
+### 2. 시스템 의존성 설치 (테스트 및 전체 기능)
+로컬 개발 및 테스트를 위해서는 다음 시스템 패키지가 필요합니다.
+
+**macOS (Homebrew 사용):**
+```bash
+brew install postgresql@15
+brew install redis
+```
+
+**Ubuntu/Debian:**
+```bash
+sudo apt-get update
+sudo apt-get install postgresql-15 postgresql-contrib-15
+sudo apt-get install redis-server
+```
+**PostgreSQL 설정:**
+설치 후, `pgvector` 확장을 활성화해야 합니다.
+```sql
+-- psql에 접속하여 실행
+CREATE EXTENSION pgvector;
+```
+
+### 3. 환경 변수 설정
 ```bash
 # .env 파일 생성
 cp .env.example .env
@@ -26,10 +49,12 @@ cp .env.example .env
 OPENAI_API_KEY=your_openai_api_key
 GOOGLE_API_KEY=your_google_api_key
 GOOGLE_CSE_ID=your_custom_search_engine_id
-# FIREBASE_SERVICE_ACCOUNT_PATH=path/to/your/firebase-credentials.json # (선택 사항)
+DATABASE_URL=postgresql+psycopg2://user:password@localhost:5432/dbname
+REDIS_URL=redis://localhost:6379/0
+# FIREBASE_SERVICE_ACCOUNT_PATH=path/to/your/firebase-credentials.json # (더 이상 사용되지 않음)
 ```
 
-### 3. 서버 실행
+### 4. 서버 실행
 ```bash
 # PYTHONPATH 설정 (중요: 프로젝트 루트에서 실행)
 export PYTHONPATH=$PWD
@@ -38,7 +63,7 @@ export PYTHONPATH=$PWD
 uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-### 4. 접속 확인
+### 5. 접속 확인
 ```
 http://127.0.0.1:8000
 ```
@@ -51,9 +76,11 @@ http://127.0.0.1:8000
 ## 🏗️ 아키텍처 이해
 
 ### 핵심 컴포넌트
-- **Rooms & Hierarchy**: `Main` > `Sub` > `Review` 룸 계층 구조
-- **Services**: 각 기능별 비즈니스 로직 (e.g., `ReviewService`, `StorageService`)
+- **Services**: 각 기능별 비즈니스 로직 (e.g., `ReviewService`, `StorageService`, `LLMService`). 서비스는 FastAPI의 의존성 주입(Dependency Injection)을 통해 관리됩니다.
 - **API**: FastAPI를 사용한 RESTful API 엔드포인트
+- **Async Tasks**: Celery를 사용하여 리뷰 생성과 같은 오래 걸리는 작업을 비동기적으로 처리합니다.
+- **Database**: PostgreSQL과 pgvector 확장을 사용하여 구조화된 데이터와 벡터 임베딩을 저장합니다.
+- **Cache & Message Broker**: Redis를 사용하여 캐싱 및 Celery 메시지 브로커 역할을 수행합니다.
 - **Frontend**: `app/frontend`에 위치한 Vanilla JS 기반 SPA
 
 ## 🔧 개발 워크플로우
@@ -72,9 +99,11 @@ pytest tests/
 # 4. 코드 품질 검사
 black .
 flake8 app tests
-pyright .
+pyright app
+```
 
-# 5. 커밋 및 푸시
+### 5. 커밋 및 푸시
+```bash
 git commit -m "feat: Add new feature"
 git push origin feature/new-feature
 ```
@@ -82,6 +111,8 @@ git push origin feature/new-feature
 ## 🧪 테스트
 
 ### 테스트 실행
+테스트를 실행하기 전에 **PostgreSQL과 Redis 서버가 실행 중**인지 확인하세요.
+
 ```bash
 # 전체 테스트 실행 (PYTHONPATH 설정 필수)
 export PYTHONPATH=$PWD
@@ -89,13 +120,14 @@ pytest tests/
 
 # 특정 테스트 파일 실행
 export PYTHONPATH=$PWD
-pytest tests/integration/api/test_rooms_api.py
+pytest tests/integration/api/test_reviews_api.py
 ```
 
 ### 테스트 작성 가이드
 - **백엔드 API 테스트**: `fastapi.testclient.TestClient`를 사용합니다. (`tests/integration/api/` 참고)
 - **서비스 로직 테스트**: `unittest.mock`을 사용하여 의존성을 모킹합니다. (`tests/unit/services/` 참고)
 - **비동기 테스트**: `@pytest.mark.anyio` 데코레이터를 사용합니다.
+- **데이터베이스 의존 테스트**: `testing.postgresql` 라이브러리를 사용하여 테스트 실행 시 임시 데이터베이스를 생성하고 관리합니다.
 
 ## 🚨 주의사항
 
@@ -104,9 +136,10 @@ pytest tests/integration/api/test_rooms_api.py
 - API 키는 환경 변수로 관리합니다.
 
 ### 2. 데이터베이스
-- 기본 저장소는 로컬 파일 시스템(`data/` 디렉토리)입니다.
-- `FIREBASE_SERVICE_ACCOUNT_PATH` 환경 변수를 설정하면 Firebase Firestore를 데이터베이스로 사용합니다.
-- Redis 캐싱은 현재 구현되어 있지 않습니다.
+- **주 저장소**: PostgreSQL 데이터베이스를 사용합니다. `DATABASE_URL` 환경 변수를 설정해야 합니다.
+- **벡터 검색**: `pgvector` 확장을 사용하여 벡터 임베딩을 저장하고 검색합니다.
+- **캐싱 및 메시징**: Redis를 사용합니다. `REDIS_URL` 환경 변수를 설정해야 합니다.
+- `data/` 디렉토리와 Firebase Firestore는 더 이상 기본 데이터베이스로 사용되지 않습니다.
 
 ### 3. 외부 API
 - Google Custom Search: 일일 쿼리 제한 있음.

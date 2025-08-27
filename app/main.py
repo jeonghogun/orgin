@@ -24,7 +24,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from app.config.settings import settings
-from app.services.external_api_service import ExternalSearchService
 from app.utils.helpers import get_current_timestamp
 
 # Import routers
@@ -103,10 +102,6 @@ app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)  # typ
 
 # Mount static files
 app.mount("/static", StaticFiles(directory="app/frontend"), name="static")
-
-# Initialize external search service
-app.state.search = ExternalSearchService()
-
 
 # Router dependencies are now handled within each router module
 

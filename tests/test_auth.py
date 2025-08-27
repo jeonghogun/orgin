@@ -1,8 +1,7 @@
-import pytest
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends
 from fastapi.testclient import TestClient
 from typing import Dict, Any
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 import firebase_admin
 
 from app.api.dependencies import require_auth

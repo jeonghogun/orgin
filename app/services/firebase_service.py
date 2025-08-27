@@ -1,14 +1,16 @@
-# pyright: reportGeneralTypeIssues=false
+# pyright: reportGeneralTypeIssues=false, reportUnknownMemberType=false, reportUnknownVariableType=false
 """
 Firebase Firestore service for data operations
 """
 
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, cast
 from datetime import datetime
 from app.config.settings import settings
 import firebase_admin
 from firebase_admin import credentials, firestore
+from google.cloud.firestore_v1.base_client import BaseClient
+from google.cloud.firestore_v1.collection import CollectionReference
 
 logger = logging.getLogger("origin")
 
@@ -16,7 +18,8 @@ logger = logging.getLogger("origin")
 class FirebaseService:
     """Firebase Firestore service for data operations"""
 
-    def __init__(self):
+    def __init__(self) -> None:
+        super().__init__()
         if not settings.FIREBASE_SERVICE_ACCOUNT_PATH:
             raise Exception("Firebase service account path not configured")
 
@@ -24,7 +27,7 @@ class FirebaseService:
             # Initialize Firebase Admin SDK
             cred = credentials.Certificate(settings.FIREBASE_SERVICE_ACCOUNT_PATH)
             firebase_admin.initialize_app(cred)
-            self.db = firestore.client()
+            self.db: BaseClient = firestore.client()
             logger.info("Firebase initialized successfully")
         except Exception as e:
             logger.error(f"Failed to initialize Firebase: {e}")
@@ -39,7 +42,7 @@ class FirebaseService:
             room_data["created_at"] = datetime.utcnow().isoformat() + "Z"
             room_ref.set(room_data)
             logger.info(f"Room created in Firebase: {room_ref.id}")
-            return room_ref.id
+            return cast(str, room_ref.id)
         except Exception as e:
             logger.error(f"Failed to create room in Firebase: {e}")
             raise
@@ -50,7 +53,7 @@ class FirebaseService:
             room_ref = self.db.collection("rooms").document(room_id)
             room_doc = room_ref.get()
             if room_doc.exists:
-                return room_doc.to_dict()
+                return cast(Dict[str, Any], room_doc.to_dict())
             return None
         except Exception as e:
             logger.error(f"Failed to get room from Firebase: {e}")
@@ -62,7 +65,7 @@ class FirebaseService:
             rooms_ref = self.db.collection("rooms")
             query = rooms_ref.where("owner_id", "==", owner_id)
             docs = query.stream()
-            return [doc.to_dict() for doc in docs]
+            return [cast(Dict[str, Any], doc.to_dict()) for doc in docs]
         except Exception as e:
             logger.error(f"Failed to get rooms by owner from Firebase: {e}")
             raise
@@ -71,7 +74,7 @@ class FirebaseService:
         """Recursively delete a room and its subcollections in Firestore."""
         try:
             room_ref = self.db.collection("rooms").document(room_id)
-            self._delete_collection(room_ref.collection("messages"), 100)
+            self._delete_collection(room_ref.collection("messages"), 100)  # type: ignore
             # Add other subcollections here if they exist (e.g., reviews)
             room_ref.delete()
             logger.info(f"Deleted room {room_id} from Firebase.")
@@ -80,7 +83,9 @@ class FirebaseService:
             logger.error(f"Failed to delete room {room_id} from Firebase: {e}")
             return False
 
-    def _delete_collection(self, coll_ref, batch_size):
+    def _delete_collection(
+        self, coll_ref: CollectionReference, batch_size: int
+    ) -> None:
         """Helper to delete a collection in batches."""
         docs = coll_ref.limit(batch_size).stream()
         deleted = 0
@@ -105,7 +110,7 @@ class FirebaseService:
             message_data["timestamp"] = datetime.utcnow().isoformat() + "Z"
             message_ref.set(message_data)
             logger.info(f"Message saved in Firebase: {message_ref.id}")
-            return message_ref.id
+            return cast(str, message_ref.id)
         except Exception as e:
             logger.error(f"Failed to save message in Firebase: {e}")
             raise
@@ -119,11 +124,11 @@ class FirebaseService:
                 self.db.collection("rooms").document(room_id).collection("messages")
             )
             messages = (
-                messages_ref.order_by("timestamp", direction=firestore.Query.ASCENDING)
+                messages_ref.order_by("timestamp", direction=firestore.Query.ASCENDING) # type: ignore
                 .limit(limit)
                 .stream()
             )
-            return [msg.to_dict() for msg in messages]
+            return [cast(Dict[str, Any], msg.to_dict()) for msg in messages]
         except Exception as e:
             logger.error(f"Failed to get messages from Firebase: {e}")
             raise
@@ -137,7 +142,7 @@ class FirebaseService:
             review_data["created_at"] = datetime.utcnow().isoformat() + "Z"
             review_ref.set(review_data)
             logger.info(f"Review created in Firebase: {review_ref.id}")
-            return review_ref.id
+            return cast(str, review_ref.id)
         except Exception as e:
             logger.error(f"Failed to create review in Firebase: {e}")
             raise
@@ -148,7 +153,7 @@ class FirebaseService:
             review_ref = self.db.collection("reviews").document(review_id)
             review_doc = review_ref.get()
             if review_doc.exists:
-                return review_doc.to_dict()
+                return cast(Dict[str, Any], review_doc.to_dict())
             return None
         except Exception as e:
             logger.error(f"Failed to get review from Firebase: {e}")
@@ -186,7 +191,7 @@ class FirebaseService:
             report_data["timestamp"] = datetime.utcnow().isoformat() + "Z"
             report_ref.set(report_data)
             logger.info(f"Panel report saved in Firebase: {report_ref.id}")
-            return report_ref.id
+            return cast(str, report_ref.id)
         except Exception as e:
             logger.error(f"Failed to save panel report in Firebase: {e}")
             raise
@@ -207,7 +212,7 @@ class FirebaseService:
             report_data["timestamp"] = datetime.utcnow().isoformat() + "Z"
             report_ref.set(report_data)
             logger.info(f"Consolidated report saved in Firebase: {report_ref.id}")
-            return report_ref.id
+            return cast(str, report_ref.id)
         except Exception as e:
             logger.error(f"Failed to save consolidated report in Firebase: {e}")
             raise
@@ -226,7 +231,7 @@ class FirebaseService:
                 reports_ref.where("round_number", "==", round_number).limit(1).stream()
             )
             for report in reports:
-                return report.to_dict()
+                return cast(Dict[str, Any], report.to_dict())
             return None
         except Exception as e:
             logger.error(f"Failed to get consolidated report from Firebase: {e}")
@@ -238,7 +243,7 @@ class FirebaseService:
             reviews_ref = self.db.collection("reviews")
             reviews = reviews_ref.where("room_id", "==", room_id).stream()
             # Sort in memory to avoid index requirement
-            review_list = [review.to_dict() for review in reviews]
+            review_list = [cast(Dict[str, Any], review.to_dict()) for review in reviews]
             review_list.sort(key=lambda x: x.get("created_at", ""), reverse=True)
             return review_list
         except Exception as e:
@@ -260,7 +265,7 @@ class FirebaseService:
             report_data["timestamp"] = datetime.utcnow().isoformat() + "Z"
             report_ref.set(report_data)
             logger.info(f"Final report saved in Firebase: {report_ref.id}")
-            return report_ref.id
+            return cast(str, report_ref.id)
         except Exception as e:
             logger.error(f"Failed to save final report in Firebase: {e}")
             raise
@@ -275,8 +280,10 @@ class FirebaseService:
             )
             reports = reports_ref.limit(1).stream()
             for report in reports:
-                return report.to_dict()
+                return cast(Dict[str, Any], report.to_dict())
             return None
         except Exception as e:
             logger.error(f"Failed to get final report from Firebase: {e}")
             raise
+
+# This class will be initialized lazily by the dependency injection system.

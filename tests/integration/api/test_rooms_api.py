@@ -1,8 +1,4 @@
-import pytest
 from fastapi.testclient import TestClient
-
-from app.models.schemas import Room
-from tests.conftest import USER_ID
 
 class TestRoomsAPI:
     """Test room API endpoints with a live database."""

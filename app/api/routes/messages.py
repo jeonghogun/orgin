@@ -4,14 +4,21 @@ Message-related API endpoints
 
 import logging
 from typing import Dict
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Depends
 
-from app.api.dependencies import AUTH_DEPENDENCY
-from app.services.storage_service import storage_service
-from app.services.context_llm_service import context_llm_service
-from app.services.rag_service import rag_service
-from app.services.memory_service import memory_service
+from app.api.dependencies import (
+    AUTH_DEPENDENCY,
+    get_storage_service,
+    get_rag_service,
+    get_memory_service,
+    get_search_service,
+    get_intent_service,
+)
+from app.services.storage_service import StorageService
+from app.services.rag_service import RAGService
+from app.services.memory_service import MemoryService
 from app.services.external_api_service import ExternalSearchService
+from app.services.intent_service import IntentService
 from app.utils.helpers import (
     generate_id,
     get_current_timestamp,
@@ -25,12 +32,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="", tags=["messages"])
 
 
-# External search service instance
-external_search_service = ExternalSearchService()
-
-
 @router.get("/{room_id}/messages")
-async def get_messages(room_id: str, user_info: Dict[str, str] = AUTH_DEPENDENCY):
+async def get_messages(
+    room_id: str,
+    user_info: Dict[str, str] = AUTH_DEPENDENCY,
+    storage_service: StorageService = Depends(get_storage_service),  # pyright: ignore[reportCallInDefaultInitializer]
+):
     """Get messages for a room"""
     try:
         # Validate user_info
@@ -49,7 +56,14 @@ async def get_messages(room_id: str, user_info: Dict[str, str] = AUTH_DEPENDENCY
 
 @router.post("/{room_id}/messages")
 async def send_message(
-    room_id: str, request: Request, user_info: Dict[str, str] = AUTH_DEPENDENCY
+    room_id: str,
+    request: Request,
+    user_info: Dict[str, str] = AUTH_DEPENDENCY,
+    storage_service: StorageService = Depends(get_storage_service),  # pyright: ignore[reportCallInDefaultInitializer]
+    rag_service: RAGService = Depends(get_rag_service),  # pyright: ignore[reportCallInDefaultInitializer]
+    memory_service: MemoryService = Depends(get_memory_service),  # pyright: ignore[reportCallInDefaultInitializer]
+    search_service: ExternalSearchService = Depends(get_search_service),  # pyright: ignore[reportCallInDefaultInitializer]
+    intent_service: IntentService = Depends(get_intent_service),  # pyright: ignore[reportCallInDefaultInitializer]
 ):
     """Send a message to a room"""
     try:
@@ -78,14 +92,7 @@ async def send_message(
 
         # Generate AI response
         try:
-            # Update user profile from message
-            await context_llm_service.update_user_profile_from_message(
-                user_info["user_id"], content
-            )
-
             # LLM-based intent classification
-            from app.services.intent_service import intent_service
-
             intent_result = await intent_service.classify_intent(
                 content, message.message_id
             )
@@ -96,19 +103,19 @@ async def send_message(
 
             # Handle different intents with context awareness
             if intent == "time":
-                ai_content = external_search_service.now_kst()
+                ai_content = search_service.now_kst()
 
             elif intent == "weather":
                 location = entities.get("location") or "서울"
-                ai_content = external_search_service.weather(location)
+                ai_content = search_service.weather(location)
 
             elif intent == "wiki":
                 topic = entities.get("topic") or "인공지능"
-                ai_content = await external_search_service.wiki(topic)
+                ai_content = await search_service.wiki(topic)
 
             elif intent == "search":
                 query = entities.get("query") or "AI"
-                items = await external_search_service.search(query, 3)
+                items = await search_service.search(query, 3)
                 if items:
                     lines = [f"🔎 '{query}' 검색 결과:"]
                     for i, item in enumerate(items, 1):

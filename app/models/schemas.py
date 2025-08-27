@@ -142,3 +142,33 @@ class ExportData(BaseModel):
     reviews: List[Dict[str, Any]]
     export_timestamp: int
     format: Literal["markdown", "json"] = "markdown"
+
+
+class ReviewMetrics(BaseModel):
+    """Review metrics model"""
+
+    review_id: str
+    total_duration_seconds: float
+    total_tokens_used: int
+    total_cost_usd: float
+    round_metrics: List[List[Dict[str, Any]]]
+    created_at: int
+
+
+class MetricsSummary(BaseModel):
+    """Metrics summary model"""
+
+    total_reviews: int
+    avg_duration: float
+    median_duration: float
+    p95_duration: float
+    avg_tokens: float
+    median_tokens: float
+    p95_tokens: float
+
+
+class MetricsResponse(BaseModel):
+    """Metrics API response model"""
+
+    summary: MetricsSummary
+    data: List[ReviewMetrics]

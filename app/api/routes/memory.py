@@ -4,29 +4,23 @@ Memory and context-related API endpoints
 
 import logging
 from typing import Dict, Any
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Depends
 
-from app.services.memory_service import memory_service
+from app.services.memory_service import MemoryService
 from app.utils.helpers import create_success_response
+from app.api.dependencies import AUTH_DEPENDENCY, get_memory_service
 
 logger = logging.getLogger(__name__)
 
 # Create router
 router = APIRouter(prefix="", tags=["memory"])
 
-# Dependency for authentication (will be imported from main)
-auth_dependency: Any = None
-
-
-def set_auth_dependency(auth_dep: Any) -> None:
-    """Set authentication dependency from main app"""
-    global auth_dependency
-    auth_dependency = auth_dep
-
 
 @router.get("/context/{room_id}")
 async def get_context(
-    room_id: str, user_info: Dict[str, str] = auth_dependency
+    room_id: str,
+    user_info: Dict[str, str] = AUTH_DEPENDENCY,
+    memory_service: MemoryService = Depends(get_memory_service),  # pyright: ignore[reportCallInDefaultInitializer]
 ) -> Dict[str, Any]:
     """Get conversation context"""
     try:
@@ -39,7 +33,8 @@ async def get_context(
 
 @router.get("/profile")
 async def get_user_profile(
-    user_info: Dict[str, str] = auth_dependency,
+    user_info: Dict[str, str] = AUTH_DEPENDENCY,
+    memory_service: MemoryService = Depends(get_memory_service),  # pyright: ignore[reportCallInDefaultInitializer]
 ) -> Dict[str, Any]:
     """Get user profile"""
     try:
@@ -52,7 +47,9 @@ async def get_user_profile(
 
 @router.post("/memory")
 async def set_memory(
-    request: Request, user_info: Dict[str, str] = auth_dependency
+    request: Request,
+    user_info: Dict[str, str] = AUTH_DEPENDENCY,
+    memory_service: MemoryService = Depends(get_memory_service),  # pyright: ignore[reportCallInDefaultInitializer]
 ) -> Dict[str, Any]:
     """Set a memory entry"""
     try:
@@ -87,7 +84,10 @@ async def set_memory(
 
 @router.get("/memory/{room_id}/{key}")
 async def get_memory(
-    room_id: str, key: str, user_info: Dict[str, str] = auth_dependency
+    room_id: str,
+    key: str,
+    user_info: Dict[str, str] = AUTH_DEPENDENCY,
+    memory_service: MemoryService = Depends(get_memory_service),  # pyright: ignore[reportCallInDefaultInitializer]
 ) -> Dict[str, Any]:
     """Get a memory entry"""
     try:

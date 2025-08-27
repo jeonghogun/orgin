@@ -3,35 +3,55 @@ Storage Service - Unified interface for data persistence
 """
 
 import json
-import os
 import time
 import logging
-from typing import Dict, Any, List, Optional
-from pathlib import Path
+from typing import Dict, Any, List, Optional, Literal, TypedDict, Final
 from collections import defaultdict
 
-from app.config.settings import settings
 from app.models.schemas import (
     Room,
     Message,
     ReviewMeta,
     PanelReport,
     ConsolidatedReport,
+    ReviewMetrics,
 )
+from app.services.database_service import DatabaseService, get_database_service
 
 logger = logging.getLogger(__name__)
 
+
+# TypedDicts for raw database rows
+class RoomRow(TypedDict):
+    room_id: str
+    name: str
+    owner_id: str
+    type: Literal["main", "sub", "review"]
+    parent_id: Optional[str]
+    created_at: int
+    updated_at: int
+    message_count: int
+
+
+class MessageRow(TypedDict):
+    message_id: str
+    room_id: str
+    user_id: str
+    role: str
+    content: str
+    timestamp: int
+
+
 # In-memory storage for room-specific data
-_room_memory = defaultdict(dict)
+_room_memory: Dict[str, Dict[str, str]] = defaultdict(dict)
 
-
-from app.services.database_service import get_database_service
 
 class StorageService:
     """Unified storage service for file system and Firebase"""
 
     def __init__(self):
-        self.db = get_database_service()
+        super().__init__()
+        self.db: DatabaseService = get_database_service()
 
     # Memory functions for room-specific data
     async def memory_set(self, room_id: str, key: str, value: str) -> None:
@@ -57,22 +77,31 @@ class StorageService:
         room_id: str,
         name: str,
         owner_id: str,
-        room_type: str,
+        room_type: Literal["main", "sub", "review"],
         parent_id: Optional[str] = None,
     ) -> Room:
         """Create a new room in the database"""
         created_at = int(time.time())
         updated_at = created_at
         message_count = 0
-        
+
         query = """
             INSERT INTO rooms (room_id, name, owner_id, type, parent_id, created_at, updated_at, message_count)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         """
-        params = (room_id, name, owner_id, room_type, parent_id, created_at, updated_at, message_count)
+        params = (
+            room_id,
+            name,
+            owner_id,
+            room_type,
+            parent_id,
+            created_at,
+            updated_at,
+            message_count,
+        )
 
         self.db.execute_update(query, params)
-        
+
         return Room(
             room_id=room_id,
             name=name,
@@ -88,11 +117,11 @@ class StorageService:
         """Get room by ID from the database"""
         query = "SELECT * FROM rooms WHERE room_id = %s"
         params = (room_id,)
-        result = self.db.execute_query(query, params)
-        
+        result: List[RoomRow] = self.db.execute_query(query, params) # type: ignore
+
         if not result:
             return None
-            
+
         return Room(**result[0])
 
     async def delete_room(self, room_id: str) -> bool:
@@ -106,14 +135,14 @@ class StorageService:
         """Get all rooms for a given owner from the database."""
         query = "SELECT * FROM rooms WHERE owner_id = %s"
         params = (owner_id,)
-        results = self.db.execute_query(query, params)
+        results: List[RoomRow] = self.db.execute_query(query, params) # type: ignore
         return [Room(**row) for row in results]
 
     async def save_message(self, message: Message) -> None:
         """Save a message to the database."""
         # TODO: Add embedding generation logic here
         embedding = None
-        
+
         query = """
             INSERT INTO messages (message_id, room_id, user_id, role, content, timestamp, embedding)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
@@ -133,7 +162,7 @@ class StorageService:
         """Get all messages for a room from the database."""
         query = "SELECT * FROM messages WHERE room_id = %s ORDER BY timestamp ASC"
         params = (room_id,)
-        results = self.db.execute_query(query, params)
+        results: List[MessageRow] = self.db.execute_query(query, params) # type: ignore
         return [Message(**row) for row in results]
 
     # Review operations
@@ -160,7 +189,7 @@ class StorageService:
         query = "SELECT * FROM reviews WHERE review_id = %s"
         params = (review_id,)
         result = self.db.execute_query(query, params)
-        
+
         if not result:
             return None
 
@@ -241,13 +270,11 @@ class StorageService:
         else:
             query = "SELECT * FROM review_events WHERE review_id = %s ORDER BY ts ASC"
             params = (review_id,)
-            
+
         return self.db.execute_query(query, params)
 
-
-    async def save_review_metrics(self, metrics: "ReviewMetrics") -> None:
+    async def save_review_metrics(self, metrics: ReviewMetrics) -> None:
         """Save review metrics to the database."""
-        from app.models.schemas import ReviewMetrics
         query = """
             INSERT INTO review_metrics (review_id, total_duration_seconds, total_tokens_used, total_cost_usd, round_metrics, created_at)
             VALUES (%s, %s, %s, %s, %s, %s)
@@ -262,9 +289,10 @@ class StorageService:
         )
         self.db.execute_update(query, params)
 
-    async def get_all_review_metrics(self, limit: int, since: Optional[int] = None) -> List["ReviewMetrics"]:
+    async def get_all_review_metrics(
+        self, limit: int, since: Optional[int] = None
+    ) -> List[ReviewMetrics]:
         """Get all review metrics, with optional filters."""
-        from app.models.schemas import ReviewMetrics
         if since:
             query = "SELECT * FROM review_metrics WHERE created_at > %s ORDER BY created_at DESC LIMIT %s"
             params = (since, limit)
@@ -277,4 +305,4 @@ class StorageService:
 
 
 # Global storage service instance
-storage_service = StorageService()
+storage_service: Final = StorageService()
