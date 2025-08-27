@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, Depends
 import numpy as np
 
 from app.services.storage_service import StorageService
-from app.api.dependencies import AUTH_DEPENDENCY, get_storage_service
+from app.api.dependencies import require_auth, get_storage_service
 from app.models.schemas import MetricsResponse, MetricsSummary, ReviewMetrics
 
 
@@ -20,7 +20,7 @@ router = APIRouter(prefix="/metrics", tags=["metrics"])
 
 @router.get("", response_model=MetricsResponse)
 async def get_metrics(
-    user_info: Dict[str, str] = Depends(AUTH_DEPENDENCY),  # pyright: ignore[reportCallInDefaultInitializer]
+    user_info: Dict[str, str] = Depends(require_auth),  # pyright: ignore[reportCallInDefaultInitializer]
     limit: int = 100,
     since: Optional[int] = None,
     storage_service: StorageService = Depends(get_storage_service),  # pyright: ignore[reportCallInDefaultInitializer]
@@ -67,7 +67,7 @@ async def get_metrics(
 
 @router.get("/alerts")
 async def get_alerts(
-    user_info: Dict[str, str] = Depends(AUTH_DEPENDENCY),  # pyright: ignore[reportCallInDefaultInitializer]
+    user_info: Dict[str, str] = Depends(require_auth),  # pyright: ignore[reportCallInDefaultInitializer]
 ) -> Dict[str, List[Dict[str, Any]]]:
     """Get the latest system alerts."""
     from app.tasks.review_tasks import latest_alerts

@@ -3,7 +3,7 @@ Review Service - Orchestrates the multi-agent review process using Celery.
 """
 import logging
 from app.services.storage_service import StorageService
-from app.tasks.review_tasks import run_initial_panel_turn
+from app.tasks.review_tasks import run_initial_panel_turn  # type: ignore
 
 logger = logging.getLogger(__name__)
 

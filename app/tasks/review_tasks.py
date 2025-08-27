@@ -78,7 +78,7 @@ async def initial_turn_logic(
     return turn_1_outputs, round_1_metrics
 
 
-@celery_app.task(bind=True)
+@celery_app.task(bind=True)  # type: ignore
 def run_initial_panel_turn(self, review_id: str, topic: str, instruction: str):  # type: ignore
     logger.info(f"Starting initial panel turn for review: {review_id}")
     turn_outputs, round_metrics = asyncio.run(
@@ -151,9 +151,9 @@ async def rebuttal_turn_logic(
     return turn_2_outputs, round_2_metrics
 
 
-@celery_app.task(bind=True)
+@celery_app.task(bind=True)  # type: ignore
 def run_rebuttal_turn(
-    self: Task[..., Any],
+    self: Task,
     review_id: str,
     turn_1_outputs: Dict[str, Any],
     round_1_metrics: List[Dict[str, Any]],
@@ -238,9 +238,9 @@ async def synthesis_turn_logic(
     return turn_3_outputs, round_3_metrics
 
 
-@celery_app.task(bind=True)
+@celery_app.task(bind=True)  # type: ignore
 def run_synthesis_turn(
-    self: Task[..., Any],
+    self: Task,
     review_id: str,
     turn_1_outputs: Dict[str, Any],
     turn_2_outputs: Dict[str, Any],
@@ -306,9 +306,9 @@ async def report_and_metrics_logic(
         check_for_alerts(metrics_to_save)
 
 
-@celery_app.task(bind=True)
+@celery_app.task(bind=True)  # type: ignore
 def generate_consolidated_report(
-    self: Task[..., Any],
+    self: Task,
     review_id: str,
     turn_3_outputs: Dict[str, Any],
     all_metrics: List[List[Dict[str, Any]]],

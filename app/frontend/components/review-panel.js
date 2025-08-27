@@ -187,3 +187,6 @@ class ReviewPanelComponent {
 }
 
 window.ReviewPanelComponent = ReviewPanelComponent;
+
+
+
