@@ -1,5 +1,7 @@
 from fastapi.testclient import TestClient
+from unittest.mock import patch
 from tests.conftest import USER_ID
+
 
 class TestRoomHierarchy:
     """Tests for room creation and hierarchy rules using the live test database."""
@@ -71,3 +73,47 @@ class TestRoomHierarchy:
         # Verify it's gone
         get_res = authenticated_client.get(f"/api/rooms/{sub_room_id}")
         assert get_res.status_code == 404
+
+    def test_create_review_fails_from_main_room(self, authenticated_client: TestClient):
+        """A review can only be created from a sub-room, not a main room."""
+        # Create a main room
+        main_room_res = authenticated_client.post("/api/rooms", json={"name": "Main for Review Fail", "type": "main"})
+        assert main_room_res.status_code == 200
+        main_room_id = main_room_res.json()["room_id"]
+
+        # Attempt to create a review from the main room
+        response = authenticated_client.post(
+            f"/api/rooms/{main_room_id}/reviews",
+            json={"topic": "Test Topic", "instruction": "Test Instruction"}
+        )
+        assert response.status_code == 400
+        assert "Reviews can only be created from sub-rooms" in response.json()["detail"]
+
+    def test_create_review_success_from_sub_room(self, authenticated_client: TestClient):
+        """Test creating a review from a sub-room successfully."""
+        # 1. Create parent rooms
+        main_room_res = authenticated_client.post("/api/rooms", json={"name": "Main for Review", "type": "main"})
+        assert main_room_res.status_code == 200
+        main_room_id = main_room_res.json()["room_id"]
+
+        sub_room_res = authenticated_client.post(
+            "/api/rooms",
+            json={"name": "Sub for Review", "type": "sub", "parent_id": main_room_id}
+        )
+        assert sub_room_res.status_code == 200
+        sub_room_id = sub_room_res.json()["room_id"]
+
+        # 2. Mock the celery task's .delay method to prevent it from actually running
+        with patch("app.tasks.review_tasks.run_initial_panel_turn.delay") as mock_delay:
+            # 3. Create the review
+            response = authenticated_client.post(
+                f"/api/rooms/{sub_room_id}/reviews",
+                json={"topic": "Review Topic", "instruction": "Review Instruction"}
+            )
+
+            # 4. Assert success
+            assert response.status_code == 200
+            data = response.json()
+            assert data["room_id"] == sub_room_id
+            assert data["topic"] == "Review Topic"
+            mock_delay.assert_called_once()

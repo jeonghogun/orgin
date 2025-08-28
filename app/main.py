@@ -9,7 +9,7 @@ import os
 from contextlib import asynccontextmanager
 from typing import Dict, Any, Callable, TypeVar, Awaitable, cast, Optional, List
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -27,12 +27,24 @@ from app.config.settings import settings
 from app.utils.helpers import get_current_timestamp
 
 # Import routers
-from app.api.routes import rooms, messages, search, memory, reviews, rag, metrics
+from app.api.routes import rooms, messages, search, memory, reviews, rag, metrics, websockets
+
+from app.utils.trace_id import trace_id_var
+
+# Custom logging filter to add trace_id
+class TraceIdFilter(logging.Filter):
+    def filter(self, record):
+        record.trace_id = trace_id_var.get()
+        return True
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s [%(trace_id)s] - %(message)s",
 )
+# Add the filter to the root logger
+logging.getLogger().addFilter(TraceIdFilter())
+
 logger = logging.getLogger(__name__)
 
 # Rate limiting
@@ -63,13 +75,19 @@ def limit_typed(
     )
 
 
+from app.services.redis_pubsub import redis_pubsub_manager
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan management"""
     logger.info("Starting application...")
+    redis_pubsub_manager.start_listener()
     yield
     logger.info("Shutting down application...")
+    await redis_pubsub_manager.stop_listener()
 
+
+import uuid
 
 # Create FastAPI app
 app = FastAPI(
@@ -78,6 +96,15 @@ app = FastAPI(
     version="2.0.0",
     lifespan=lifespan,
 )
+
+@app.middleware("http")
+async def trace_id_middleware(request: Request, call_next):
+    # Try to get trace_id from header, or generate a new one
+    trace_id = request.headers.get("X-Trace-ID", str(uuid.uuid4()))
+    trace_id_var.set(trace_id)
+    response = await call_next(request)
+    response.headers["X-Trace-ID"] = trace_id
+    return response
 
 # Add middleware
 app.add_middleware(
@@ -101,7 +128,7 @@ async def rate_limit_exceeded_handler(
 app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)  # type: ignore[arg-type]
 
 # Mount static files
-app.mount("/static", StaticFiles(directory="app/frontend"), name="static")
+app.mount("/", StaticFiles(directory="app/static", html=True), name="static")
 
 # Router dependencies are now handled within each router module
 
@@ -113,6 +140,7 @@ app.include_router(memory.router, prefix="/api")
 app.include_router(reviews.router, prefix="/api")
 app.include_router(rag.router, prefix="/api/rag")
 app.include_router(metrics.router, prefix="/api")
+app.include_router(websockets.router)
 
 
 # Health check endpoint
@@ -126,10 +154,12 @@ async def health_check() -> Dict[str, Any]:
     }
 
 
+from app.api.dependencies import require_role
+
 # Debug endpoint
-@app.get("/api/debug/env")
+@app.get("/api/debug/env", dependencies=[Depends(require_role("admin"))])
 async def debug_env() -> Dict[str, Any]:
-    """Debug environment variables"""
+    """Debug environment variables (Admin only)"""
     return {
         "openai_api_key_set": bool(settings.OPENAI_API_KEY),
         "openai_api_key_length": (
@@ -140,15 +170,6 @@ async def debug_env() -> Dict[str, Any]:
         ),
         "env_file_loaded": os.path.exists(".env"),
     }
-
-
-# Root endpoint
-@app.get("/")
-async def root():
-    """Serve the main application"""
-    from fastapi.responses import FileResponse
-
-    return FileResponse("app/frontend/index.html")
 
 
 if __name__ == "__main__":

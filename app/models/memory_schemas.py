@@ -23,6 +23,7 @@ class UserProfile(BaseModel):
     """사용자 프로필 정보"""
 
     user_id: str = Field(..., description="사용자 ID")
+    role: str = Field(default="user", description="사용자 역할 (e.g., 'user', 'admin')")
     name: Optional[str] = Field(default=None, description="사용자 이름")
     preferences: Dict[str, Any] = Field(
         default_factory=dict, description="사용자 선호도"

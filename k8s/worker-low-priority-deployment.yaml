@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: origin-worker-low-priority
+  labels:
+    app: origin
+    component: worker
+    queue: low-priority
+spec:
+  replicas: 1 # Low priority can start with fewer replicas
+  selector:
+    matchLabels:
+      app: origin
+      component: worker
+      queue: low-priority
+  template:
+    metadata:
+      labels:
+        app: origin
+        component: worker
+        queue: low-priority
+    spec:
+      containers:
+      - name: worker-low-priority
+        image: your-repo/origin-project:latest # Replace with your actual image repository
+        imagePullPolicy: Always
+        command: ["celery", "-A", "app.celery_app", "worker", "--loglevel=INFO", "-P", "gevent", "-Q", "low_priority"]
+        envFrom:
+        - configMapRef:
+            name: origin-app-config
+        - secretRef:
+            name: origin-app-secrets
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "512Mi"
+          limits:
+            cpu: "500m"
+            memory: "1Gi"

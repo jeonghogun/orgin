@@ -195,6 +195,13 @@ class StorageService:
 
         return ReviewMeta(**result[0])
 
+    async def get_reviews_by_room(self, room_id: str) -> List[ReviewMeta]:
+        """Get all reviews for a given room from the database."""
+        query = "SELECT * FROM reviews WHERE room_id = %s ORDER BY created_at DESC"
+        params = (room_id,)
+        results = self.db.execute_query(query, params)
+        return [ReviewMeta(**row) for row in results]
+
     async def update_review(self, review_id: str, review_data: Dict[str, Any]) -> None:
         """Update review metadata in the database."""
         # Dynamically build the SET part of the query
