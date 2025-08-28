@@ -61,8 +61,26 @@ class TestRoomsAPI:
         assert response.status_code == 200
         assert response.json()["status"] == "healthy"
 
-    def test_debug_env(self, client: TestClient):
-        """Test debug environment endpoint."""
-        response = client.get("/api/debug/env")
+    def test_debug_env_permission_denied_for_user(self, authenticated_client: TestClient):
+        """Test that a regular user cannot access the debug endpoint."""
+        response = authenticated_client.get("/api/debug/env")
+        assert response.status_code == 403
+
+    def test_debug_env_success_for_admin(self, authenticated_client: TestClient, db_session):
+        """Test that an admin user can access the debug endpoint."""
+        from tests.conftest import USER_ID
+
+        # 1. Manually update the user's role to 'admin' in the database
+        cursor = db_session.cursor()
+        cursor.execute(
+            "INSERT INTO user_profiles (user_id, role, created_at, updated_at) VALUES (%s, 'admin', %s, %s)",
+            (USER_ID, 123, 123)
+        )
+        db_session.commit()
+
+        # 2. Access the endpoint
+        response = authenticated_client.get("/api/debug/env")
+
+        # 3. Assert success
         assert response.status_code == 200
         assert "openai_api_key_set" in response.json()

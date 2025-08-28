@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from app.services.external_api_service import ExternalSearchService
 from app.services.llm_service import LLMService
 from app.services.memory_service import MemoryService
+from app.services.storage_service import StorageService
 from app.models.memory_schemas import ConversationContext, UserProfile, MemoryEntry
 
 logger = logging.getLogger(__name__)
@@ -35,11 +36,13 @@ class RAGService:
         search_service: ExternalSearchService,
         llm_service: LLMService,
         memory_service: MemoryService,
+        storage_service: StorageService,
     ):
         super().__init__()
         self.search_service = search_service
         self.llm_service = llm_service
         self.memory_service = memory_service
+        self.storage_service = storage_service
 
     async def generate_rag_response(
         self,
@@ -52,7 +55,7 @@ class RAGService:
     ) -> str:
         """RAG 기반 응답 생성"""
         try:
-            # 1. 컨텍스트 수집
+            # 1. 컨텍스트 수집 (메모리 상속 로직 추가)
             rag_context = await self._collect_context(
                 room_id, user_id, user_message, intent, entities
             )
@@ -85,17 +88,44 @@ class RAGService:
         intent: str,
         entities: Dict[str, str],
     ) -> RAGContext:
-        """컨텍스트 정보 수집"""
-        # 사용자 프로필 조회
+        """컨텍스트 정보 수집 (메모리 상속 로직 포함)"""
+        # Get current room to check its type and parent
+        current_room = await self.storage_service.get_room(room_id)
+        if not current_room:
+            # This should ideally not happen if called from a valid context
+            raise ValueError(f"Room with id {room_id} not found.")
+
+        # Always fetch the user's general profile
         user_profile = await self.memory_service.get_user_profile(user_id)
 
-        # 대화 맥락 조회
+        # --- Memory Inheritance and Retrieval Logic ---
+        room_ids_to_search = [room_id]
+        if current_room.type == "sub" and current_room.parent_id:
+            logger.info(f"Sub room {room_id} inheriting memory from main room {current_room.parent_id}")
+            room_ids_to_search.append(current_room.parent_id)
+
+        # Fetch relevant memories from all specified rooms in a single query
+        relevant_memories = await self.memory_service.get_relevant_memories(
+            room_ids=room_ids_to_search,
+            user_id=user_id,
+            query_text=user_message,
+            limit=5,  # Fetch a slightly larger pool of memories
+        )
+
+        # Fetch conversation context (summary) for the current room
         conversation_context = await self.memory_service.get_context(room_id, user_id)
 
-        # 관련 메모리 조회
-        relevant_memories = await self.memory_service.get_relevant_memories(
-            room_id, user_id, user_message, limit=3
-        )
+        # If it's a sub-room, fetch and prepend the parent's context summary
+        if current_room.type == "sub" and current_room.parent_id:
+            parent_context = await self.memory_service.get_context(current_room.parent_id, user_id)
+            if parent_context and parent_context.summary:
+                if conversation_context and conversation_context.summary:
+                    conversation_context.summary = (
+                        f"Parent Room Context: {parent_context.summary}\n\n"
+                        f"Current Room Context: {conversation_context.summary}"
+                    )
+                elif conversation_context:
+                    conversation_context.summary = f"Parent Room Context: {parent_context.summary}"
 
         return RAGContext(
             user_profile=user_profile,

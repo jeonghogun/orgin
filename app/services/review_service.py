@@ -3,7 +3,7 @@ Review Service - Orchestrates the multi-agent review process using Celery.
 """
 import logging
 from app.services.storage_service import StorageService
-from app.tasks.review_tasks import run_initial_panel_turn  # type: ignore
+from app.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 
@@ -16,14 +16,25 @@ class ReviewService:
         super().__init__()
         self.storage: StorageService = storage_service
 
-    def start_review_process(self, review_id: str, topic: str, instruction: str) -> None:
+    async def start_review_process(
+        self, review_id: str, topic: str, instruction: str, panelists: Optional[List[str]], trace_id: str
+    ) -> None:
         """
         Starts the asynchronous review process by kicking off the Celery task chain.
         """
-        logger.info(f"Dispatching Celery task chain for review_id: {review_id}")
+        logger.info(f"Dispatching Celery task chain for review_id: {review_id} with trace_id: {trace_id}")
 
-        # Start the chain by calling the first task.
-        # The subsequent tasks will be called by the previous task in the chain.
-        run_initial_panel_turn.delay(
-            review_id=review_id, topic=topic, instruction=instruction
-        )
+        # Use .delay() to call the task, which respects task_always_eager for tests.
+        # Access the task from the app's registry by name to avoid circular imports.
+        task = celery_app.tasks.get("app.tasks.review_tasks.run_initial_panel_turn")
+        if task:
+            task.delay(
+                review_id=review_id,
+                topic=topic,
+                instruction=instruction,
+                panelists=panelists,
+                trace_id=trace_id,
+            )
+        else:
+            # This would indicate a configuration error
+            logger.error("Could not find Celery task: app.tasks.review_tasks.run_initial_panel_turn")

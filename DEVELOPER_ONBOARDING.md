@@ -18,55 +18,26 @@ pip install -r requirements.txt
 pip install -r requirements-dev.txt
 ```
 
-### 2. 시스템 의존성 설치 (테스트 및 전체 기능)
-로컬 개발 및 테스트를 위해서는 다음 시스템 패키지가 필요합니다.
+### 2. Docker 기반 개발 환경 실행
+이 프로젝트는 모든 서비스(PostgreSQL, Redis, API, Workers, Frontend)를 컨테이너화하여 일관된 개발 환경을 제공합니다. 로컬에 별도의 데이터베이스나 Redis를 설치할 필요가 없습니다.
 
-**macOS (Homebrew 사용):**
-```bash
-brew install postgresql@15
-brew install redis
-```
+**필수 사전 조건:**
+- [Docker](https://www.docker.com/products/docker-desktop/)가 설치되어 있어야 합니다.
 
-**Ubuntu/Debian:**
+**실행 단계:**
 ```bash
-sudo apt-get update
-sudo apt-get install postgresql-15 postgresql-contrib-15
-sudo apt-get install redis-server
-```
-**PostgreSQL 설정:**
-설치 후, `pgvector` 확장을 활성화해야 합니다.
-```sql
--- psql에 접속하여 실행
-CREATE EXTENSION pgvector;
-```
-
-### 3. 환경 변수 설정
-```bash
-# .env 파일 생성
+# 1. 환경 변수 파일 생성
+# .env.example 파일을 복사하여 .env 파일을 만들고, 필수 키를 채웁니다.
 cp .env.example .env
 
-# 필수 환경 변수 설정
-OPENAI_API_KEY=your_openai_api_key
-GOOGLE_API_KEY=your_google_api_key
-GOOGLE_CSE_ID=your_custom_search_engine_id
-DATABASE_URL=postgresql+psycopg2://user:password@localhost:5432/dbname
-REDIS_URL=redis://localhost:6379/0
-# FIREBASE_SERVICE_ACCOUNT_PATH=path/to/your/firebase-credentials.json # (더 이상 사용되지 않음)
+# 2. Docker Compose로 모든 서비스 시작
+docker-compose up --build
 ```
 
-### 4. 서버 실행
-```bash
-# PYTHONPATH 설정 (중요: 프로젝트 루트에서 실행)
-export PYTHONPATH=$PWD
-
-# 서버 시작
-uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
-```
-
-### 5. 접속 확인
-```
-http://127.0.0.1:8000
-```
+### 3. 접속 확인
+- **Frontend (Nginx)**: `http://localhost:8080`
+- **API (직접 접속)**: `http://localhost:8000`
+- **API 문서 (Swagger)**: `http://localhost:8000/docs`
 
 ## 📚 문서 읽기 순서
 
@@ -78,28 +49,34 @@ http://127.0.0.1:8000
 ### 핵심 컴포넌트
 - **Services**: 각 기능별 비즈니스 로직 (e.g., `ReviewService`, `StorageService`, `LLMService`). 서비스는 FastAPI의 의존성 주입(Dependency Injection)을 통해 관리됩니다.
 - **API**: FastAPI를 사용한 RESTful API 엔드포인트
-- **Async Tasks**: Celery를 사용하여 리뷰 생성과 같은 오래 걸리는 작업을 비동기적으로 처리합니다.
+- **Async Tasks**: Celery를 사용하여 리뷰 생성과 같은 오래 걸리는 작업을 비동기적으로 처리합니다. `review_tasks.py`의 핵심 로직은 가독성과 유지보수성을 위해 작은 함수들로 리팩토링되었습니다.
 - **Database**: PostgreSQL과 pgvector 확장을 사용하여 구조화된 데이터와 벡터 임베딩을 저장합니다.
 - **Cache & Message Broker**: Redis를 사용하여 캐싱 및 Celery 메시지 브로커 역할을 수행합니다.
-- **Frontend**: `app/frontend`에 위치한 Vanilla JS 기반 SPA
+- **Frontend**: `app/frontend`에 위치한 React (Vite) 기반 SPA. `@tanstack/react-query`를 사용하여 서버 상태를 관리하고, 데이터 페칭, 캐싱, 동기화를 처리합니다.
+
+### 데이터 저장소 아키텍처
+모든 데이터는 PostgreSQL에 통합되어 관리됩니다. 더 이상 하이브리드 모델이나 SQLite를 사용하지 않습니다.
+
+- **PostgreSQL**: 사용자, 룸, 메시지, 리뷰, 메모리, 사용자 프로필 등 모든 데이터를 저장합니다.
+  - `pgvector`: 의미 검색을 위한 벡터 임베딩 저장 및 쿼리
+  - `pgcrypto`: 민감한 사용자 데이터 필드 암호화
 
 ## 🔧 개발 워크플로우
 
-### 1. 기능 개발
+### 1. 기능 개발 (Docker 내부에서)
+Docker 컨테이너가 실행 중인 상태에서, 로컬 파일 시스템의 변경사항은 컨테이너 내부에 실시간으로 반영됩니다 (volumes 마운트).
+
+- **백엔드 변경**: `app/` 디렉토리의 파일을 수정하면 `uvicorn`이 자동으로 재시작합니다.
+- **프론트엔드 변경**: `app/frontend/` 디렉토리의 파일을 수정하면 Vite 개발 서버가 즉시 변경사항을 반영합니다.
+
+### 2. 테스트 실행 (Docker 내부에서)
+새로운 터미널을 열고 실행 중인 API 서버 컨테이너 내부에서 테스트를 실행할 수 있습니다.
 ```bash
-# 1. 브랜치 생성
-git checkout -b feature/new-feature
+# 실행 중인 api 컨테이너의 ID 또는 이름 찾기
+docker ps
 
-# 2. 코드 작성 (Python 백엔드, JS 프론트엔드)
-
-# 3. 테스트 작성 및 실행
-export PYTHONPATH=$PWD
-pytest tests/
-
-# 4. 코드 품질 검사
-black .
-flake8 app tests
-pyright app
+# 컨테이너 내부에서 전체 테스트 실행
+docker exec -it <api_container_name_or_id> pytest tests/
 ```
 
 ### 5. 커밋 및 푸시
@@ -128,6 +105,7 @@ pytest tests/integration/api/test_reviews_api.py
 - **서비스 로직 테스트**: `unittest.mock`을 사용하여 의존성을 모킹합니다. (`tests/unit/services/` 참고)
 - **비동기 테스트**: `@pytest.mark.anyio` 데코레이터를 사용합니다.
 - **데이터베이스 의존 테스트**: `testing.postgresql` 라이브러리를 사용하여 테스트 실행 시 임시 데이터베이스를 생성하고 관리합니다.
+- **디버깅 팁**: 모든 로그에는 `trace_id`가 포함되어 있어, 특정 요청의 전체 흐름을 추적하는 데 사용할 수 있습니다.
 
 ## 🚨 주의사항
 
@@ -154,6 +132,13 @@ pytest tests/integration/api/test_reviews_api.py
 
 ### 추가 문서
 - **[API 문서](http://127.0.0.1:8000/docs)**: Swagger UI
+
+## ⚠️ 알려진 문제 (Known Issues)
+
+### 1. `requirements-dev.txt` 설치 오류
+**문제**: `pip install -r requirements-dev.txt` 실행 시, 간헐적으로 `[Errno 2] No such file or directory` 오류가 발생할 수 있습니다. 이는 파일이 존재하고 읽기 가능함에도 불구하고 발생하는 환경 특정적인 문제입니다.
+
+**임시 해결책**: 이 문제가 발생하면, 현재로서는 이 단계를 건너뛰고 Docker 기반 개발 환경을 사용하세요. Docker 환경은 필요한 모든 의존성을 포함하고 있습니다. 이 문제는 별도로 추적 및 해결될 예정입니다.
 
 ---
 

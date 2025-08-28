@@ -142,6 +142,9 @@ async def export_room_data(room_id: str, user_info: Dict[str, str] = AUTH_DEPEND
         # Get messages
         messages = await storage_service.get_messages(room_id)
 
+        # Get reviews associated with this room
+        reviews = await storage_service.get_reviews_by_room(room_id)
+
         # Create export data
         from app.models.schemas import ExportData
         from app.utils.helpers import get_current_timestamp
@@ -149,7 +152,7 @@ async def export_room_data(room_id: str, user_info: Dict[str, str] = AUTH_DEPEND
         export_data = ExportData(
             room_id=room_id,
             messages=messages,
-            reviews=[],  # TODO: Implement get_reviews method
+            reviews=[review.model_dump() for review in reviews],
             export_timestamp=get_current_timestamp(),
             format="markdown",
         )

@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: origin-worker-high-priority
+  labels:
+    app: origin
+    component: worker
+    queue: high-priority
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: origin
+      component: worker
+      queue: high-priority
+  template:
+    metadata:
+      labels:
+        app: origin
+        component: worker
+        queue: high-priority
+    spec:
+      containers:
+      - name: worker-high-priority
+        image: your-repo/origin-project:latest # Replace with your actual image repository
+        imagePullPolicy: Always
+        command: ["celery", "-A", "app.celery_app", "worker", "--loglevel=INFO", "-P", "gevent", "-Q", "high_priority"]
+        envFrom:
+        - configMapRef:
+            name: origin-app-config
+        - secretRef:
+            name: origin-app-secrets
+        resources:
+          requests:
+            cpu: "500m" # Higher priority might need more resources
+            memory: "1Gi"
+          limits:
+            cpu: "1"
+            memory: "2Gi"

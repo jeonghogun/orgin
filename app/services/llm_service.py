@@ -8,6 +8,8 @@ from typing import Dict, Any, Tuple, List
 from abc import ABC, abstractmethod
 
 import openai
+import google.generativeai as genai
+import anthropic
 from openai.types.chat import ChatCompletionMessageParam
 from openai.types.chat.completion_create_params import ResponseFormat
 from app.config.settings import settings
@@ -31,16 +33,21 @@ class LLMProvider(ABC):
         pass
 
 
+from typing import Dict, Any, Tuple, List, Optional
+
 class OpenAIProvider(LLMProvider):
     """OpenAI API provider implementation"""
 
-    def __init__(self):
+    def __init__(self, client: Optional[openai.AsyncOpenAI] = None):
         super().__init__()
-        if not settings.OPENAI_API_KEY:
-            raise ValueError(
-                "OpenAI API key is not configured. Please set OPENAI_API_KEY environment variable."
-            )
-        self.client = openai.AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+        if client:
+            self.client = client
+        else:
+            if not settings.OPENAI_API_KEY:
+                raise ValueError(
+                    "OpenAI API key is not configured. Please set OPENAI_API_KEY environment variable."
+                )
+            self.client = openai.AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
 
     async def invoke(
         self,
@@ -83,6 +90,62 @@ class OpenAIProvider(LLMProvider):
             raise
 
 
+class GeminiProvider(LLMProvider):
+    """LLM provider for Google Gemini models"""
+
+    def __init__(self):
+        super().__init__()
+        if not settings.GEMINI_API_KEY:
+            raise ValueError("Gemini API key is not configured.")
+        genai.configure(api_key=settings.GEMINI_API_KEY)
+        self.model = genai.GenerativeModel('gemini-pro')
+
+    async def invoke(
+        self, model: str, system_prompt: str, user_prompt: str, request_id: str, response_format: str = "text"
+    ) -> Tuple[str, Dict[str, Any]]:
+        # Gemini API has a different way of handling system prompts. We combine them.
+        full_prompt = f"{system_prompt}\n\n{user_prompt}"
+        try:
+            response = await self.model.generate_content_async(full_prompt)
+            content = response.text
+            # Gemini API (v1) does not provide token usage metrics in the response
+            metrics = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+            return content, metrics
+        except Exception as e:
+            logger.error(f"Gemini API error: {e}", extra={"req_id": request_id})
+            raise
+
+class ClaudeProvider(LLMProvider):
+    """LLM provider for Anthropic Claude models"""
+
+    def __init__(self):
+        super().__init__()
+        if not settings.ANTHROPIC_API_KEY:
+            raise ValueError("Anthropic API key is not configured.")
+        self.client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+
+    async def invoke(
+        self, model: str, system_prompt: str, user_prompt: str, request_id: str, response_format: str = "text"
+    ) -> Tuple[str, Dict[str, Any]]:
+        try:
+            response = await self.client.messages.create(
+                model=model, # e.g., "claude-3-opus-20240229"
+                system=system_prompt,
+                messages=[{"role": "user", "content": user_prompt}],
+                max_tokens=4000,
+            )
+            content = response.content[0].text
+            metrics = {
+                "prompt_tokens": response.usage.input_tokens,
+                "completion_tokens": response.usage.output_tokens,
+                "total_tokens": response.usage.input_tokens + response.usage.output_tokens,
+            }
+            return content, metrics
+        except Exception as e:
+            logger.error(f"Anthropic API error: {e}", extra={"req_id": request_id})
+            raise
+
+
 class LLMService:
     """Main LLM service orchestrator"""
 
@@ -96,19 +159,34 @@ class LLMService:
         if self._initialized:
             return
 
-        try:
-            if not settings.OPENAI_API_KEY:
-                logger.warning("OpenAI API key is not configured. LLM service will be disabled.")
-                self.providers = {}
-                self._initialized = True
-                return
+        self.providers = {}
 
-            self.providers = {"openai": OpenAIProvider()}
-            self._initialized = True
-            logger.info("LLM providers initialized successfully")
-        except Exception as e:
-            logger.warning(f"LLM provider initialization failed: {e}")
-            self.providers = {}
+        # Initialize OpenAI
+        if settings.OPENAI_API_KEY:
+            try:
+                self.providers["openai"] = OpenAIProvider()
+                logger.info("OpenAI provider initialized.")
+            except Exception as e:
+                logger.warning(f"Failed to initialize OpenAI provider: {e}")
+
+        # Initialize Gemini
+        if settings.GEMINI_API_KEY:
+            try:
+                self.providers["gemini"] = GeminiProvider()
+                logger.info("Gemini provider initialized.")
+            except Exception as e:
+                logger.warning(f"Failed to initialize Gemini provider: {e}")
+
+        # Initialize Claude
+        if settings.ANTHROPIC_API_KEY:
+            try:
+                self.providers["claude"] = ClaudeProvider()
+                logger.info("Claude provider initialized.")
+            except Exception as e:
+                logger.warning(f"Failed to initialize Claude provider: {e}")
+
+        self._initialized = True
+        logger.info(f"LLM service initialized with providers: {list(self.providers.keys())}")
 
     def get_provider(self, provider_name: str = "openai") -> LLMProvider:
         """Get LLM provider instance"""
@@ -147,6 +225,27 @@ class LLMService:
         )
 
         return content, metrics
+
+    async def generate_embedding(self, text: str) -> Tuple[List[float], Dict[str, Any]]:
+        """Generate embedding for a given text."""
+        provider = self.get_provider()
+        # Assuming the provider has an embedding method.
+        # For OpenAI, it's a separate client endpoint.
+        try:
+            response = await self.providers["openai"].client.embeddings.create(
+                input=[text],
+                model="text-embedding-3-small" # Or another model
+            )
+            embedding = response.data[0].embedding
+            usage = response.usage
+            metrics = {
+                "prompt_tokens": usage.prompt_tokens,
+                "total_tokens": usage.total_tokens,
+            }
+            return embedding, metrics
+        except Exception as e:
+            logger.error(f"OpenAI embedding error: {e}")
+            raise
 
     async def generate_consolidated_report(
         self,

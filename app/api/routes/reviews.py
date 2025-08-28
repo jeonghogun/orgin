@@ -3,6 +3,7 @@ Review-related API endpoints
 """
 
 import logging
+import uuid
 from typing import Dict, List, Optional, Any
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import JSONResponse
@@ -55,11 +56,17 @@ async def create_review_and_start_process(
         )
         await storage_service.save_review_meta(review_meta)
 
+        # Generate a trace ID for this entire review process
+        trace_id = str(uuid.uuid4())
+        logger.info(f"Starting review {review_id} with trace_id: {trace_id}")
+
         # Start the async review process
-        review_service.start_review_process(
+        await review_service.start_review_process(
             review_id=review_id,
             topic=review_request.topic,
             instruction=review_request.instruction,
+            panelists=review_request.panelists,
+            trace_id=trace_id,
         )
 
         return review_meta

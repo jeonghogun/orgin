@@ -44,6 +44,7 @@ class CreateReviewRequest(BaseModel):
 
     topic: str
     instruction: str
+    panelists: Optional[List[str]] = None
 
 
 class ReviewMeta(BaseModel):
@@ -125,6 +126,15 @@ class ReviewEvent(BaseModel):
     content: Optional[str] = None
 
 
+class WebSocketMessage(BaseModel):
+    """Standardized envelope for WebSocket messages."""
+    type: str  # e.g., 'status_update', 'error'
+    review_id: str
+    ts: int = Field(default_factory=lambda: int(time.time()))
+    version: str = "1.0"
+    payload: Dict[str, Any]
+
+
 class SearchResult(BaseModel):
     """External search result"""
 
@@ -152,6 +162,7 @@ class ReviewMetrics(BaseModel):
     total_tokens_used: int
     total_cost_usd: float
     round_metrics: List[List[Dict[str, Any]]]
+    provider_metrics: Dict[str, Dict[str, Any]] = {} # e.g. {"openai": {"success": 1, "fail": 0, "total_tokens": 500}}
     created_at: int
 
 
@@ -165,6 +176,7 @@ class MetricsSummary(BaseModel):
     avg_tokens: float
     median_tokens: float
     p95_tokens: float
+    provider_summary: Dict[str, Dict[str, Any]] = {}
 
 
 class MetricsResponse(BaseModel):
