@@ -13,6 +13,10 @@ const sendMessage = async ({ roomId, content }) => {
   return data.response;
 };
 
+import LoadingSpinner from './common/LoadingSpinner';
+import ErrorMessage from './common/ErrorMessage';
+import EmptyState from './common/EmptyState';
+
 const ChatWindow = ({ roomId }) => {
   const queryClient = useQueryClient();
   const [newMessage, setNewMessage] = useState('');
@@ -20,13 +24,12 @@ const ChatWindow = ({ roomId }) => {
   const { data: messages, error, isLoading } = useQuery({
     queryKey: ['messages', roomId],
     queryFn: () => fetchMessages(roomId),
-    enabled: !!roomId, // Only run the query if roomId is available
+    enabled: !!roomId,
   });
 
   const mutation = useMutation({
     mutationFn: sendMessage,
     onSuccess: () => {
-      // Invalidate and refetch the messages query after a new message is sent
       queryClient.invalidateQueries({ queryKey: ['messages', roomId] });
       setNewMessage('');
     },
@@ -38,21 +41,63 @@ const ChatWindow = ({ roomId }) => {
     mutation.mutate({ roomId, content: newMessage });
   };
 
-  if (!roomId) {
-    return <div className="chat-window-placeholder">Select a room to start chatting.</div>;
-  }
+  const renderMessages = () => {
+    if (isLoading) return <LoadingSpinner />;
+    if (error) return <ErrorMessage error={error} message="Failed to fetch messages." />;
+    if (!messages || messages.length === 0) {
+      return <EmptyState message="No messages yet. Send one to start the conversation." />;
+    }
+    return messages.map((msg, index) => (
+      <div key={index} className={`message ${msg.role}`}>
+        <strong>{msg.role}:</strong> {msg.content}
+      </div>
+    ));
+  };
 
-  if (isLoading) return <div>Loading messages...</div>;
-  if (error) return <div className="error">Failed to fetch messages.</div>;
+  const handleExport = async (format) => {
+    if (!roomId) return;
+    try {
+      const response = await axios.get(`/api/rooms/${roomId}/export?format=${format}`, {
+        responseType: format === 'markdown' ? 'blob' : 'json',
+      });
+
+      if (format === 'markdown') {
+        const url = window.URL.createObjectURL(new Blob([response.data]));
+        const link = document.createElement('a');
+        link.href = url;
+        const roomName = 'export'; // In a real app, get room name from state
+        link.setAttribute('download', `export_room_${roomId}_${Date.now()}.md`);
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+      } else {
+        // For JSON, maybe open in new tab or copy to clipboard
+        const jsonString = JSON.stringify(response.data, null, 2);
+        const blob = new Blob([jsonString], { type: 'application/json' });
+        const url = window.URL.createObjectURL(blob);
+        window.open(url, '_blank');
+      }
+    } catch (err) {
+      console.error(`Failed to export as ${format}`, err);
+      alert(`Failed to export as ${format}.`);
+    }
+  };
+
+  if (!roomId) {
+    return <div className="chat-window-placeholder"><EmptyState message="Select a room to start chatting." /></div>;
+  }
 
   return (
     <div className="chat-window">
+      <div className="chat-header">
+        <span>Room: {roomId}</span>
+        <div className="export-buttons">
+          <button onClick={() => handleExport('json')}>Export JSON</button>
+          <button onClick={() => handleExport('markdown')}>Export Markdown</button>
+        </div>
+      </div>
       <div className="message-list">
-        {messages && messages.map((msg, index) => (
-          <div key={index} className={`message ${msg.role}`}>
-            <strong>{msg.role}:</strong> {msg.content}
-          </div>
-        ))}
+        {renderMessages()}
       </div>
       <form onSubmit={handleSendMessage} className="message-form">
         <input

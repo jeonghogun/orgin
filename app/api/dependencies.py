@@ -17,9 +17,17 @@ from app.services.intent_service import IntentService
 from app.services.external_api_service import ExternalSearchService
 from app.services.firebase_service import FirebaseService
 from app.services.context_llm_service import ContextLLMService
+from app.services.audit_service import AuditService
+from app.services.admin_service import AdminService
+from app.core.secrets import SecretProvider, env_secrets_provider
+import redis
 
 
 # --- Service Singletons ---
+_admin_service: Optional[AdminService] = None
+_audit_service: Optional[AuditService] = None
+_redis_client: Optional[redis.Redis] = None
+_secret_provider: Optional[SecretProvider] = None
 _storage_service: Optional[StorageService] = None
 _llm_service: Optional[LLMService] = None
 _review_service: Optional[ReviewService] = None
@@ -34,13 +42,13 @@ _context_llm_service: Optional["ContextLLMService"] = None
 def get_storage_service() -> StorageService:
     global _storage_service
     if _storage_service is None:
-        _storage_service = StorageService()
+        _storage_service = StorageService(secret_provider=get_secret_provider())
     return _storage_service
 
 def get_llm_service() -> LLMService:
     global _llm_service
     if _llm_service is None:
-        _llm_service = LLMService()
+        _llm_service = LLMService(secret_provider=get_secret_provider())
     return _llm_service
 
 def get_review_service() -> ReviewService:
@@ -54,7 +62,8 @@ def get_memory_service() -> MemoryService:
     if _memory_service is None:
         _memory_service = MemoryService(
             db_service=get_database_service(),
-            llm_service=get_llm_service()
+            llm_service=get_llm_service(),
+            secret_provider=get_secret_provider()
         )
     return _memory_service
 
@@ -96,6 +105,38 @@ def get_context_llm_service() -> "ContextLLMService":
             llm_service=get_llm_service(), memory_service=get_memory_service()
         )
     return _context_llm_service
+
+
+def get_secret_provider() -> SecretProvider:
+    """Dependency to get the current secrets provider."""
+    global _secret_provider
+    if _secret_provider is None:
+        _secret_provider = env_secrets_provider
+    return _secret_provider
+
+def get_audit_service() -> AuditService:
+    """Dependency to get the AuditService instance."""
+    global _audit_service
+    if _audit_service is None:
+        from app.services.audit_service import get_audit_service as get_audit_service_from_module
+        _audit_service = get_audit_service_from_module()
+    return _audit_service
+
+def get_admin_service() -> AdminService:
+    """Dependency to get the AdminService instance."""
+    global _admin_service
+    if _admin_service is None:
+        from app.services.admin_service import get_admin_service as get_admin_service_from_module
+        _admin_service = get_admin_service_from_module()
+    return _admin_service
+
+
+def get_redis_client() -> redis.Redis:
+    """Dependency to get the Redis client instance."""
+    global _redis_client
+    if _redis_client is None:
+        _redis_client = redis.from_url(settings.REDIS_URL)
+    return _redis_client
 
 
 # --- Auth Dependency ---

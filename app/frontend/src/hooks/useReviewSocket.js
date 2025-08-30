@@ -6,6 +6,7 @@ const INITIAL_RECONNECT_DELAY = 1000; // 1 second
 const useReviewSocket = (reviewId, token) => {
   const [status, setStatus] = useState('pending');
   const [error, setError] = useState(null);
+  const [connectionStatus, setConnectionStatus] = useState('idle');
   const websocket = useRef(null);
   const reconnectAttempts = useRef(0);
   const processedMessageIds = useRef(new Set());
@@ -19,16 +20,16 @@ const useReviewSocket = (reviewId, token) => {
       return;
     }
 
+    setConnectionStatus('connecting');
     const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
     const wsUrl = `${wsProtocol}://${window.location.host}/ws/reviews/${reviewId}`;
 
-    // Pass the token as the second argument in the subprotocol array
     websocket.current = new WebSocket(wsUrl, ['graphql-ws', token]);
 
     websocket.current.onopen = () => {
       console.log('WebSocket connected for review:', reviewId);
-      setStatus('connected');
-      reconnectAttempts.current = 0; // Reset on successful connection
+      setConnectionStatus('connected');
+      reconnectAttempts.current = 0;
     };
 
     websocket.current.onmessage = (event) => {
@@ -55,10 +56,13 @@ const useReviewSocket = (reviewId, token) => {
     websocket.current.onerror = (err) => {
       console.error('WebSocket error:', err);
       setError('WebSocket connection error.');
+      setConnectionStatus('error');
     };
 
     websocket.current.onclose = (event) => {
       console.log(`WebSocket disconnected for review ${reviewId}:`, event.code, event.reason);
+      setConnectionStatus('disconnected');
+
       if (event.code === 1008) { // Policy Violation
         setError("Connection closed due to authorization failure.");
         return; // Do not reconnect on auth errors
@@ -67,12 +71,14 @@ const useReviewSocket = (reviewId, token) => {
       if (reconnectAttempts.current < MAX_RECONNECT_ATTEMPTS) {
         const delay = INITIAL_RECONNECT_DELAY * Math.pow(2, reconnectAttempts.current);
         console.log(`Attempting to reconnect in ${delay}ms...`);
+        setConnectionStatus('reconnecting');
         setTimeout(() => {
           reconnectAttempts.current++;
           connect();
         }, delay);
       } else {
         setError('Could not reconnect to WebSocket after multiple attempts.');
+        setConnectionStatus('failed');
       }
     };
   }, [reviewId, token]);
@@ -104,7 +110,7 @@ const useReviewSocket = (reviewId, token) => {
     };
   }, [connect]);
 
-  return { status, error };
+  return { status, error, connectionStatus };
 };
 
 export default useReviewSocket;

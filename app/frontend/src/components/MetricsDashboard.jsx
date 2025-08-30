@@ -7,20 +7,20 @@ const fetchMetricsSummary = async () => {
   return data.data;
 };
 
+import LoadingSpinner from './common/LoadingSpinner';
+import ErrorMessage from './common/ErrorMessage';
+import EmptyState from './common/EmptyState';
+
 const MetricsDashboard = () => {
   const { data: summary, error, isLoading } = useQuery({
     queryKey: ['metricsSummary'],
     queryFn: fetchMetricsSummary,
-    refetchInterval: 10000, // Refetch every 10 seconds
+    refetchInterval: 10000,
   });
 
-  if (isLoading) {
-    return <div>Loading metrics...</div>;
-  }
-
-  if (error) {
-    return <div className="error">Failed to fetch metrics summary.</div>;
-  }
+  if (isLoading) return <LoadingSpinner />;
+  if (error) return <ErrorMessage error={error} message="Could not load metrics dashboard." />;
+  if (!summary) return <EmptyState message="No metrics data available yet." />;
 
   return (
     <div className="metrics-dashboard">

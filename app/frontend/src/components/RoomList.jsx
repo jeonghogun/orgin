@@ -7,34 +7,44 @@ const fetchRooms = async () => {
   return data;
 };
 
+import LoadingSpinner from './common/LoadingSpinner';
+import ErrorMessage from './common/ErrorMessage';
+import EmptyState from './common/EmptyState';
+
 const RoomList = ({ onRoomSelect }) => {
   const { data: rooms, error, isLoading } = useQuery({
     queryKey: ['rooms'],
     queryFn: fetchRooms,
   });
 
-  if (isLoading) {
-    return <div>Loading rooms...</div>;
-  }
+  const renderContent = () => {
+    if (isLoading) {
+      return <LoadingSpinner />;
+    }
 
-  if (error) {
-    return <div className="error">Failed to fetch rooms.</div>;
-  }
+    if (error) {
+      return <ErrorMessage error={error} message="Failed to fetch rooms." />;
+    }
+
+    if (!rooms || rooms.length === 0) {
+      return <EmptyState message="No rooms found. Create one to get started." />;
+    }
+
+    return (
+      <ul>
+        {rooms.map((room) => (
+          <li key={room.room_id} onClick={() => onRoomSelect(room.room_id)} className="room-item">
+            {room.name} ({room.type})
+          </li>
+        ))}
+      </ul>
+    );
+  };
 
   return (
     <div className="room-list">
       <h2>Rooms</h2>
-      <ul>
-        {rooms && rooms.length > 0 ? (
-          rooms.map((room) => (
-            <li key={room.room_id} onClick={() => onRoomSelect(room.room_id)} className="room-item">
-              {room.name} ({room.type})
-            </li>
-          ))
-        ) : (
-          <p>No rooms found.</p>
-        )}
-      </ul>
+      {renderContent()}
     </div>
   );
 };

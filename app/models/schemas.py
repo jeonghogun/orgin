@@ -65,6 +65,20 @@ class ReviewMeta(BaseModel):
     failed_panels: List[str] = []
 
 
+class ReviewFull(ReviewMeta):
+    """Full review data including the final report."""
+    final_report: Optional[Dict[str, Any]] = None
+
+
+class ExportableReview(BaseModel):
+    """A structured representation of a review for data export."""
+    topic: str
+    status: str
+    created_at: int
+    final_summary: str
+    next_steps: List[str]
+
+
 class PanelReport(BaseModel):
     """Individual panel analysis report"""
 
@@ -148,10 +162,10 @@ class ExportData(BaseModel):
     """Export data structure"""
 
     room_id: str
+    room_name: str
     messages: List[Message]
-    reviews: List[Dict[str, Any]]
+    reviews: List[ExportableReview]
     export_timestamp: int
-    format: Literal["markdown", "json"] = "markdown"
 
 
 class ReviewMetrics(BaseModel):

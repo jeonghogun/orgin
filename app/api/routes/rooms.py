@@ -3,18 +3,57 @@ Room-related API endpoints
 """
 
 import logging
-from typing import Dict, List
-from fastapi import APIRouter, HTTPException
+from typing import Dict, List, Literal
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import Response, JSONResponse
 
 from app.services.storage_service import storage_service
-from app.utils.helpers import generate_id, create_success_response
+from app.utils.helpers import generate_id, create_success_response, get_current_timestamp
 from app.api.dependencies import AUTH_DEPENDENCY
-from app.models.schemas import CreateRoomRequest, Room
+from app.models.schemas import CreateRoomRequest, Room, ExportData, ExportableReview, Message
+
 
 logger = logging.getLogger(__name__)
 
 # Create router
 router = APIRouter(prefix="", tags=["rooms"])
+
+
+def _format_export_as_markdown(export_data: ExportData) -> str:
+    """Helper function to format export data as a Markdown string."""
+    lines = []
+    lines.append(f"# Export for Room: {export_data.room_name} ({export_data.room_id})")
+    lines.append(f"Exported on: {get_current_timestamp()}")
+    lines.append("\n---\n")
+
+    lines.append("## Chat History")
+    if not export_data.messages:
+        lines.append("_No messages in this room._")
+    else:
+        for msg in export_data.messages:
+            lines.append(f"**{msg.role} ({msg.timestamp}):**")
+            lines.append(f"> {msg.content}")
+            lines.append("")
+    lines.append("\n---\n")
+
+    lines.append("## Reviews")
+    if not export_data.reviews:
+        lines.append("_No reviews initiated in this room._")
+    else:
+        for i, review in enumerate(export_data.reviews, 1):
+            lines.append(f"### Review {i}: {review.topic}")
+            lines.append(f"- **Status:** {review.status}")
+            lines.append(f"- **Created:** {review.created_at}")
+            lines.append(f"- **Summary:** {review.final_summary}")
+            lines.append("- **Next Steps / Recommendations:**")
+            if not review.next_steps:
+                lines.append("  - _None provided._")
+            else:
+                for step in review.next_steps:
+                    lines.append(f"  - {step}")
+            lines.append("")
+
+    return "\n".join(lines)
 
 
 @router.post("", response_model=Room)
@@ -126,40 +165,68 @@ async def delete_room(room_id: str, user_info: Dict[str, str] = AUTH_DEPENDENCY)
 
 
 @router.get("/{room_id}/export")
-async def export_room_data(room_id: str, user_info: Dict[str, str] = AUTH_DEPENDENCY):
-    """Export room data"""
+async def export_room_data(
+    room_id: str,
+    user_info: Dict[str, str] = AUTH_DEPENDENCY,
+    format: Literal["json", "markdown"] = Query("json", description="The desired export format."),
+):
+    """Export room data, including chat history and all review summaries."""
     try:
-        # Validate user_info
         if not user_info or "user_id" not in user_info:
-            logger.error(f"Invalid user_info: {user_info}")
             raise HTTPException(status_code=400, detail="Invalid user information")
 
-        # Get room data
         room = await storage_service.get_room(room_id)
-        if not room:
-            raise HTTPException(status_code=404, detail="Room not found")
+        if not room or room.owner_id != user_info.get("user_id"):
+            raise HTTPException(status_code=404, detail="Room not found or access denied")
 
-        # Get messages
         messages = await storage_service.get_messages(room_id)
+        full_reviews = await storage_service.get_full_reviews_by_room(room_id)
 
-        # Get reviews associated with this room
-        reviews = await storage_service.get_reviews_by_room(room_id)
+        exportable_reviews = []
+        for review in full_reviews:
+            next_steps = []
+            summary = "Not completed."
+            if review.final_report:
+                summary = review.final_report.get("executive_summary", "Summary not available.")
+                # Extract next steps from alternatives and recommendations
+                next_steps.extend(review.final_report.get("alternatives", []))
+                rec = review.final_report.get("recommendation")
+                if rec:
+                    next_steps.append(f"Final Recommendation: {rec}")
 
-        # Create export data
-        from app.models.schemas import ExportData
-        from app.utils.helpers import get_current_timestamp
+            exportable_reviews.append(
+                ExportableReview(
+                    topic=review.topic,
+                    status=review.status,
+                    created_at=review.created_at,
+                    final_summary=summary,
+                    next_steps=next_steps,
+                )
+            )
 
         export_data = ExportData(
             room_id=room_id,
+            room_name=room.name,
             messages=messages,
-            reviews=[review.model_dump() for review in reviews],
+            reviews=exportable_reviews,
             export_timestamp=get_current_timestamp(),
-            format="markdown",
         )
 
-        return create_success_response(data=export_data.model_dump())
+        if format == "markdown":
+            markdown_content = _format_export_as_markdown(export_data)
+            return Response(
+                content=markdown_content,
+                media_type="text/markdown",
+                headers={
+                    "Content-Disposition": f"attachment; filename=export_room_{room_id}.md"
+                },
+            )
+
+        # Default to JSON
+        return JSONResponse(content=export_data.model_dump())
+
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error exporting room {room_id}: {e}")
+        logger.error(f"Error exporting room {room_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Export failed")

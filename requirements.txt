@@ -15,3 +15,6 @@ redis
 celery
 asgiref
 gunicorn
+alembic
+PyYAML
+prometheus-fastapi-instrumentator

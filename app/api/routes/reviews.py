@@ -24,17 +24,33 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["reviews"])
 
 
+import redis
+from fastapi import Header
+
+from app.api.dependencies import get_redis_client
+
+IDEMPOTENCY_KEY_TTL = 60 * 60 * 24  # 24 hours
+
 @router.post("/rooms/{sub_room_id}/reviews", response_model=ReviewMeta)
 async def create_review_and_start_process(
     sub_room_id: str,
     review_request: CreateReviewRequest,
     user_info: Dict[str, str] = AUTH_DEPENDENCY,
-    storage_service: StorageService = Depends(get_storage_service),  # pyright: ignore[reportCallInDefaultInitializer]
-    review_service: ReviewService = Depends(get_review_service),  # pyright: ignore[reportCallInDefaultInitializer]
+    storage_service: StorageService = Depends(get_storage_service),
+    review_service: ReviewService = Depends(get_review_service),
+    redis_client: redis.Redis = Depends(get_redis_client),
+    Idempotency_Key: Optional[str] = Header(None, alias="Idempotency-Key"),
 ):
     """
     Create a new review and immediately start the asynchronous review process.
+    This endpoint supports an Idempotency-Key header to prevent duplicate requests.
     """
+    if Idempotency_Key:
+        cached_response = redis_client.get(f"idempotency:{Idempotency_Key}")
+        if cached_response:
+            logger.info(f"Idempotency key '{Idempotency_Key}' hit. Returning cached response.")
+            return JSONResponse(content=json.loads(cached_response), status_code=200)
+
     # Verify sub-room exists and belongs to user
     sub_room = await storage_service.get_room(sub_room_id)
     if not sub_room or sub_room.owner_id != user_info.get("user_id"):
@@ -49,18 +65,15 @@ async def create_review_and_start_process(
             room_id=sub_room_id,
             topic=review_request.topic,
             instruction=review_request.instruction,
-            status="pending",  # Status is pending until the first task runs
+            status="pending",
             total_rounds=3,
-            current_round=0,
             created_at=get_current_timestamp(),
         )
         await storage_service.save_review_meta(review_meta)
 
-        # Generate a trace ID for this entire review process
         trace_id = str(uuid.uuid4())
         logger.info(f"Starting review {review_id} with trace_id: {trace_id}")
 
-        # Start the async review process
         await review_service.start_review_process(
             review_id=review_id,
             topic=review_request.topic,
@@ -68,6 +81,11 @@ async def create_review_and_start_process(
             panelists=review_request.panelists,
             trace_id=trace_id,
         )
+
+        if Idempotency_Key:
+            response_json = review_meta.model_dump_json()
+            redis_client.set(f"idempotency:{Idempotency_Key}", response_json, ex=IDEMPOTENCY_KEY_TTL)
+            logger.info(f"Cached response for idempotency key '{Idempotency_Key}'.")
 
         return review_meta
     except Exception as e:
