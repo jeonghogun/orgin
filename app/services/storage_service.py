@@ -233,23 +233,40 @@ class StorageService:
     async def save_panel_report(
         self, review_id: str, round_num: int, persona: str, report: PanelReport
     ) -> None:
-        """Save panel report"""
-        # This is complex to model in SQL, for now we can store it as JSON
-        # in the final report. This is a simplification.
-        pass
+        """Save panel report to the database."""
+        query = """
+            INSERT INTO panel_reports (review_id, round_num, persona, report_data)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (review_id, round_num, persona) DO UPDATE SET
+                report_data = EXCLUDED.report_data;
+        """
+        report_json = report.model_dump_json()
+        params = (review_id, round_num, persona, report_json)
+        self.db.execute_update(query, params)
 
     async def save_consolidated_report(
         self, review_id: str, round_num: int, report: ConsolidatedReport
     ) -> None:
-        """Save consolidated report"""
-        # This is also complex, will be stored as part of the final report.
-        pass
+        """Save consolidated report to the database."""
+        query = """
+            INSERT INTO consolidated_reports (review_id, round_num, report_data)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (review_id, round_num) DO UPDATE SET
+                report_data = EXCLUDED.report_data;
+        """
+        report_json = report.model_dump_json()
+        params = (review_id, round_num, report_json)
+        self.db.execute_update(query, params)
 
     async def get_consolidated_report(
-        self, review_id: str
+        self, review_id: str, round_num: int
     ) -> Optional[ConsolidatedReport]:
-        """Get consolidated report by ID"""
-        # TODO: Implement this method if needed, or retrieve from final report
+        """Get consolidated report by ID and round number"""
+        query = "SELECT report_data FROM consolidated_reports WHERE review_id = %s AND round_num = %s"
+        params = (review_id, round_num)
+        result = self.db.execute_query(query, params)
+        if result and result[0].get("report_data"):
+            return ConsolidatedReport.model_validate(result[0]["report_data"])
         return None
 
     async def save_final_report(

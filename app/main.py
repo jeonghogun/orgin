@@ -37,11 +37,11 @@ class TraceIdFilter(logging.Filter):
         record.trace_id = trace_id_var.get()
         return True
 
+from logging.config import dictConfig
+from app.utils.logging_config import LOGGING_CONFIG
+
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s [%(trace_id)s] - %(message)s",
-)
+dictConfig(LOGGING_CONFIG)
 # Add the filter to the root logger
 logging.getLogger().addFilter(TraceIdFilter())
 
