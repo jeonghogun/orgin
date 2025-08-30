@@ -15,7 +15,6 @@ from app.services.memory_service import MemoryService
 from app.services.rag_service import RAGService
 from app.services.intent_service import IntentService
 from app.services.external_api_service import ExternalSearchService
-from app.services.firebase_service import FirebaseService
 from app.services.context_llm_service import ContextLLMService
 from app.services.audit_service import AuditService
 from app.services.admin_service import AdminService
@@ -35,7 +34,6 @@ _memory_service: Optional[MemoryService] = None
 _rag_service: Optional[RAGService] = None
 _intent_service: Optional[IntentService] = None
 _search_service: Optional[ExternalSearchService] = None
-_firebase_service: Optional[FirebaseService] = None
 _context_llm_service: Optional["ContextLLMService"] = None
 
 
@@ -89,12 +87,6 @@ def get_search_service() -> ExternalSearchService:
     if _search_service is None:
         _search_service = ExternalSearchService()
     return _search_service
-
-def get_firebase_service() -> FirebaseService:
-    global _firebase_service
-    if _firebase_service is None:
-        _firebase_service = FirebaseService()
-    return _firebase_service
 
 
 def get_context_llm_service() -> "ContextLLMService":
