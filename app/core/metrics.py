@@ -1,0 +1,25 @@
+"""
+Custom Prometheus metrics for the application.
+"""
+from prometheus_client import Counter, Histogram
+
+# A counter to track the total number of LLM calls, labeled by provider and outcome.
+LLM_CALLS_TOTAL = Counter(
+    "origin_llm_calls_total",
+    "Total number of LLM calls",
+    ["provider", "outcome"] # outcome can be "success" or "failure"
+)
+
+# A histogram to track the latency of LLM calls, labeled by provider.
+LLM_LATENCY_SECONDS = Histogram(
+    "origin_llm_latency_seconds",
+    "Latency of LLM calls in seconds",
+    ["provider"]
+)
+
+# A counter for total tokens used, labeled by provider and kind (prompt/completion).
+LLM_TOKENS_TOTAL = Counter(
+    "origin_tokens_total",
+    "Total number of tokens used in LLM calls",
+    ["provider", "kind"] # kind can be "prompt" or "completion"
+)

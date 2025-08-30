@@ -57,21 +57,32 @@ async def mock_llm_invoke(model, system_prompt, user_prompt, request_id, respons
 @pytest.fixture(scope="session")
 def postgresql_factory():
     """Factory for creating temporary PostgreSQL instances."""
-    def on_initialized(postgresql):
-        with psycopg2.connect(postgresql.url()) as conn:
-            with conn.cursor() as cursor:
-                with open("app/db/schema.sql", "r") as f:
-                    cursor.execute(f.read())
-            conn.commit()
-
-    return testing.postgresql.PostgresqlFactory(cache_initialized_db=True, on_initialized=on_initialized)
+    # This factory is cached for the entire test session.
+    return testing.postgresql.PostgresqlFactory(cache_initialized_db=True)
 
 
 @pytest.fixture(scope="session")
 def test_db(postgresql_factory):
-    """Create a temporary database instance for the test session."""
+    """
+    Creates a temporary database, runs alembic migrations, and yields the instance.
+    """
+    from alembic.config import Config
+    from alembic import command
+
     postgresql = postgresql_factory()
+
+    # Temporarily override the database URL for Alembic
+    original_db_url = settings.DATABASE_URL
+    settings.DATABASE_URL = postgresql.url()
+
+    # Run migrations
+    alembic_cfg = Config("alembic.ini")
+    command.upgrade(alembic_cfg, "head")
+
     yield postgresql
+
+    # Teardown: restore original settings and stop the database
+    settings.DATABASE_URL = original_db_url
     postgresql.stop()
 
 

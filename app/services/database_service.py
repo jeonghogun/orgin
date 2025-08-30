@@ -8,15 +8,20 @@ from psycopg2.extensions import connection
 logger = logging.getLogger(__name__)
 
 
+from app.core.secrets import SecretProvider
+
 class DatabaseService:
-    def __init__(self) -> None:
+    def __init__(self, secret_provider: SecretProvider) -> None:
         super().__init__()
         self.conn: Optional[connection] = None
+        self.database_url = secret_provider.get("DATABASE_URL")
+        if not self.database_url:
+            raise ValueError("DATABASE_URL secret not found.")
 
     def get_connection(self) -> connection:
         if self.conn is None or self.conn.closed:
             try:
-                self.conn = psycopg2.connect(settings.DATABASE_URL)
+                self.conn = psycopg2.connect(self.database_url)
                 register_vector(self.conn)  # type: ignore
                 logger.info("Database connection successful")
             except psycopg2.OperationalError as e:
@@ -56,7 +61,8 @@ _database_service_instance: Optional[DatabaseService] = None
 
 def get_database_service() -> DatabaseService:
     """Returns the singleton instance of the DatabaseService."""
+    from app.core.secrets import env_secrets_provider
     global _database_service_instance
     if _database_service_instance is None:
-        _database_service_instance = DatabaseService()
+        _database_service_instance = DatabaseService(secret_provider=env_secrets_provider)
     return _database_service_instance

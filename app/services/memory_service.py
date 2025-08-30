@@ -1,147 +1,154 @@
 """
-Memory Service - Manages long-term memories using PostgreSQL and pgvector.
+Memory Service - Manages a two-tier memory architecture with hybrid retrieval.
 """
 import logging
 import json
-from typing import List, Optional, Tuple
+import math
+import asyncio
+from datetime import datetime, timezone
+from typing import List, Optional, Tuple, Dict, Any
 
-from app.models.memory_schemas import MemoryEntry, UserProfile, ConversationContext, ContextUpdate
+from app.models.schemas import Message, UserProfile, ConversationContext, ContextUpdate
 from app.services.database_service import DatabaseService
 from app.services.llm_service import LLMService
+from app.core.secrets import SecretProvider
 from app.utils.helpers import generate_id, get_current_timestamp
+from app.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
 class MemoryService:
-    """
-    Manages the creation, retrieval, and semantic search of memories,
-    all stored within the primary PostgreSQL database.
-    """
-
-    def __init__(self, db_service: DatabaseService, llm_service: LLMService):
-        """
-        Initializes the MemoryService with dependencies.
-        """
-        super().__init__()
+    def __init__(self, db_service: DatabaseService, llm_service: LLMService, secret_provider: SecretProvider):
         self.db = db_service
         self.llm_service = llm_service
+        self.secret_provider = secret_provider
+        self.db_encryption_key = self.secret_provider.get("DB_ENCRYPTION_KEY")
+        if not self.db_encryption_key:
+            raise ValueError("DB_ENCRYPTION_KEY not found in secret provider.")
 
-    async def set_memory(
-        self,
-        room_id: str,
-        user_id: str,
-        key: str,
-        value: str,
-        importance: float = 1.0,
-        ttl: Optional[int] = None,
-    ) -> bool:
-        """
-        Creates an embedding for the memory's value and saves it to the database.
-        """
-        try:
-            memory_id = generate_id()
-            current_time = get_current_timestamp()
-            expires_at = current_time + ttl if ttl else None
+    async def get_relevant_memories_hybrid(self, query: str, room_ids: List[str], user_id: str, limit: int = settings.HYBRID_RETURN_TOPN) -> List[Message]:
+        bm25_candidates_task = self._bm25_candidates(query, room_ids, user_id)
+        vector_candidates_task = self._vector_candidates(query, room_ids, user_id)
+        bm25_results, vector_results = await asyncio.gather(bm25_candidates_task, vector_candidates_task)
+        merged_results = self._merge_and_score(bm25_results, vector_results)
+        if settings.TIME_DECAY_ENABLED:
+            merged_results = self._apply_time_decay(merged_results)
+        merged_results.sort(key=lambda x: x['score'], reverse=True)
+        if settings.RERANK_ENABLED:
+            merged_results = await self._optional_rerank(query, merged_results)
+        final_results_data = merged_results[:limit]
+        for result in final_results_data:
+            result['content'] = self._decrypt_content(result['content'])
+        return [Message(**msg) for msg in final_results_data]
 
-            # Generate an embedding for the memory's value for semantic search
-            embedding, _ = await self.llm_service.generate_embedding(value)
-
-            query = """
-                INSERT INTO memories (memory_id, user_id, room_id, key, value, embedding, importance, expires_at, created_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """
-            params = (
-                memory_id,
-                user_id,
-                room_id,
-                key,
-                value,
-                embedding,
-                importance,
-                expires_at,
-                current_time,
-            )
-            self.db.execute_update(query, params)
-            logger.info(f"Successfully saved memory '{key}' for user '{user_id}' in room '{room_id}'.")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to set memory for user '{user_id}': {e}", exc_info=True)
-            return False
-
-    async def get_memory(self, room_id: str, user_id: str, key: str) -> Optional[MemoryEntry]:
-        """
-        Retrieves a specific memory by its key for a given user and room.
-        """
-        query = """
-            SELECT * FROM memories
-            WHERE user_id = %s AND room_id = %s AND key = %s
-            AND (expires_at IS NULL OR expires_at > %s)
-            ORDER BY created_at DESC
-            LIMIT 1
-        """
-        params = (user_id, room_id, key, get_current_timestamp())
+    def _decrypt_content(self, encrypted_content: bytes) -> str:
+        if not encrypted_content: return ""
+        query = "SELECT pgp_sym_decrypt(%s, %s) as decrypted"
+        params = (encrypted_content, self.db_encryption_key)
         result = self.db.execute_query(query, params)
-        return MemoryEntry(**result[0]) if result else None
+        return result[0]['decrypted'] if result else ""
+
+    async def _bm25_candidates(self, query: str, room_ids: List[str], user_id: str) -> List[Dict[str, Any]]:
+        sql = """
+            SELECT message_id, room_id, user_id, role, content, timestamp, ts_rank_cd(ts, plainto_tsquery('simple', %s)) as score
+            FROM messages WHERE room_id = ANY(%s) AND user_id = %s AND ts @@ plainto_tsquery('simple', %s)
+            ORDER BY score DESC LIMIT %s;
+        """
+        params = (query, room_ids, user_id, query, settings.HYBRID_TOPK_BM25)
+        return self.db.execute_query(sql, params)
+
+    async def _vector_candidates(self, query: str, room_ids: List[str], user_id: str) -> List[Dict[str, Any]]:
+        query_embedding, _ = await self.llm_service.generate_embedding(query)
+        sql = """
+            SELECT message_id, room_id, user_id, role, content, timestamp, 1 - (embedding <=> %s) as score
+            FROM messages WHERE room_id = ANY(%s) AND user_id = %s
+            ORDER BY embedding <=> %s LIMIT %s;
+        """
+        params = (query_embedding, room_ids, user_id, query_embedding, settings.HYBRID_TOPK_VEC)
+        return self.db.execute_query(sql, params)
+
+    def _normalize_scores(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        scores = [r['score'] for r in results if r.get('score') is not None]
+        if not scores: return results
+        min_score, max_score = min(scores), max(scores)
+        if max_score == min_score:
+            for r in results: r['score'] = 0.5
+            return results
+        for r in results:
+            r['score'] = (r.get('score', 0) - min_score) / (max_score - min_score)
+        return results
+
+    def _merge_and_score(self, bm25_results: List[Dict[str, Any]], vector_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        bm25_results = self._normalize_scores(bm25_results)
+        vector_results = self._normalize_scores(vector_results)
+        all_results: Dict[str, Dict[str, Any]] = {}
+        for r in bm25_results:
+            all_results[r['message_id']] = {**r, 'score': r.get('score', 0) * settings.HYBRID_BM25_WEIGHT}
+        for r in vector_results:
+            if r['message_id'] in all_results:
+                all_results[r['message_id']]['score'] += r.get('score', 0) * settings.HYBRID_VEC_WEIGHT
+            else:
+                all_results[r['message_id']] = {**r, 'score': r.get('score', 0) * settings.HYBRID_VEC_WEIGHT}
+        return list(all_results.values())
+
+    def _apply_time_decay(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        now_ts = datetime.now(timezone.utc).timestamp()
+        for r in results:
+            age_days = (now_ts - r['timestamp']) / (60 * 60 * 24)
+            decay_factor = math.exp(-settings.TIME_DECAY_LAMBDA * age_days)
+            r['score'] *= decay_factor
+        return results
+
+    async def _optional_rerank(self, query: str, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        logger.info("Reranking step is enabled (logic not yet implemented).")
+        return results
+
+    async def upsert_user_fact(self, user_id: str, kind: str, key: str, value: Dict[str, Any], confidence: float) -> None:
+        sql = """
+            INSERT INTO user_facts (user_id, kind, key, value_json, confidence, updated_at)
+            VALUES (%s, %s, %s, %s, %s, NOW())
+            ON CONFLICT (user_id, kind, key) DO UPDATE SET
+                value_json = EXCLUDED.value_json, confidence = EXCLUDED.confidence, updated_at = NOW();
+        """
+        params = (user_id, kind, key, json.dumps(value), confidence)
+        self.db.execute_update(sql, params)
+
+    async def get_user_facts(self, user_id: str, kind: Optional[str] = None) -> List[Dict[str, Any]]:
+        if kind:
+            sql = "SELECT * FROM user_facts WHERE user_id = %s AND kind = %s ORDER BY confidence DESC"
+            params = (user_id, kind)
+        else:
+            sql = "SELECT * FROM user_facts WHERE user_id = %s ORDER BY confidence DESC"
+            params = (user_id,)
+        return self.db.execute_query(sql, params)
 
     async def get_user_profile(self, user_id: str) -> Optional[UserProfile]:
-        """
-        Retrieves and decrypts a user's profile from the database.
-        If no profile exists, it creates a new one with encrypted fields.
-        """
-        from app.config.settings import settings
-        key = settings.DB_ENCRYPTION_KEY
-
+        key = self.db_encryption_key
         try:
             query = """
-                SELECT
-                    user_id,
-                    role,
-                    pgp_sym_decrypt(name, %s::text) as name,
-                    pgp_sym_decrypt(preferences, %s::text) as preferences,
-                    conversation_style,
-                    interests,
-                    created_at,
-                    updated_at
+                SELECT user_id, role, pgp_sym_decrypt(name, %s::text) as name,
+                       pgp_sym_decrypt(preferences, %s::text) as preferences,
+                       conversation_style, interests, created_at, updated_at
                 FROM user_profiles WHERE user_id = %s
             """
             params = (key, key, user_id)
             results = self.db.execute_query(query, params)
-
             if results:
                 profile_data = results[0]
-                # Decrypted preferences will be a string, so we need to parse it
-                if profile_data['preferences']:
-                    profile_data['preferences'] = json.loads(profile_data['preferences'])
-                else:
-                    profile_data['preferences'] = {} # Default to empty dict if NULL
-
-                if not profile_data['interests']:
-                    profile_data['interests'] = [] # Default to empty list if NULL
-
+                profile_data['preferences'] = json.loads(profile_data['preferences']) if profile_data.get('preferences') else {}
+                profile_data['interests'] = profile_data.get('interests') or []
                 return UserProfile(**profile_data)
 
-            # If no profile, create a default one
             logger.info(f"No profile found for user '{user_id}'. Creating a default one.")
-            new_profile = UserProfile(
-                user_id=user_id,
-                created_at=get_current_timestamp(),
-                updated_at=get_current_timestamp()
-            )
-
-            # Save the new profile to the DB with encrypted fields
+            new_profile = UserProfile(user_id=user_id, created_at=get_current_timestamp(), updated_at=get_current_timestamp())
             insert_query = """
                 INSERT INTO user_profiles (user_id, role, name, preferences, conversation_style, interests, created_at, updated_at)
                 VALUES (%s, %s, pgp_sym_encrypt(%s, %s::text), pgp_sym_encrypt(%s, %s::text), %s, %s, %s, %s)
             """
             insert_params = (
-                new_profile.user_id,
-                new_profile.role,
-                new_profile.name if new_profile.name is not None else None, key,
-                json.dumps(new_profile.preferences), key,
-                new_profile.conversation_style,
-                new_profile.interests,
-                new_profile.created_at,
-                new_profile.updated_at
+                new_profile.user_id, new_profile.role, new_profile.name, key,
+                json.dumps(new_profile.preferences), key, new_profile.conversation_style,
+                new_profile.interests, new_profile.created_at, new_profile.updated_at
             )
             self.db.execute_update(insert_query, insert_params)
             return new_profile
@@ -149,100 +156,35 @@ class MemoryService:
             logger.error(f"Failed to get or create user profile for '{user_id}': {e}", exc_info=True)
             return None
 
-    async def get_context(self, room_id: str, user_id: str) -> Optional[ConversationContext]:
-        """
-        Retrieves the conversation context for a given room and user.
-        """
+    async def update_user_profile(self, user_id: str, profile_data: Dict[str, Any]) -> Optional[UserProfile]:
+        key = self.db_encryption_key
+        if not profile_data: return await self.get_user_profile(user_id)
+        profile_data["updated_at"] = get_current_timestamp()
+        set_clauses, params, encrypted_fields = [], [], {"name", "preferences"}
+
+        for field, value in profile_data.items():
+            if field in encrypted_fields:
+                value_to_encrypt = json.dumps(value) if field == "preferences" else value
+                if value_to_encrypt is not None:
+                    set_clauses.append(f"{field} = pgp_sym_encrypt(%s, %s)")
+                    params.extend([value_to_encrypt, key])
+                else: set_clauses.append(f"{field} = NULL")
+            else:
+                set_clauses.append(f"{field} = %s")
+                params.append(value)
+
+        if not set_clauses: return await self.get_user_profile(user_id)
+        query = f"UPDATE user_profiles SET {', '.join(set_clauses)} WHERE user_id = %s"
+        params.append(user_id)
         try:
-            query = "SELECT * FROM conversation_contexts WHERE room_id = %s AND user_id = %s"
-            params = (room_id, user_id)
-            results = self.db.execute_query(query, params)
-            if results:
-                return ConversationContext(**results[0])
-            return None # No context found
+            self.db.execute_update(query, tuple(params))
+            logger.info(f"Successfully updated profile for user '{user_id}'.")
+            return await self.get_user_profile(user_id)
         except Exception as e:
-            logger.error(f"Failed to get context for room '{room_id}': {e}", exc_info=True)
+            logger.error(f"Failed to update profile for user '{user_id}': {e}", exc_info=True)
             return None
 
-    async def update_context(self, context_update: ContextUpdate) -> bool:
-        """
-        Updates or creates a conversation context.
-        """
-        try:
-            current_time = get_current_timestamp()
-            # Use ON CONFLICT to handle both INSERT and UPDATE
-            query = """
-                INSERT INTO conversation_contexts (context_id, room_id, user_id, summary, key_topics, sentiment, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (room_id, user_id) DO UPDATE SET
-                    summary = EXCLUDED.summary,
-                    key_topics = EXCLUDED.key_topics,
-                    sentiment = EXCLUDED.sentiment,
-                    updated_at = EXCLUDED.updated_at
-            """
-            params = (
-                generate_id("context"),
-                context_update.room_id,
-                context_update.user_id,
-                context_update.summary,
-                context_update.key_topics,
-                context_update.sentiment,
-                current_time,
-                current_time
-            )
-            self.db.execute_update(query, params)
-            return True
-        except Exception as e:
-            logger.error(f"Failed to update context for room '{context_update.room_id}': {e}", exc_info=True)
-            return False
-
-    async def get_relevant_memories(
-        self,
-        room_ids: List[str],
-        user_id: str,
-        query_text: str,
-        limit: int = 5
-    ) -> List[MemoryEntry]:
-        """
-        Finds the most relevant memories across a list of room IDs for a user,
-        based on semantic similarity of the query text.
-        """
-        try:
-            # Generate an embedding for the search query
-            query_embedding, _ = await self.llm_service.generate_embedding(query_text)
-
-            # The query uses the L2 distance operator (<->) from pgvector to find the closest matches.
-            # It searches across all specified room_ids.
-            query = """
-                SELECT *, (embedding <=> %s) AS distance FROM memories
-                WHERE user_id = %s AND room_id = ANY(%s)
-                AND (expires_at IS NULL OR expires_at > %s)
-                ORDER BY distance ASC
-                LIMIT %s
-            """
-            params = (query_embedding, user_id, room_ids, get_current_timestamp(), limit)
-
-            results = self.db.execute_query(query, params)
-
-            memories = [MemoryEntry(**row) for row in results]
-            logger.info(f"Found {len(memories)} relevant memories for user '{user_id}' across rooms {room_ids}.")
-            return memories
-        except Exception as e:
-            logger.error(f"Failed to get relevant memories for user '{user_id}': {e}", exc_info=True)
-            return []
-
-    async def cleanup_expired_memories(self) -> int:
-        """
-        Removes all expired memories from the database.
-        Returns the number of memories deleted.
-        """
-        try:
-            current_time = get_current_timestamp()
-            query = "DELETE FROM memories WHERE expires_at IS NOT NULL AND expires_at <= %s"
-            params = (current_time,)
-            deleted_count = self.db.execute_update(query, params)
-            logger.info(f"Cleaned up {deleted_count} expired memories.")
-            return deleted_count
-        except Exception as e:
-            logger.error(f"Failed to cleanup expired memories: {e}")
-            return 0
+    # The archival methods are placeholders for now and will be implemented next.
+    async def archive_old_memories(self, room_id: str):
+        logger.info(f"Archival process placeholder for room {room_id}")
+        pass

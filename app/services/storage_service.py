@@ -46,12 +46,17 @@ class MessageRow(TypedDict):
 _room_memory: Dict[str, Dict[str, str]] = defaultdict(dict)
 
 
+from app.core.secrets import SecretProvider
+
 class StorageService:
     """Unified storage service for file system and Firebase"""
 
-    def __init__(self):
+    def __init__(self, secret_provider: SecretProvider):
         super().__init__()
         self.db: DatabaseService = get_database_service()
+        self.db_encryption_key = secret_provider.get("DB_ENCRYPTION_KEY")
+        if not self.db_encryption_key:
+            raise ValueError("DB_ENCRYPTION_KEY not found for StorageService.")
 
     # Memory functions for room-specific data
     async def memory_set(self, room_id: str, key: str, value: str) -> None:
@@ -138,31 +143,37 @@ class StorageService:
         results: List[RoomRow] = self.db.execute_query(query, params) # type: ignore
         return [Room(**row) for row in results]
 
-    async def save_message(self, message: Message) -> None:
-        """Save a message to the database."""
-        # TODO: Add embedding generation logic here
-        embedding = None
+    async def get_all_rooms(self) -> List[Room]:
+        """Get all rooms in the system, e.g., for batch processing."""
+        query = "SELECT * FROM rooms"
+        results: List[RoomRow] = self.db.execute_query(query) # type: ignore
+        return [Room(**row) for row in results]
 
+    async def save_message(self, message: Message) -> None:
+        """Save an encrypted message to the database."""
+        embedding = None # TODO: Add embedding generation
         query = """
             INSERT INTO messages (message_id, room_id, user_id, role, content, timestamp, embedding)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, pgp_sym_encrypt(%s, %s), %s, %s)
         """
         params = (
-            message.message_id,
-            message.room_id,
-            message.user_id,
-            message.role,
-            message.content,
-            message.timestamp,
-            embedding,
+            message.message_id, message.room_id, message.user_id, message.role,
+            message.content, self.db_encryption_key, message.timestamp, embedding
         )
         self.db.execute_update(query, params)
 
     async def get_messages(self, room_id: str) -> List[Message]:
-        """Get all messages for a room from the database."""
-        query = "SELECT * FROM messages WHERE room_id = %s ORDER BY timestamp ASC"
-        params = (room_id,)
-        results: List[MessageRow] = self.db.execute_query(query, params) # type: ignore
+        """Get and decrypt all messages for a room from the database."""
+        query = """
+            SELECT message_id, room_id, user_id, role,
+                   pgp_sym_decrypt(content, %s) as content,
+                   timestamp
+            FROM messages
+            WHERE room_id = %s
+            ORDER BY timestamp ASC
+        """
+        params = (self.db_encryption_key, room_id)
+        results: List[MessageRow] = self.db.execute_query(query, params)
         return [Message(**row) for row in results]
 
     # Review operations
@@ -201,6 +212,13 @@ class StorageService:
         params = (room_id,)
         results = self.db.execute_query(query, params)
         return [ReviewMeta(**row) for row in results]
+
+    async def get_full_reviews_by_room(self, room_id: str) -> List[ReviewFull]:
+        """Get all reviews for a given room, including the final_report."""
+        query = "SELECT * FROM reviews WHERE room_id = %s ORDER BY created_at DESC"
+        params = (room_id,)
+        results = self.db.execute_query(query, params)
+        return [ReviewFull(**row) for row in results]
 
     async def update_review(self, review_id: str, review_data: Dict[str, Any]) -> None:
         """Update review metadata in the database."""

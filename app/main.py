@@ -27,7 +27,7 @@ from app.config.settings import settings
 from app.utils.helpers import get_current_timestamp
 
 # Import routers
-from app.api.routes import rooms, messages, search, memory, reviews, rag, metrics, websockets
+from app.api.routes import rooms, messages, search, memory, reviews, rag, metrics, websockets, admin
 
 from app.utils.trace_id import trace_id_var
 
@@ -89,6 +89,8 @@ async def lifespan(app: FastAPI):
 
 import uuid
 
+from prometheus_fastapi_instrumentator import Instrumentator
+
 # Create FastAPI app
 app = FastAPI(
     title="Origin Project API",
@@ -96,6 +98,9 @@ app = FastAPI(
     version="2.0.0",
     lifespan=lifespan,
 )
+
+# Instrument the app with Prometheus metrics
+Instrumentator().instrument(app).expose(app)
 
 @app.middleware("http")
 async def trace_id_middleware(request: Request, call_next):
@@ -141,6 +146,7 @@ app.include_router(reviews.router, prefix="/api")
 app.include_router(rag.router, prefix="/api/rag")
 app.include_router(metrics.router, prefix="/api")
 app.include_router(websockets.router)
+app.include_router(admin.router, prefix="/api")
 
 
 # Health check endpoint

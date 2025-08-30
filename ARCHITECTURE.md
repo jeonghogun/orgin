@@ -6,54 +6,76 @@ This document provides a high-level overview of the Origin project's system arch
 
 The application is a containerized, multi-service system designed for scalability and reliability.
 
-![System Diagram](https://i.imgur.com/your-diagram-url.png)  <!-- Placeholder for a diagram -->
-
--   **Nginx Reverse Proxy**: The main entry point for all incoming traffic. It serves the static frontend assets and acts as a reverse proxy for all API and WebSocket traffic, directing it to the FastAPI backend.
-
--   **FastAPI Backend (`api`)**: The core application server. It handles all HTTP requests, serves the React frontend, manages WebSocket connections, and dispatches tasks to the Celery workers. It is a stateless service that can be horizontally scaled.
-
--   **Celery Workers**: Asynchronous task processors that handle the multi-agent review process. They are configured with a multi-queue setup. The core task logic in `review_tasks.py` has been refactored into smaller, more maintainable functions to improve clarity and testability.
-    -   `worker-high-priority`: Handles the initial, user-facing turn of the debate.
-    -   `worker-default`: Handles subsequent turns (rebuttal, synthesis).
-    -   `worker-low-priority`: Handles the final report generation.
-
--   **PostgreSQL Database (`db`)**: The primary data store for all persistent data, including rooms, messages, user profiles, and reviews. It uses two key extensions:
-    -   `pgvector`: For high-performance semantic similarity searches on memory embeddings.
-    -   `pgcrypto`: For field-level encryption of sensitive user data.
-
--   **PgBouncer**: A lightweight connection pooler that sits in front of the PostgreSQL database. It reduces the overhead of creating new connections for each request, significantly improving performance and stability under load.
-
+-   **Nginx Reverse Proxy**: The main entry point for all incoming traffic. It proxies all API and WebSocket traffic to the FastAPI backend.
+-   **FastAPI Backend (`api`)**: The core application server. It handles all HTTP requests, serves the React frontend, manages WebSocket connections, and dispatches tasks to the Celery workers.
+-   **Celery Workers**: Asynchronous task processors for the multi-agent review, persona generation, etc. Configured with a multi-queue setup for prioritization.
+-   **PostgreSQL Database (`db`)**: The primary data store. It uses several key extensions:
+    -   `pgvector`: For semantic similarity searches.
+    -   `pgcrypto`: For field-level encryption of sensitive data, including user profiles and message content.
+-   **Alembic**: The database migration tool used to manage and apply schema changes in a version-controlled manner.
 -   **Redis**: Serves two critical roles:
-    -   **Celery Broker & Backend**: Manages the message queue for tasks between the API server and the Celery workers.
-    -   **Pub/Sub for WebSockets**: Provides a scalable backplane for broadcasting real-time messages from the backend (Celery workers or API) to all connected WebSocket clients, regardless of which API server instance they are connected to.
+    -   **Celery Broker & Backend**: Manages task queues.
+    -   **Idempotency & Caching**: Used to store idempotency keys for API requests.
 
--   **React Frontend**: A modern, single-page application (SPA) built with React and Vite. It uses `@tanstack/react-query` for robust server state management, handling data fetching, caching, and synchronization automatically. It communicates with the backend via HTTP and WebSocket protocols.
+## 2. Memory & Retrieval Architecture
 
-## 2. Observability and Debugging
+The system employs a two-tier memory architecture to balance retrieval accuracy with long-term efficiency.
 
-To ensure the system is maintainable and easy to debug, a unified tracing system has been implemented.
+-   **Tier 1: Recent Memory (Full-Text + Vector)**
+    -   **Storage**: Raw message content and its embedding are stored in the `messages` table.
+    -   **Indexing**: This tier is indexed two ways for hybrid retrieval:
+        1.  A `tsvector` column for BM25-like full-text search.
+        2.  A `vector` column (pgvector) for semantic similarity search.
+    -   **Lifecycle**: Messages remain in this tier for a configurable period (e.g., 30 days) before being archived.
 
--   **Trace ID**: When a new review is initiated via the API, a unique `trace_id` is generated. This ID is passed through the entire Celery task chain and is included in all log messages related to that request. This allows for easy filtering and correlation of logs across the distributed services (API server and Celery workers) to trace the full lifecycle of a single review process.
--   **Structured Logging**: Logs are structured to include the `trace_id`, making it simple to query and analyze logs in a centralized logging platform.
+-   **Tier 2: Long-Term Memory (Summarized Facts & Notes)**
+    -   **Storage**:
+        -   `user_facts`: A table storing discrete, key-value facts about a user (e.g., "user's goal is X").
+        -   `summary_notes`: A table storing weekly, LLM-generated summaries of conversations for each room.
+    -   **Archival**: A scheduled Celery task (`archive_old_memories_task`) runs periodically to find messages that have aged out of Tier 1. It summarizes them, extracts key facts, and stores them in the Tier 2 tables. The original raw messages are then deleted to save space.
 
-## 3. Multi-Agent Review Flow
+-   **Hybrid Retrieval Pipeline**:
+    1.  When a query is made, the `RAGService` calls `MemoryService.get_relevant_memories_hybrid`.
+    2.  This function fetches two sets of candidates in parallel: one from a BM25 full-text search and one from a pgvector cosine similarity search.
+    3.  The relevance scores from both sets are normalized and combined using a weighted average (`HYBRID_BM25_WEIGHT`, `HYBRID_VEC_WEIGHT`).
+    4.  The combined scores are adjusted with an exponential time decay factor, giving more weight to recent conversations.
+    5.  An optional re-ranking step can be applied using a cross-encoder model to further refine the top results.
+    6.  The final, ranked list of messages is returned, along with any relevant `user_facts` and `summary_notes`.
+-   **Inheritance**: The retrieval process respects the `Main -> Sub` room hierarchy, querying for memories in both the current sub-room and its parent main-room.
+
+## 3. Configuration & Secrets Management
+
+The system's configuration is designed to be flexible and secure, separating configuration from secrets.
+
+-   **`SecretProvider` Abstraction**: A core protocol (`app/core/secrets.py`) that decouples services from the source of secrets. The default implementation, `EnvSecrets`, reads from environment variables, but this can be replaced with providers for Vault, AWS Secrets Manager, etc., without changing service-level code.
+-   **`LLMStrategyService`**: Manages the configuration of AI panelists. It loads a `config/providers.yml` file, which defines the default providers, models, personas, timeouts, and retry settings. This allows operators to change the AI panel composition without deploying new code.
+-   **Dependency Injection**: All services that require secrets or configuration (e.g., `DatabaseService`, `LLMService`) receive them via FastAPI's dependency injection system, ensuring loose coupling and high testability.
+
+## 3. Reliability & Resilience
+
+Several patterns have been implemented to ensure system stability.
+
+-   **Celery Task Retries**: All critical Celery tasks (e.g., `run_initial_panel_turn`) are configured with `autoretry_for=(Exception)` and exponential backoff. This allows them to automatically recover from transient failures, such as temporary network issues or LLM API errors.
+-   **API Idempotency**: The review creation endpoint (`POST /api/rooms/{sub_room_id}/reviews`) supports an `Idempotency-Key` HTTP header. If a request is received with a key that has been processed within the last 24 hours, the original response is returned from a Redis cache, preventing duplicate review creation.
+-   **Cost Guardrails**: The system includes two levels of cost control: a per-review token budget and a daily organization-wide token budget, both configured via environment variables. If a budget is exceeded, the review process is gracefully halted to prevent unexpected costs.
+
+## 4. Observability
+
+-   **Prometheus Metrics**: The application exposes a `/metrics` endpoint, instrumented with `prometheus-fastapi-instrumentator`.
+-   **Custom Metrics**: In addition to default API metrics, custom metrics are exposed for key business logic:
+    -   `origin_llm_calls_total{provider, outcome}`: Tracks the number of calls to each LLM provider, labeled by success or failure.
+    -   `origin_llm_latency_seconds{provider}`: A histogram tracking the latency of each provider's responses.
+    -   `origin_tokens_total{provider, kind}`: Tracks prompt and completion tokens used per provider.
+-   **Distributed Tracing**: A unique `trace_id` is generated for each review and passed through the entire Celery task chain, included in all logs to allow for easy correlation and debugging of a single process across distributed services.
+
+## 5. Multi-Agent Review Flow
 
 The review process is designed to be configurable and resilient.
 
-- **Configurability**: The API endpoint for creating a review (`POST /api/rooms/{sub_room_id}/reviews`) accepts an optional `panelists` array (e.g., `["openai", "gemini"]`). If not provided, it defaults to using all three configured providers (OpenAI, Gemini, Claude). A global `FORCE_DEFAULT_PROVIDER` setting can also be used to force all reviews to use a single AI for debugging or cost-saving.
-- **Fallback Logic**: During the initial analysis round, if a requested provider (e.g., Gemini) fails for any reason (API error, timeout), the system automatically falls back and re-runs that panelist's turn using the default provider (OpenAI). This ensures the debate can continue with the full number of panelists. The failure and fallback are logged in the review's metrics.
+- **Configurability**: The AI panel is defined in `config/providers.yml`. The API for creating a review accepts an optional `panelists` array of provider names (e.g., `["openai", "claude"]`) to override the default panel for a specific review.
+- **Fallback Logic**: During the initial analysis round, if a requested provider fails after multiple retries, the system automatically falls back and re-runs that panelist's turn using the default provider (the first one listed in `providers.yml`). This ensures the debate can continue with the full number of panelists.
 
-
-## 4. Real-time WebSocket Flow
+## 6. Real-time WebSocket Flow
 
 The real-time review status update mechanism is a key feature that demonstrates the interaction between several components.
-
-1.  **Connection**: The React frontend establishes a WebSocket connection to the `/ws/reviews/{review_id}` endpoint, passing a JWT for authentication. The Nginx proxy upgrades this connection and forwards it to an available FastAPI server instance.
-2.  **Authentication**: The FastAPI backend validates the JWT and verifies that the authenticated user owns the requested review. If successful, the connection is added to an in-memory `ConnectionManager`.
-3.  **Task Execution**: A user action triggers a Celery task (e.g., starting a review). The task is sent to the Redis message broker.
-4.  **Task Processing**: A Celery worker picks up the task from the appropriate queue and begins processing.
-5.  **Broadcasting**: As the Celery worker completes a milestone (e.g., a review round), it publishes a status update message to a specific Redis Pub/Sub channel (e.g., `review_{review_id}`).
-6.  **Listening**: All FastAPI server instances are running a background task that listens to the Redis Pub/Sub channels. When a message is received, each server instance checks its local `ConnectionManager`.
-7.  **Push to Client**: If a server instance has a client connected for that specific `review_id`, it pushes the message down the appropriate WebSocket.
-
-This architecture ensures that the system is decoupled, scalable, and can provide real-time updates efficiently.
+(This section remains largely the same as before, but is now more reliable due to the Nginx fix and Celery retries).

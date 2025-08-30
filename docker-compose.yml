@@ -18,7 +18,7 @@ services:
       - "6379:6379"
 
   pgbouncer:
-    image: pganalyze/pgbouncer
+    image: pgbouncer/pgbouncer
     ports:
       - "6432:6432"
     volumes:

@@ -34,7 +34,24 @@ cp .env.example .env
 docker-compose up --build
 ```
 
-### 3. 접속 확인
+### 3. 데이터베이스 마이그레이션 (Database Migration)
+이 프로젝트는 Alembic을 사용하여 데이터베이스 스키마를 관리합니다. `docker-compose up`으로 서비스를 처음 실행한 후, 또는 데이터베이스 스키마에 변경이 있을 때마다 다음 명령어를 실행하여 최신 상태로 마이그레이션해야 합니다.
+
+새로운 터미널에서 다음 명령어를 실행하세요:
+```bash
+# 실행 중인 api 컨테이너 내부에서 alembic upgrade 명령 실행
+docker-compose exec api alembic upgrade head
+```
+
+**새로운 마이그레이션 생성하기:**
+데이터베이스 스키마를 직접 변경해야 하는 경우, 다음 명령어로 새로운 마이그레이션 스크립트를 생성할 수 있습니다.
+```bash
+# api 컨테이너 내부에서 실행
+docker-compose exec api alembic revision --autogenerate -m "A short description of the changes"
+```
+> **참고**: 이 프로젝트는 SQLAlchemy ORM을 사용하지 않으므로, `autogenerate`가 모든 변경사항을 감지하지 못할 수 있습니다. 생성된 마이그레이션 스크립트를 직접 검토하고 수정해야 할 수 있습니다.
+
+### 4. 접속 확인
 - **Frontend (Nginx)**: `http://localhost:8080`
 - **API (직접 접속)**: `http://localhost:8000`
 - **API 문서 (Swagger)**: `http://localhost:8000/docs`
@@ -132,6 +149,18 @@ pytest tests/integration/api/test_reviews_api.py
 
 ### 추가 문서
 - **[API 문서](http://127.0.0.1:8000/docs)**: Swagger UI
+
+## ⚙️ 주요 설정 (Key Configurations)
+`.env` 파일을 통해 다음의 주요 기능들을 활성화하거나 튜닝할 수 있습니다.
+
+- **하이브리드 검색 (Hybrid Retrieval):**
+  - `HYBRID_BM25_WEIGHT`: BM25 (텍스트 검색) 점수 가중치 (기본값: 0.55)
+  - `HYBRID_VEC_WEIGHT`: Vector (의미 검색) 점수 가중치 (기본값: 0.45)
+  - `TIME_DECAY_ENABLED`: 시간에 따른 점수 감소 활성화 여부 (기본값: True)
+
+- **리랭커 (Re-ranker):**
+  - `RERANK_ENABLED`: 검색 결과 재정렬 기능 활성화 여부 (기본값: False)
+  - `RERANK_PROVIDER`: 사용할 리랭커 제공자 (예: "cohere")
 
 ## ⚠️ 알려진 문제 (Known Issues)
 
