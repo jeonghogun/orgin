@@ -150,6 +150,13 @@ class StorageService:
         results: List[RoomRow] = self.db.execute_query(query) # type: ignore
         return [Room(**row) for row in results]
 
+    async def update_room_name(self, room_id: str, new_name: str) -> bool:
+        """Updates the name of a specific room."""
+        query = "UPDATE rooms SET name = %s, updated_at = %s WHERE room_id = %s"
+        params = (new_name, int(time.time()), room_id)
+        rows_affected = self.db.execute_update(query, params)
+        return rows_affected > 0
+
     async def save_message(self, message: Message) -> None:
         """Save an encrypted message to the database."""
         embedding = None # TODO: Add embedding generation
@@ -162,6 +169,11 @@ class StorageService:
             message.content, self.db_encryption_key, message.content, message.timestamp, embedding
         )
         self.db.execute_update(query, params)
+
+        # Also, increment the message count for the room
+        update_query = "UPDATE rooms SET message_count = message_count + 1, updated_at = %s WHERE room_id = %s"
+        update_params = (int(time.time()), message.room_id)
+        self.db.execute_update(update_query, update_params)
 
     async def get_messages(self, room_id: str) -> List[Message]:
         """Get and decrypt all messages for a room from the database."""

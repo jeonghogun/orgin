@@ -122,3 +122,38 @@ class RAGService:
     async def _enhance_with_external_data(self, rag_context: RAGContext):
         # Placeholder for brevity
         pass
+
+    async def generate_observer_qa_response(self, question: str, report_content: Dict[str, Any]) -> str:
+        """
+        Answers a user's question based on the content of a final review report.
+        """
+        try:
+            # Flatten the report content into a string for the prompt
+            report_str = json.dumps(report_content, ensure_ascii=False, indent=2)
+
+            prompt = f"""
+            당신은 AI 토론의 최종 보고서를 분석하고 설명하는 '관측자' AI입니다.
+            주어진 최종 보고서 내용을 바탕으로 사용자의 질문에 답변하세요.
+            보고서에 없는 내용은 답변하지 마세요.
+
+            --- 최종 보고서 ---
+            {report_str}
+            ---
+
+            사용자 질문: "{question}"
+
+            답변:
+            """
+
+            provider = self.llm_service.get_provider()
+            content, _ = await provider.invoke(
+                model="gpt-4-turbo", # Use a powerful model for accurate QA
+                system_prompt="You are an AI observer, answering questions about a provided report.",
+                user_prompt=prompt,
+                request_id="observer_qa",
+                response_format="text"
+            )
+            return content
+        except Exception as e:
+            logger.error(f"Failed to generate Observer QA response: {e}", exc_info=True)
+            return "죄송합니다. 보고서에 대한 답변을 생성하는 중 오류가 발생했습니다."

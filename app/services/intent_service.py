@@ -42,7 +42,7 @@ class IntentService:
 
 다음 JSON 형식으로만 응답하세요:
 {{
-    "intent": "time|weather|search|wiki|name_set|name_get|general",
+    "intent": "time|weather|search|wiki|name_set|name_get|review|general",
     "entities": {{
         "location": "지역명 (날씨용, 없으면 null)",
         "name": "이름 (이름 저장/조회용, 없으면 null)",
@@ -59,6 +59,7 @@ class IntentService:
 - wiki: 위키, wikipedia, 위키피디아 등이 포함된 요청
 - name_set: "내 이름은", "저를 ...라고 불러", "이름이 ...야" 등 이름 저장
 - name_get: "내 이름", "내이름", "내가 누구야" 등 이름 조회
+- review: "검토", "리뷰", "분석", "토론" 등이 포함된 검토 요청
 - general: 위에 해당하지 않는 모든 일반적인 대화
 
 중요: 메시지에 시간 관련 단어가 있으면 반드시 "time"으로 분류하세요.

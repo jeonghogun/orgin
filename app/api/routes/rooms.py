@@ -9,6 +9,7 @@ from fastapi.responses import Response, JSONResponse
 
 from app.services.storage_service import storage_service
 from app.utils.helpers import generate_id, create_success_response, get_current_timestamp
+from pydantic import BaseModel
 from app.api.dependencies import AUTH_DEPENDENCY
 from app.models.schemas import CreateRoomRequest, Room, ExportData, ExportableReview, Message
 
@@ -139,6 +140,37 @@ async def get_room(room_id: str, user_info: Dict[str, str] = AUTH_DEPENDENCY):
     except Exception as e:
         logger.error(f"Error getting room {room_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to retrieve room")
+
+
+class UpdateRoomRequest(BaseModel):
+    name: str
+
+
+@router.patch("/{room_id}", response_model=Room)
+async def update_room_name(
+    room_id: str,
+    room_request: UpdateRoomRequest,
+    user_info: Dict[str, str] = AUTH_DEPENDENCY,
+):
+    """Update the name of a room."""
+    user_id = user_info.get("user_id")
+    room = await storage_service.get_room(room_id)
+
+    # Check ownership
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+    if room.owner_id != user_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    # Perform the update
+    success = await storage_service.update_room_name(room_id, room_request.name)
+    if not success:
+        # This might happen in a race condition where room is deleted after get_room
+        raise HTTPException(status_code=404, detail="Room not found during update")
+
+    # Return the updated room
+    updated_room = await storage_service.get_room(room_id)
+    return updated_room
 
 
 @router.delete("/{room_id}", status_code=204)

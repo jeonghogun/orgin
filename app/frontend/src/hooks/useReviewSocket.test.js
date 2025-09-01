@@ -1,4 +1,4 @@
-import { renderHook, act } from '@testing-library/react';
+import { renderHook, act, waitFor } from '@testing-library/react';
 import WS from 'jest-websocket-mock';
 import useReviewSocket from './useReviewSocket';
 
@@ -21,7 +21,7 @@ describe('useReviewSocket', () => {
     // Wait for the connection to be established
     await server.connected;
 
-    expect(result.current.status).toBe('connected');
+    expect(result.current.connectionStatus).toBe('connected');
 
     // Simulate a message from the server
     act(() => {
@@ -39,31 +39,36 @@ describe('useReviewSocket', () => {
   });
 
   it('should handle connection errors', async () => {
-    // Intentionally close the server to trigger an error
-    server.error();
-
     const { result } = renderHook(() => useReviewSocket('test-review-id', 'test-token'));
 
-    // The hook should eventually report an error
-    // Note: this kind of test can be tricky due to timing.
-    // A more robust test would check the state after a short delay.
-    expect(result.current.error).not.toBeNull();
+    // Wait for the initial connection attempt
+    await server.connected;
+
+    // Now, trigger an error
+    act(() => {
+      server.error({ code: 1006, reason: 'Abnormal Closure', wasClean: false });
+    });
+
+    // The hook should report an error and then attempt to reconnect.
+    await waitFor(() => {
+      expect(result.current.error).not.toBeNull();
+      expect(result.current.connectionStatus).toBe('reconnecting');
+    });
   });
 
   it('should attempt to reconnect on disconnect', async () => {
     const { result } = renderHook(() => useReviewSocket('test-review-id', 'test-token'));
 
     await server.connected;
-    expect(result.current.status).toBe('connected');
+    expect(result.current.connectionStatus).toBe('connected');
 
     // Close the connection
     act(() => {
-        server.close();
+        server.close({ code: 1000, reason: 'Normal closure', wasClean: true });
     });
 
-    // In a real test environment with timers, we could test the exponential backoff.
-    // For now, we just acknowledge this is a complex scenario to unit test perfectly.
-    // The presence of the reconnection logic is the main thing we've added.
-    expect(result.current.error).toBeNull(); // It shouldn't error out immediately
+    await waitFor(() => {
+      expect(result.current.connectionStatus).toBe('reconnecting');
+    });
   });
 });
