@@ -32,7 +32,10 @@ from app.utils.helpers import (
     get_current_timestamp,
     create_success_response,
 )
+from typing import List
+from app.models.enums import RoomType
 from app.models.schemas import Message, ReviewMeta
+from app.api.routes.websockets import manager
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +43,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="", tags=["messages"])
 
 
-@router.get("/{room_id}/messages")
+from app.models.schemas import Message
+
+@router.get("/{room_id}/messages", response_model=List[Message])
 async def get_messages(
     room_id: str,
     user_info: Dict[str, str] = AUTH_DEPENDENCY,
@@ -54,7 +59,7 @@ async def get_messages(
             raise HTTPException(status_code=400, detail="Invalid user information")
 
         messages = await storage_service.get_messages(room_id)
-        return create_success_response(data=messages)
+        return messages
     except HTTPException:
         raise
     except Exception as e:
@@ -72,7 +77,7 @@ async def _check_and_suggest_review(
     """Checks if conditions are met to suggest a review and returns a suggestion message if so."""
     try:
         room = await storage_service.get_room(room_id)
-        if not room or room.type != 'sub' or room.message_count < 10:
+        if not room or room.type != RoomType.SUB or room.message_count < 10:
             return None
 
         # Check if a suggestion was made recently
@@ -153,10 +158,15 @@ async def send_message(
         )
 
         await storage_service.save_message(message)
+        # Broadcast the user's message
+        await manager.broadcast(json.dumps({
+            "type": "new_message",
+            "payload": message.model_dump()
+        }), room_id)
 
         try:
             current_room = await storage_service.get_room(room_id)
-            if current_room and current_room.type == 'review':
+            if current_room and current_room.type == RoomType.REVIEW:
                 review_meta = await storage_service.get_review_meta(room_id)
                 if not review_meta or review_meta.status != 'completed':
                     ai_content = "AI 토론이 아직 진행 중입니다. 완료된 후에 관측자와 대화할 수 있습니다."
@@ -172,6 +182,10 @@ async def send_message(
                     content=ai_content, timestamp=get_current_timestamp(), role="ai"
                 )
                 await storage_service.save_message(ai_message)
+                await manager.broadcast(json.dumps({
+                    "type": "new_message",
+                    "payload": ai_message.model_dump()
+                }), room_id)
                 return create_success_response(data={"message": message.model_dump(), "ai_response": ai_message.model_dump()})
 
             user_id = user_info["user_id"]
@@ -254,7 +268,7 @@ async def send_message(
                 else:
                     ai_content = "아직 이름을 모르는 걸요. '내 이름은 호건이야'처럼 말해주세요!"
             elif intent == "review":
-                if not current_room or current_room.type != "sub":
+                if not current_room or current_room.type != RoomType.SUB:
                     ai_content = "검토 기능은 서브룸에서만 시작할 수 있습니다."
                 else:
                     user_id = user_info["user_id"]
@@ -265,7 +279,7 @@ async def send_message(
                         room_id=generate_id(),
                         name=f"검토: {topic}",
                         owner_id=user_id,
-                        room_type="review",
+                        room_type=RoomType.REVIEW,
                         parent_id=room_id,
                     )
                     instruction = "이 주제에 대해 3 라운드에 걸쳐 심도 있게 토론해주세요."
@@ -314,6 +328,10 @@ async def send_message(
                 role="ai",
             )
             await storage_service.save_message(ai_message)
+            await manager.broadcast(json.dumps({
+                "type": "new_message",
+                "payload": ai_message.model_dump()
+            }), room_id)
 
             suggestion = None
             if intent in ["general", "memory_promotion_confirmation"]:

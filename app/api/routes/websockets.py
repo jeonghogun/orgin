@@ -33,8 +33,34 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+@router.websocket("/ws/rooms/{room_id}")
+async def websocket_room_endpoint(websocket: WebSocket, room_id: str):
+    storage_service: StorageService = get_storage_service()
+    user_id = None
+    try:
+        user_id = await require_auth_ws(websocket)
+        room = await storage_service.get_room(room_id)
+        if not room or room.owner_id != user_id:
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            logger.warning(f"Auth failed for WS to room {room_id}: User {user_id} does not own room.")
+            return
+
+        await manager.connect(websocket, room_id)
+        while True:
+            # Keep connection alive, but also handle potential client messages if needed in the future
+            data = await websocket.receive_text()
+            logger.debug(f"Received from {user_id} in room {room_id}: {data}")
+
+    except WebSocketDisconnect:
+        manager.disconnect(websocket, room_id)
+        logger.info(f"WebSocket for user {user_id} to room {room_id} disconnected.")
+    except Exception as e:
+        logger.error(f"Error in WebSocket for room {room_id}: {e}", exc_info=True)
+        manager.disconnect(websocket, room_id)
+
+
 @router.websocket("/ws/reviews/{review_id}")
-async def websocket_endpoint(websocket: WebSocket, review_id: str):
+async def websocket_review_endpoint(websocket: WebSocket, review_id: str):
     storage_service: StorageService = get_storage_service()
     user_id = None
     try:
@@ -45,13 +71,9 @@ async def websocket_endpoint(websocket: WebSocket, review_id: str):
             logger.warning(f"Auth failed for WS to review {review_id}: Review not found.")
             return
 
-        room = await storage_service.get_room(review.room_id)
-        if not room or room.owner_id != user_id:
-            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-            logger.warning(f"Auth failed for WS to review {review_id}: User {user_id} does not own room {review.room_id}.")
-            return
-
-        await manager.connect(websocket, review_id)
+        # Use the review_id as the channel id for review websockets
+        channel_id = review_id
+        await manager.connect(websocket, channel_id)
         while True:
             await websocket.receive_text() # Keep connection alive
 
@@ -61,5 +83,4 @@ async def websocket_endpoint(websocket: WebSocket, review_id: str):
     except Exception as e:
         logger.error(f"Error in WebSocket for review {review_id}: {e}", exc_info=True)
         # Ensure connection is closed on error
-        await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
         manager.disconnect(websocket, review_id)

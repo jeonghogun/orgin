@@ -1,121 +1,35 @@
 import React, { useEffect, useRef } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
+import useWebSocket from '../hooks/useWebSocket';
 
 const fetchMessages = async (roomId) => {
   if (!roomId) return [];
   const { data } = await axios.get(`/api/rooms/${roomId}/messages`);
-  return data.data || [];
-};
-
-const CodeBlock = ({ content, language }) => {
-  return (
-    <div className="bg-panel-elev border border-border rounded-card p-4 my-3">
-      {language && (
-        <div className="text-meta text-muted mb-2">{language}</div>
-      )}
-      <pre className="text-body text-text whitespace-pre-wrap overflow-x-auto">
-        <code>{content}</code>
-      </pre>
-    </div>
-  );
-};
-
-const FileChip = ({ fileData }) => {
-  return (
-    <div className="inline-flex items-center gap-2 bg-panel-elev border border-border rounded-button px-3 py-2 my-2">
-      <svg viewBox="0 0 16 16" fill="currentColor" className="w-4 h-4 text-muted">
-        <path d="M3 2a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V3a1 1 0 0 0-1-1H3zm0 1h10v10H3V3z"/>
-        <path d="M5 5a1 1 0 1 1 0 2 1 1 0 0 1 0-2zm0 1a.5.5 0 1 0 0 1 .5.5 0 0 0 0-1z"/>
-      </svg>
-      <a 
-        href={fileData.url} 
-        target="_blank" 
-        rel="noopener noreferrer"
-        className="text-body text-text underline hover:text-accent transition-colors duration-150"
-      >
-        {fileData.name}
-      </a>
-      <span className="text-meta text-muted">
-        ({(fileData.size / 1024).toFixed(1)} KB)
-      </span>
-    </div>
-  );
-};
-
-const ImageMessage = ({ imageData }) => {
-  return (
-    <div className="my-3">
-      <img 
-        src={imageData.url} 
-        alt={imageData.alt || 'Uploaded image'} 
-        className="max-w-full h-auto rounded-card border border-border"
-      />
-    </div>
-  );
-};
-
-const Message = ({ message }) => {
-  const isUser = message.role === 'user';
-  
-  const renderContent = () => {
-    let content;
-    try {
-      const parsed = JSON.parse(message.content);
-      if (parsed.type === 'file') {
-        return <FileChip fileData={parsed} />;
-      } else if (parsed.type === 'image') {
-        return <ImageMessage imageData={parsed} />;
-      } else if (parsed.type === 'code') {
-        return <CodeBlock content={parsed.content} language={parsed.language} />;
-      } else {
-        content = message.content;
-      }
-    } catch {
-      content = message.content;
-    }
-
-    // 링크 처리 (파란색 금지, 밑줄만)
-    const linkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
-    const processedContent = content.replace(linkRegex, (match, text, url) => {
-      return `<a href="${url}" target="_blank" rel="noopener noreferrer" class="underline hover:text-accent transition-colors duration-150">${text}</a>`;
-    });
-
-    return (
-      <div 
-        className="text-body text-text leading-relaxed"
-        dangerouslySetInnerHTML={{ __html: processedContent }}
-      />
-    );
-  };
-
-  return (
-    <div className={`flex gap-4 p-4 ${isUser ? 'bg-panel' : 'bg-panel-elev'}`}>
-      <div className="flex-shrink-0">
-        <div className={`w-7 h-7 rounded-full flex items-center justify-center text-white text-meta font-semibold ${
-          isUser ? 'bg-accent' : 'bg-panel-elev'
-        }`}>
-          {isUser ? 'U' : 'A'}
-        </div>
-      </div>
-      <div className="flex-1 min-w-0">
-        {renderContent()}
-      </div>
-    </div>
-  );
+  return data || [];
 };
 
 const MessageList = ({ roomId }) => {
+  const queryClient = useQueryClient();
   const messagesEndRef = useRef(null);
+
+  const handleNewMessage = (newMessage) => {
+    queryClient.setQueryData(['messages', roomId], (oldData) => {
+      if (!oldData) return [newMessage];
+      // Prevent duplicates
+      if (oldData.some(msg => msg.message_id === newMessage.message_id)) {
+        return oldData;
+      }
+      return [...oldData, newMessage];
+    });
+  };
+
+  useWebSocket(roomId, handleNewMessage);
+
   const { data: messages = [], isLoading } = useQuery({
     queryKey: ['messages', roomId],
-    queryFn: async () => {
-      if (!roomId) return [];
-      const response = await axios.get(`/api/rooms/${roomId}/messages`);
-      return response.data;
-    },
+    queryFn: () => fetchMessages(roomId),
     enabled: !!roomId,
-    refetchInterval: 2000, // 2초마다 새로고침
   });
 
   // 새 메시지가 올 때마다 자동으로 맨 아래로 스크롤

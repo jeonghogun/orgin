@@ -4,8 +4,10 @@ import MessageList from '../components/MessageList';
 import ChatInput from '../components/ChatInput';
 import { useQuery } from '@tanstack/react-query';
 import axios from 'axios';
+import { useAppContext } from '../context/AppContext';
 
-const Review = ({ reviewId, onBackToSub }) => {
+const Review = ({ reviewId }) => {
+  const { handleBackToSub } = useAppContext();
   const [reviewData, setReviewData] = useState(null);
 
   // 검토 데이터 조회
@@ -22,13 +24,13 @@ const Review = ({ reviewId, onBackToSub }) => {
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') {
-        onBackToSub();
+        handleBackToSub();
       }
     };
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [onBackToSub]);
+  }, [handleBackToSub]);
 
   if (isLoading) {
     return (
@@ -45,7 +47,7 @@ const Review = ({ reviewId, onBackToSub }) => {
         title={`검토: ${review?.title || '검토'}`}
         subtitle={review?.description || 'AI 검토 결과'}
         showBackButton={true}
-        onBack={onBackToSub}
+        onBack={handleBackToSub}
       />
 
       {/* 검토 리포트 - 스크롤 가능 */}

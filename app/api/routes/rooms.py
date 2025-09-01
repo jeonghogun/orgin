@@ -11,6 +11,7 @@ from app.services.storage_service import storage_service
 from app.utils.helpers import generate_id, create_success_response, get_current_timestamp
 from pydantic import BaseModel
 from app.api.dependencies import AUTH_DEPENDENCY
+from app.models.enums import RoomType
 from app.models.schemas import CreateRoomRequest, Room, ExportData, ExportableReview, Message
 
 
@@ -67,15 +68,15 @@ async def create_room(
         raise HTTPException(status_code=400, detail="Invalid user information")
 
     # Rule: One 'main' room per user
-    if room_request.type == "main":
+    if room_request.type == RoomType.MAIN:
         existing_rooms = await storage_service.get_rooms_by_owner(user_id)
-        if any(r.type == "main" for r in existing_rooms):
+        if any(r.type == RoomType.MAIN for r in existing_rooms):
             raise HTTPException(
                 status_code=400, detail="Main room already exists for this user."
             )
 
     # Rule: 'sub' and 'review' rooms must have a valid parent
-    if room_request.type in ["sub", "review"]:
+    if room_request.type in [RoomType.SUB, RoomType.REVIEW]:
         if not room_request.parent_id:
             raise HTTPException(
                 status_code=400, detail="Sub/Review rooms must have a parent_id."
@@ -85,11 +86,11 @@ async def create_room(
             raise HTTPException(
                 status_code=404, detail=f"Parent room {room_request.parent_id} not found."
             )
-        if room_request.type == "sub" and parent_room.type != "main":
+        if room_request.type == RoomType.SUB and parent_room.type != RoomType.MAIN:
             raise HTTPException(
                 status_code=400, detail="Sub rooms must have a main room as a parent."
             )
-        if room_request.type == "review" and parent_room.type != "sub":
+        if room_request.type == RoomType.REVIEW and parent_room.type != RoomType.SUB:
             raise HTTPException(
                 status_code=400, detail="Review rooms must have a sub room as a parent."
             )
@@ -184,7 +185,7 @@ async def delete_room(room_id: str, user_info: Dict[str, str] = AUTH_DEPENDENCY)
         raise HTTPException(status_code=403, detail="Access denied")
 
     # Main rooms cannot be deleted
-    if room.type == "main":
+    if room.type == RoomType.MAIN:
         raise HTTPException(status_code=400, detail="Main room cannot be deleted.")
 
     try:
