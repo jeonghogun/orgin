@@ -63,11 +63,11 @@ The following environment variables must be set for the `api` and `worker` servi
 4. **Initializing the Database:**
    The first time you run the application, the PostgreSQL container will be initialized by Docker Compose using the `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB` variables. The schema defined in `app/db/schema.sql` needs to be applied **after** the container is up and healthy.
 
-   You can apply the schema with the following command:
+   The database schema is managed by Alembic migrations. Apply all migrations with:
    ```bash
-   docker-compose exec -T db psql -U user -d origin_db < app/db/schema.sql
+   docker-compose exec api alembic upgrade heads
    ```
-   *(Note: The user/db values here match the defaults in the `docker-compose.yml` `db` service. If you change them there, change them here as well.)*
+   *(Note: Use 'heads' instead of 'head' to handle multiple migration branches)*
 
 ## 5. CI/CD Pipeline
 

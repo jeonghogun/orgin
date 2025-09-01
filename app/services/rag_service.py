@@ -11,21 +11,22 @@ from app.services.external_api_service import ExternalSearchService
 from app.services.llm_service import LLMService
 from app.services.memory_service import MemoryService
 from app.services.storage_service import StorageService
-from app.models.schemas import ConversationContext, UserProfile, Message, ContextUpdate
+from app.models.schemas import Message
+from app.models.memory_schemas import ConversationContext, UserProfile, ContextUpdate
 
 logger = logging.getLogger(__name__)
 
 @dataclass
 class RAGContext:
+    user_query: str
+    intent: str
+    entities: Dict[str, str]
     user_profile: Optional[UserProfile]
     conversation_context: Optional[ConversationContext]
     search_results: List[Dict[str, str]] = field(default_factory=list)
     wiki_summary: Optional[str] = None
     relevant_memories: List[Message] = field(default_factory=list)
     user_facts: List[Dict[str, Any]] = field(default_factory=list)
-    user_query: str
-    intent: str
-    entities: Dict[str, str]
 
 class RAGService:
     def __init__(self, search_service: ExternalSearchService, llm_service: LLMService, memory_service: MemoryService, storage_service: StorageService):

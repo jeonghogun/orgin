@@ -18,3 +18,6 @@ gunicorn
 alembic
 PyYAML
 prometheus-fastapi-instrumentator
+google-generativeai
+gevent
+anthropic

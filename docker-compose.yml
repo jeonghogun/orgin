@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   db:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     volumes:
       - postgres_data:/var/lib/postgresql/data/
     environment:
@@ -21,9 +21,17 @@ services:
     image: pgbouncer/pgbouncer
     ports:
       - "6432:6432"
-    volumes:
-      - ./config/pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini
-      - ./config/pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt
+    environment:
+      - DATABASES_HOST=db
+      - DATABASES_PORT=5432
+      - DATABASES_USER=user
+      - DATABASES_PASSWORD=password
+      - DATABASES_DBNAME=origin_db
+      - POOL_MODE=session
+      - LISTEN_ADDR=0.0.0.0
+      - LISTEN_PORT=6432
+      - AUTH_TYPE=plain
+      - SERVER_RESET_QUERY=DISCARD ALL
     depends_on:
       - db
 
@@ -43,6 +51,8 @@ services:
       - .:/app
     ports:
       - "8000:8000" # Expose for direct access if needed, but primary access is via nginx
+    environment:
+      - DATABASE_URL=postgresql://user:password@pgbouncer:6432/origin_db
     env_file:
       - .env
     depends_on:
@@ -54,6 +64,8 @@ services:
     command: celery -A app.celery_app worker --loglevel=INFO -P gevent -Q default
     volumes:
       - .:/app
+    environment:
+      - DATABASE_URL=postgresql://user:password@pgbouncer:6432/origin_db
     env_file:
       - .env
     depends_on:
@@ -65,6 +77,8 @@ services:
     command: celery -A app.celery_app worker --loglevel=INFO -P gevent -Q high_priority
     volumes:
       - .:/app
+    environment:
+      - DATABASE_URL=postgresql://user:password@pgbouncer:6432/origin_db
     env_file:
       - .env
     depends_on:
@@ -76,6 +90,8 @@ services:
     command: celery -A app.celery_app worker --loglevel=INFO -P gevent -Q low_priority
     volumes:
       - .:/app
+    environment:
+      - DATABASE_URL=postgresql://user:password@pgbouncer:6432/origin_db
     env_file:
       - .env
     depends_on:

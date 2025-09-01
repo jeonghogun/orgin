@@ -5,7 +5,7 @@ import axios from 'axios';
 const fetchMessages = async (roomId) => {
   if (!roomId) return [];
   const { data } = await axios.get(`/api/rooms/${roomId}/messages`);
-  return data;
+  return data.data || []; // API 응답에서 data 필드 추출
 };
 
 const sendMessage = async ({ roomId, content }) => {

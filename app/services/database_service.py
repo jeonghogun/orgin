@@ -23,7 +23,7 @@ class DatabaseService:
             try:
                 self.conn = psycopg2.connect(self.database_url)
                 register_vector(self.conn)  # type: ignore
-                logger.info("Database connection successful")
+                logger.info("Database connection successful with vector support")
             except psycopg2.OperationalError as e:
                 logger.error(f"Database connection failed: {e}")
                 raise
