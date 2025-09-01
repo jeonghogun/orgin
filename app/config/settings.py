@@ -45,7 +45,32 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: Optional[str] = None
     FORCE_DEFAULT_PROVIDER: bool = False
     LLM_TIMEOUT: float = 30.0
-    LLM_MAX_RETRIES: int = 2
+    LLM_MAX_RETRIES: int = 3
+    LLM_BASE_DELAY: float = 1.0
+    LLM_MAX_DELAY: float = 60.0
+    LLM_CIRCUIT_BREAKER_THRESHOLD: int = 5
+    LLM_CIRCUIT_BREAKER_TIMEOUT: float = 60.0
+    LLM_EXPONENTIAL_BASE: float = 2.0
+    LLM_JITTER_FACTOR: float = 0.25
+
+    # APM Configuration
+    NEW_RELIC_LICENSE_KEY: Optional[str] = None
+    NEW_RELIC_APP_NAME: str = "origin-api"
+    DATADOG_API_KEY: Optional[str] = None
+    DATADOG_APP_KEY: Optional[str] = None
+    DATADOG_SERVICE: str = "origin-api"
+
+    # Security Configuration
+    ENCRYPTION_KEY: Optional[str] = None
+    API_KEY_ROTATION_INTERVAL: int = 86400  # 24 hours in seconds
+    MAX_LOGIN_ATTEMPTS: int = 5
+    LOGIN_LOCKOUT_DURATION: int = 900  # 15 minutes in seconds
+
+    # Monitoring Configuration
+    ENABLE_METRICS: bool = True
+    ENABLE_TRACING: bool = True
+    ENABLE_ALERTS: bool = True
+    ALERT_WEBHOOK_URL: Optional[str] = None
 
     # Firebase Configuration
     FIREBASE_SERVICE_ACCOUNT_PATH: Optional[str] = None

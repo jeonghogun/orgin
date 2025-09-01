@@ -148,8 +148,19 @@ app.include_router(admin.router, prefix="/api")
 
 # Mount static files LAST (so it doesn't override API routes)
 # Mount uploads directory first
-app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
-app.mount("/", StaticFiles(directory="app/frontend/dist", html=True), name="static")
+uploads_dir = "uploads"
+if os.path.exists(uploads_dir):
+    app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")
+else:
+    logger.warning(f"Uploads directory {uploads_dir} does not exist - upload serving disabled")
+
+# Static files mounting - check if directory exists
+import os
+static_dir = "/app/static"
+if os.path.exists(static_dir):
+    app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
+else:
+    logger.warning(f"Static directory {static_dir} does not exist - static file serving disabled")
 
 
 # Health check endpoint

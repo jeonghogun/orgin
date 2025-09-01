@@ -93,6 +93,22 @@ async def create_review_and_start_process(
         raise HTTPException(status_code=500, detail="Failed to create review")
 
 
+@router.get("/reviews", response_model=List[ReviewMeta])
+async def get_reviews_by_room(
+    room_id: str,
+    user_info: Dict[str, str] = AUTH_DEPENDENCY,
+    storage_service: StorageService = Depends(get_storage_service),
+) -> List[ReviewMeta]:
+    """Get all reviews for a specific room"""
+    # Verify room exists and belongs to user
+    room = await storage_service.get_room(room_id)
+    if not room or room.owner_id != user_info.get("user_id"):
+        raise HTTPException(status_code=404, detail="Room not found or access denied.")
+    
+    reviews = await storage_service.get_reviews_by_room(room_id)
+    return reviews
+
+
 @router.get("/reviews/{review_id}", response_model=ReviewMeta)
 async def get_review(
     review_id: str,

@@ -21,3 +21,14 @@ prometheus-fastapi-instrumentator
 google-generativeai
 gevent
 anthropic
+python-multipart
+
+# APM and Monitoring
+newrelic
+ddtrace
+
+# Security
+cryptography
+
+# HTTP Client
+aiohttp

@@ -46,9 +46,7 @@ services:
     build: .
     command: gunicorn -w 4 -k uvicorn.workers.UvicornWorker app.main:app --bind 0.0.0.0:8000
     volumes:
-      - ./app:/app/app
-      - ./scripts:/app/scripts
-      - ./pyproject.toml:/app/pyproject.toml
+      - .:/app
     ports:
       - "8000:8000" # Expose for direct access if needed, but primary access is via nginx
     environment:

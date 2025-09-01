@@ -86,16 +86,16 @@ async def _check_and_suggest_review(
         # Use LLM to check for conversation coherency
         messages = await storage_service.get_messages(room_id)
         last_10_messages = "\n".join([f"{m.role}: {m.content}" for m in messages[-10:]])
-
+        
         prompt = f"""
         다음 대화는 하나의 주제에 대해 집중적이고 깊이 있게 진행되고 있습니까?
         새로운 '검토룸'을 생성하여 이 주제에 대해 AI 패널 토론을 시작할 만큼 가치가 있습니까?
         'yes' 또는 'no'로만 대답하세요.
-
+        
         대화 내용:
         {last_10_messages}
         """
-
+        
         coherency_response, _ = await llm_service.get_provider().invoke(
             user_prompt=prompt,
             system_prompt="You are a helpful assistant that analyzes conversations.",
@@ -115,7 +115,7 @@ async def _check_and_suggest_review(
 
     except Exception as e:
         logger.error(f"Error checking for review suggestion: {e}")
-
+    
     return None
 
 
@@ -140,12 +140,10 @@ async def send_message(
         if not content:
             raise HTTPException(status_code=400, detail="Message content is required")
 
-        # Validate user_info
         if not user_info or "user_id" not in user_info:
             logger.error(f"Invalid user_info: {user_info}")
             raise HTTPException(status_code=400, detail="Invalid user information")
 
-        # Create message
         message = Message(
             message_id=generate_id(),
             room_id=room_id,
@@ -154,12 +152,9 @@ async def send_message(
             timestamp=get_current_timestamp(),
         )
 
-        # Save message
         await storage_service.save_message(message)
 
-        # Generate AI response
         try:
-            # Handle special case for 'review' rooms first
             current_room = await storage_service.get_room(room_id)
             if current_room and current_room.type == 'review':
                 review_meta = await storage_service.get_review_meta(room_id)
@@ -171,8 +166,7 @@ async def send_message(
                         ai_content = "최종 보고서를 찾을 수 없습니다."
                     else:
                         ai_content = await rag_service.generate_observer_qa_response(content, final_report)
-
-                # Save and return this special response
+                
                 ai_message = Message(
                     message_id=generate_id(), room_id=room_id, user_id="ai",
                     content=ai_content, timestamp=get_current_timestamp(), role="ai"
@@ -180,69 +174,56 @@ async def send_message(
                 await storage_service.save_message(ai_message)
                 return create_success_response(data={"message": message.model_dump(), "ai_response": ai_message.model_dump()})
 
-            # --- Normal message flow for 'main' and 'sub' rooms ---
-            # State-based intent handling
             user_id = user_info["user_id"]
-        pending_action_key = f"pending_action:{room_id}"
-        pending_action_facts = await memory_service.get_user_facts(user_id, kind='conversation_state', key=pending_action_key)
+            pending_action_key = f"pending_action:{room_id}"
+            pending_action_facts = await memory_service.get_user_facts(user_id, kind='conversation_state', key=pending_action_key)
 
-        intent_from_client = body.get("intent")
+            intent_from_client = body.get("intent")
+            
+            if pending_action_facts:
+                pending_action = pending_action_facts[0]['value_json'].get('action')
+                if pending_action == 'promote_memory_confirmation':
+                    if not current_room or not current_room.parent_id:
+                        ai_content = "오류: 현재 룸의 상위 룸을 찾을 수 없습니다."
+                        await memory_service.delete_user_fact(user_id, 'conversation_state', pending_action_key)
+                    else:
+                        main_room_id = current_room.parent_id
+                        summary = await memory_service.promote_memories(
+                            sub_room_id=room_id,
+                            main_room_id=main_room_id,
+                            criteria_text=content,
+                            user_id=user_id
+                        )
+                        ai_content = summary
+                        await memory_service.delete_user_fact(user_id, 'conversation_state', pending_action_key)
 
-        if pending_action_facts:
-            # If there's a pending action, this message is the response to it.
-            pending_action = pending_action_facts[0]['value_json'].get('action')
-            if pending_action == 'promote_memory_confirmation':
-                # This is where we handle the user's confirmation.
-                current_room = await storage_service.get_room(room_id)
-                if not current_room or not current_room.parent_id:
-                    ai_content = "오류: 현재 룸의 상위 룸을 찾을 수 없습니다."
-                    # Clear the state to prevent getting stuck
-                    await memory_service.delete_user_fact(user_id, 'conversation_state', pending_action_key)
+                    intent = "memory_promotion_confirmation"
+                    entities = {"user_response": content}
                 else:
-                    main_room_id = current_room.parent_id
-                    summary = await memory_service.promote_memories(
-                        sub_room_id=room_id,
-                        main_room_id=main_room_id,
-                        criteria_text=content,
-                        user_id=user_id
-                    )
-                    ai_content = summary
-                    await memory_service.delete_user_fact(user_id, 'conversation_state', pending_action_key)
-
-                intent = "memory_promotion_confirmation"
-                entities = {"user_response": content}
-            else:
-                # Fallback for unknown pending actions
-                intent = intent_from_client or "general"
+                    intent = intent_from_client or "general"
+                    entities = {}
+            
+            elif intent_from_client:
+                intent = intent_from_client
                 entities = {}
 
-        elif intent_from_client:
-            # If the client sends a specific intent, use it directly
-            intent = intent_from_client
-            entities = {}
-
-        else:
-            # Otherwise, classify intent using the LLM
-            intent_result = await intent_service.classify_intent(
-                content, message.message_id
-            )
-            intent = intent_result["intent"]
-            entities = intent_result.get("entities", {})
+            else:
+                intent_result = await intent_service.classify_intent(
+                    content, message.message_id
+                )
+                intent = intent_result["intent"]
+                entities = intent_result.get("entities", {})
 
             logger.info(f"Intent: {intent}, Entities: {entities}")
 
-            # Handle different intents with context awareness
             if intent == "time":
                 ai_content = search_service.now_kst()
-
             elif intent == "weather":
                 location = entities.get("location") or "서울"
                 ai_content = search_service.weather(location)
-
             elif intent == "wiki":
                 topic = entities.get("topic") or "인공지능"
                 ai_content = await search_service.wiki(topic)
-
             elif intent == "search":
                 query = entities.get("query") or "AI"
                 items = await search_service.search(query, 3)
@@ -255,18 +236,15 @@ async def send_message(
                     ai_content = "\n\n".join(lines)
                 else:
                     ai_content = f"'{query}'에 대한 검색 결과를 찾을 수 없습니다."
-
             elif intent == "name_set":
                 name = entities.get("name")
                 if name:
-                    # Save to memory with context
                     await memory_service.set_memory(
                         room_id, user_info["user_id"], "user_name", name
                     )
                     ai_content = f"알겠어요! 앞으로 {name}님으로 기억할게요. 😊"
                 else:
                     ai_content = "이름을 제대로 인식하지 못했어요. 다시 말해주세요."
-
             elif intent == "name_get":
                 name = await memory_service.get_memory(
                     room_id, user_info["user_id"], "user_name"
@@ -274,22 +252,15 @@ async def send_message(
                 if name:
                     ai_content = f"당신의 이름은 {name}로 기억하고 있어요."
                 else:
-                    ai_content = (
-                        "아직 이름을 모르는 걸요. '내 이름은 호건이야'처럼 말해주세요!"
-                    )
-
+                    ai_content = "아직 이름을 모르는 걸요. '내 이름은 호건이야'처럼 말해주세요!"
             elif intent == "review":
-                current_room = await storage_service.get_room(room_id)
                 if not current_room or current_room.type != "sub":
                     ai_content = "검토 기능은 서브룸에서만 시작할 수 있습니다."
                 else:
                     user_id = user_info["user_id"]
-                    # Extract topic by removing common trigger phrases
                     topic = content.replace("검토해보자", "").replace("리뷰해줘", "").strip()
                     if not topic:
                         topic = f"'{current_room.name}'에 대한 검토"
-
-                    # 1. Create a new review room
                     new_review_room = await storage_service.create_room(
                         room_id=generate_id(),
                         name=f"검토: {topic}",
@@ -297,8 +268,6 @@ async def send_message(
                         room_type="review",
                         parent_id=room_id,
                     )
-
-                    # 2. Create and save review metadata
                     instruction = "이 주제에 대해 3 라운드에 걸쳐 심도 있게 토론해주세요."
                     review_meta = ReviewMeta(
                         review_id=new_review_room.room_id,
@@ -309,30 +278,24 @@ async def send_message(
                         created_at=get_current_timestamp(),
                     )
                     await storage_service.save_review_meta(review_meta)
-
-                    # 3. Start the asynchronous review process
                     await review_service.start_review_process(
                         review_id=new_review_room.room_id,
                         topic=topic,
                         instruction=instruction,
-                        panelists=None,  # Use default panelists
+                        panelists=None,
                         trace_id=message.message_id,
                     )
-
                     ai_content = f"알겠습니다. '{topic}'에 대한 검토를 시작하겠습니다. '{new_review_room.name}' 룸에서 토론을 확인하세요."
-
             elif intent == "start_memory_promotion":
                 await memory_service.upsert_user_fact(
-                    user_id,
-                    kind='conversation_state',
-                    key=pending_action_key,
-                    value={'action': 'promote_memory_confirmation'},
+                    user_id, 
+                    kind='conversation_state', 
+                    key=pending_action_key, 
+                    value={'action': 'promote_memory_confirmation'}, 
                     confidence=1.0
                 )
                 ai_content = "어떤 대화를 상위 룸으로 올릴까요? '어제 대화 전부' 또는 'AI 윤리에 대한 내용만'과 같이 구체적으로 말씀해주세요."
-
             else:
-                # RAG-based intelligent response
                 ai_content = await rag_service.generate_rag_response(
                     room_id,
                     user_info["user_id"],
@@ -342,7 +305,6 @@ async def send_message(
                     message.message_id,
                 )
 
-            # Save AI response
             ai_message = Message(
                 message_id=generate_id(),
                 room_id=room_id,
@@ -353,9 +315,7 @@ async def send_message(
             )
             await storage_service.save_message(ai_message)
 
-            # Check if we should suggest a review
             suggestion = None
-            # Only suggest on general conversation or after a promotion confirmation
             if intent in ["general", "memory_promotion_confirmation"]:
                  suggestion = await _check_and_suggest_review(
                     room_id, user_id, storage_service, memory_service, llm_service
@@ -373,13 +333,11 @@ async def send_message(
             )
 
         except Exception as e:
-            logger.error(f"Error generating AI response: {e}")
-            # Still return the user message even if AI response fails
+            logger.error(f"Error generating AI response: {e}", exc_info=True)
             return create_success_response(
                 data={"message": message.model_dump()},
                 message="Message sent, but AI response failed",
             )
-
     except HTTPException:
         raise
     except Exception as e:
@@ -395,43 +353,37 @@ async def upload_file(
     storage_service: StorageService = Depends(get_storage_service),
 ):
     """Upload a file to a room, creating a special message for it."""
-    # Ensure the user is valid
     user_id = user_info.get("user_id")
     if not user_id:
         raise HTTPException(status_code=400, detail="Invalid user information")
 
-    # Ensure the room exists
     room = await storage_service.get_room(room_id)
     if not room or room.owner_id != user_id:
         raise HTTPException(status_code=404, detail="Room not found or access denied.")
 
     try:
-        # Create a unique filename to avoid collisions
         file_extension = file.filename.split('.')[-1] if '.' in file.filename else ''
         unique_filename = f"{uuid.uuid4()}.{file_extension}"
         file_path = f"uploads/{unique_filename}"
-
-        # Save the file to the server's filesystem
+        
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
-        # Create a special message content object
         message_content = {
             "type": "file",
-            "url": f"/{file_path}", # URL path for the frontend to access
+            "url": f"/{file_path}",
             "name": file.filename,
             "size": file.size,
             "content_type": file.content_type,
         }
 
-        # Create and save the message to the database
         new_message = Message(
             message_id=generate_id(),
             room_id=room_id,
             user_id=user_id,
-            content=json.dumps(message_content), # Store the structured data as a JSON string
+            content=json.dumps(message_content),
             timestamp=get_current_timestamp(),
-            role="user", # File uploads are from the user
+            role="user",
         )
         await storage_service.save_message(new_message)
 
@@ -439,5 +391,4 @@ async def upload_file(
 
     except Exception as e:
         logger.error(f"Failed to upload file to room {room_id}: {e}", exc_info=True)
-        # TODO: Add cleanup for the saved file if the DB operation fails
         raise HTTPException(status_code=500, detail="File upload failed.")

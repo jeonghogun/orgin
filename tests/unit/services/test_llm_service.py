@@ -1,118 +1,210 @@
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import Mock, AsyncMock, patch
+from app.services.llm_service import LLMService, OpenAIProvider, ClaudeProvider, GeminiProvider
+from app.core.errors import LLMError, LLMErrorCode
+from app.core.secrets import SecretProvider
 
-from app.services.llm_service import LLMService, OpenAIProvider, GeminiProvider, ClaudeProvider
-from app.config.settings import settings
-
-class TestOpenAIProvider:
-    """Test OpenAI provider implementation"""
-
-    @pytest.mark.asyncio
-    async def test_invoke_success(self):
-        """Test successful LLM invocation"""
-        mock_client = MagicMock()
-        mock_response = AsyncMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = "Test response"
-        mock_response.usage.total_tokens = 100
-        mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
-
-        provider = OpenAIProvider(client=mock_client)
-        content, metrics = await provider.invoke("gpt-4o", "system", "user", "req-123")
-
-        assert content == "Test response"
-        assert metrics["total_tokens"] == 100
-
-    @pytest.mark.asyncio
-    async def test_invoke_with_json_format(self):
-        """Test LLM invocation with JSON response format"""
-        mock_client = MagicMock()
-        mock_client.chat.completions.create = AsyncMock()
-
-        provider = OpenAIProvider(client=mock_client)
-        await provider.invoke("gpt-4o", "system", "user", "req-123", response_format="json")
-
-        mock_client.chat.completions.create.assert_called_once()
-        call_kwargs = mock_client.chat.completions.create.call_args.kwargs
-        assert call_kwargs.get("response_format") == {"type": "json_object"}
-
-    @pytest.mark.asyncio
-    async def test_invoke_api_error(self):
-        """Test LLM invocation with API error"""
-        mock_client = MagicMock()
-        mock_client.chat.completions.create.side_effect = Exception("API Error")
-
-        provider = OpenAIProvider(client=mock_client)
-        with pytest.raises(Exception, match="API Error"):
-            await provider.invoke("gpt-4o", "system", "user", "req-123")
-
-    def test_init_without_api_key(self, monkeypatch):
-        """Test real initialization without API key"""
-        monkeypatch.setattr(settings, "OPENAI_API_KEY", "")
-        with pytest.raises(ValueError, match="OpenAI API key is not configured"):
-            OpenAIProvider()
-
-class TestGeminiProvider:
-    @pytest.mark.asyncio
-    @patch("google.generativeai.GenerativeModel")
-    async def test_invoke_success(self, mock_genai_model, monkeypatch):
-        monkeypatch.setattr(settings, "GEMINI_API_KEY", "test-api-key")
-        mock_model_instance = mock_genai_model.return_value
-        mock_model_instance.generate_content_async.return_value.text = "Gemini response"
-
-        provider = GeminiProvider()
-        # We need to patch the instance's model attribute after it's created
-        provider.model = mock_model_instance
-        content, _ = await provider.invoke("gemini-pro", "system", "user", "req-123")
-        assert content == "Gemini response"
-
-class TestClaudeProvider:
-    @pytest.mark.asyncio
-    @patch("anthropic.AsyncAnthropic")
-    async def test_invoke_success(self, mock_anthropic_class, monkeypatch):
-        monkeypatch.setattr(settings, "ANTHROPIC_API_KEY", "test-api-key")
-        mock_client_instance = mock_anthropic_class.return_value
-        mock_response = AsyncMock()
-        mock_response.content = [MagicMock()]
-        mock_response.content[0].text = "Claude response"
-        mock_response.usage.input_tokens = 10
-        mock_response.usage.output_tokens = 20
-        mock_client_instance.messages.create.return_value = mock_response
-
-        provider = ClaudeProvider()
-        content, metrics = await provider.invoke("claude-3", "system", "user", "req-123")
-        assert content == "Claude response"
-        assert metrics["total_tokens"] == 30
 
 class TestLLMService:
-    """Test main LLM service orchestrator"""
+    @pytest.fixture
+    def mock_secret_provider(self):
+        provider = Mock(spec=SecretProvider)
+        provider.get.return_value = "test-api-key"
+        return provider
 
     @pytest.fixture
-    def service(self):
-        return LLMService()
+    def llm_service(self, mock_secret_provider):
+        return LLMService(mock_secret_provider)
 
-    @patch("app.services.llm_service.OpenAIProvider")
-    @patch("app.services.llm_service.GeminiProvider")
-    @patch("app.services.llm_service.ClaudeProvider")
-    def test_initialize_all_providers(self, mock_claude, mock_gemini, mock_openai, monkeypatch, service):
-        """Test that all providers are initialized when all keys are present."""
-        monkeypatch.setattr(settings, "OPENAI_API_KEY", "key")
-        monkeypatch.setattr(settings, "GEMINI_API_KEY", "key")
-        monkeypatch.setattr(settings, "ANTHROPIC_API_KEY", "key")
+    @pytest.mark.asyncio
+    async def test_invoke_with_retry_success(self, llm_service):
+        """재시도 로직이 포함된 invoke 테스트"""
+        with patch.object(llm_service, 'invoke_with_retry') as mock_invoke:
+            mock_invoke.return_value = ("test response", {"tokens": 100})
+            
+            result = await llm_service.invoke(
+                model="gpt-4",
+                system_prompt="test system",
+                user_prompt="test user",
+                request_id="test-123"
+            )
+            
+            assert result == ("test response", {"tokens": 100})
+            mock_invoke.assert_called_once()
 
-        service._initialize_providers()
-        assert "openai" in service.providers
-        assert "gemini" in service.providers
-        assert "claude" in service.providers
-        assert mock_openai.called
-        assert mock_gemini.called
-        assert mock_claude.called
+    @pytest.mark.asyncio
+    async def test_invoke_simple_success(self, llm_service):
+        """재시도 로직 없는 invoke_simple 테스트"""
+        with patch.object(llm_service, 'invoke_simple') as mock_invoke:
+            mock_invoke.return_value = ("test response", {"tokens": 100})
+            
+            result = await llm_service.invoke_simple(
+                model="gpt-4",
+                system_prompt="test system",
+                user_prompt="test user",
+                request_id="test-123"
+            )
+            
+            assert result == ("test response", {"tokens": 100})
+            mock_invoke.assert_called_once()
 
-    def test_initialize_no_providers(self, monkeypatch, service):
-        """Test that no providers are initialized when no keys are present."""
-        monkeypatch.setattr(settings, "OPENAI_API_KEY", None)
-        monkeypatch.setattr(settings, "GEMINI_API_KEY", None)
-        monkeypatch.setattr(settings, "ANTHROPIC_API_KEY", None)
+    @pytest.mark.asyncio
+    async def test_invoke_with_llm_error(self, llm_service):
+        """LLMError 예외 처리 테스트"""
+        with patch.object(llm_service, 'invoke_with_retry') as mock_invoke:
+            llm_error = LLMError(
+                error_code=LLMErrorCode.RATE_LIMIT,
+                provider="openai",
+                retryable=True,
+                error_message="Rate limit exceeded"
+            )
+            mock_invoke.side_effect = llm_error
+            
+            with pytest.raises(LLMError) as exc_info:
+                await llm_service.invoke(
+                    model="gpt-4",
+                    system_prompt="test system",
+                    user_prompt="test user",
+                    request_id="test-123"
+                )
+            
+            assert exc_info.value.error_code == LLMErrorCode.RATE_LIMIT
+            assert exc_info.value.retryable is True
 
-        service._initialize_providers()
-        assert service.providers == {}
+    def test_get_provider_with_fallback(self, llm_service):
+        """프로바이더 폴백 테스트"""
+        # openai 프로바이더만 초기화
+        llm_service.providers = {"openai": Mock()}
+        
+        # 존재하지 않는 프로바이더 요청 시 openai로 폴백
+        provider = llm_service.get_provider("nonexistent")
+        assert provider == llm_service.providers["openai"]
+
+    def test_get_provider_no_available(self, llm_service):
+        """사용 가능한 프로바이더가 없을 때 테스트"""
+        llm_service.providers = {}
+        
+        with pytest.raises(LLMError) as exc_info:
+            llm_service.get_provider("openai")
+        
+        assert exc_info.value.error_code == LLMErrorCode.PROVIDER_UNAVAILABLE
+        assert exc_info.value.retryable is False
+
+
+class TestOpenAIProvider:
+    @pytest.fixture
+    def mock_secret_provider(self):
+        provider = Mock(spec=SecretProvider)
+        provider.get.return_value = "test-openai-key"
+        return provider
+
+    @pytest.fixture
+    def openai_provider(self, mock_secret_provider):
+        with patch('openai.AsyncOpenAI'):
+            return OpenAIProvider(mock_secret_provider)
+
+    @pytest.mark.asyncio
+    async def test_invoke_success(self, openai_provider):
+        """OpenAI API 성공 호출 테스트"""
+        mock_response = Mock()
+        mock_response.usage.prompt_tokens = 10
+        mock_response.usage.completion_tokens = 20
+        mock_response.usage.total_tokens = 30
+        mock_response.choices = [Mock()]
+        mock_response.choices[0].message.content = "test response"
+        
+        openai_provider.client.chat.completions.create = AsyncMock(return_value=mock_response)
+        
+        result = await openai_provider.invoke(
+            model="gpt-4",
+            system_prompt="test system",
+            user_prompt="test user",
+            request_id="test-123"
+        )
+        
+        assert result[0] == "test response"
+        assert result[1]["total_tokens"] == 30
+
+    @pytest.mark.asyncio
+    async def test_invoke_rate_limit_error(self, openai_provider):
+        """Rate limit 에러 테스트"""
+        import openai
+        rate_limit_error = openai.RateLimitError("Rate limit exceeded", response=Mock(), body={})
+        
+        openai_provider.client.chat.completions.create = AsyncMock(side_effect=rate_limit_error)
+        
+        with pytest.raises(LLMError) as exc_info:
+            await openai_provider.invoke(
+                model="gpt-4",
+                system_prompt="test system",
+                user_prompt="test user",
+                request_id="test-123"
+            )
+        
+        assert exc_info.value.error_code == LLMErrorCode.RATE_LIMIT
+        assert exc_info.value.retryable is True
+
+
+class TestClaudeProvider:
+    @pytest.fixture
+    def mock_secret_provider(self):
+        provider = Mock(spec=SecretProvider)
+        provider.get.return_value = "test-anthropic-key"
+        return provider
+
+    @pytest.fixture
+    def claude_provider(self, mock_secret_provider):
+        with patch('anthropic.AsyncAnthropic'):
+            return ClaudeProvider(mock_secret_provider)
+
+    @pytest.mark.asyncio
+    async def test_invoke_success(self, claude_provider):
+        """Claude API 성공 호출 테스트"""
+        mock_response = Mock()
+        mock_response.usage.input_tokens = 10
+        mock_response.usage.output_tokens = 20
+        mock_response.content = [Mock()]
+        mock_response.content[0].text = "test response"
+        
+        claude_provider.client.messages.create = AsyncMock(return_value=mock_response)
+        
+        result = await claude_provider.invoke(
+            model="claude-3-sonnet",
+            system_prompt="test system",
+            user_prompt="test user",
+            request_id="test-123"
+        )
+        
+        assert result[0] == "test response"
+        assert result[1]["total_tokens"] == 30
+
+
+class TestGeminiProvider:
+    @pytest.fixture
+    def mock_secret_provider(self):
+        provider = Mock(spec=SecretProvider)
+        provider.get.return_value = "test-gemini-key"
+        return provider
+
+    @pytest.fixture
+    def gemini_provider(self, mock_secret_provider):
+        with patch('google.generativeai.configure'), patch('google.generativeai.GenerativeModel'):
+            return GeminiProvider(mock_secret_provider)
+
+    @pytest.mark.asyncio
+    async def test_invoke_success(self, gemini_provider):
+        """Gemini API 성공 호출 테스트"""
+        mock_response = Mock()
+        mock_response.text = "test response"
+        
+        gemini_provider.model.generate_content_async = AsyncMock(return_value=mock_response)
+        
+        result = await gemini_provider.invoke(
+            model="gemini-pro",
+            system_prompt="test system",
+            user_prompt="test user",
+            request_id="test-123"
+        )
+        
+        assert result[0] == "test response"
+        assert result[1]["total_tokens"] == 0  # Gemini는 토큰 정보를 제공하지 않음

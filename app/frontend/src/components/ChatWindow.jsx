@@ -102,10 +102,28 @@ const ChatWindow = ({ roomId }) => {
     enabled: !!roomId,
   });
 
+  // 룸이 review 타입일 때 리뷰 정보를 가져오는 쿼리
+  const { data: reviewData } = useQuery({
+    queryKey: ['reviewData', roomId],
+    queryFn: () => axios.get(`/api/reviews?room_id=${roomId}`).then(res => res.data.data),
+    enabled: !!roomData && roomData.type === 'review',
+  });
+
   const { data: finalReport } = useQuery({
     queryKey: ['finalReport', roomId],
-    queryFn: () => axios.get(`/api/reviews/${roomId}/report`).then(res => res.data.data),
-    enabled: !!roomData && roomData.type === 'review',
+    queryFn: () => {
+      // 리뷰 데이터에서 첫 번째 리뷰의 ID를 사용
+      if (reviewData && reviewData.length > 0) {
+        const review = reviewData[0];
+        // 리뷰가 완료된 상태일 때만 리포트 요청
+        if (review.status === 'completed') {
+          return axios.get(`/api/reviews/${review.review_id}/report`).then(res => res.data.data);
+        }
+      }
+      // 리뷰 데이터가 없거나 완료되지 않았으면 빈 데이터 반환
+      return Promise.resolve(null);
+    },
+    enabled: !!roomData && roomData.type === 'review' && !!reviewData && reviewData.length > 0 && reviewData[0].status === 'completed',
   });
 
   const { data: messages, error, isLoading } = useQuery({
@@ -208,7 +226,14 @@ const ChatWindow = ({ roomId }) => {
       }
       return (
         <div key={index} className={`message ${msg.role}`}>
-          <strong>{msg.role}:</strong> {content}
+          <div className="message-content">
+            <div className="message-avatar">
+              {msg.role === 'user' ? 'U' : 'A'}
+            </div>
+            <div className="message-text">
+              {content}
+            </div>
+          </div>
         </div>
       );
     });
@@ -274,20 +299,24 @@ const ChatWindow = ({ roomId }) => {
       )}
 
       <form onSubmit={handleSendMessage} className="message-form">
-        <input type="file" ref={fileInputRef} onChange={handleFileSelect} style={{ display: 'none' }} />
-        <button type="button" onClick={() => setIsMenuOpen(!isMenuOpen)} className="chat-actions-button">
-          +
-        </button>
-        <input
-          type="text"
-          value={newMessage}
-          onChange={(e) => setNewMessage(e.target.value)}
-          placeholder="Type your message..."
-          disabled={messageMutation.isLoading || uploadMutation.isLoading}
-        />
-        <button type="submit" disabled={messageMutation.isLoading || uploadMutation.isLoading}>
-          {messageMutation.isLoading ? 'Sending...' : 'Send'}
-        </button>
+        <div className="message-form-container">
+          <input type="file" ref={fileInputRef} onChange={handleFileSelect} style={{ display: 'none' }} />
+          <button type="button" onClick={() => setIsMenuOpen(!isMenuOpen)} className="chat-actions-button">
+            +
+          </button>
+          <input
+            type="text"
+            value={newMessage}
+            onChange={(e) => setNewMessage(e.target.value)}
+            placeholder="무엇이든 물어보세요..."
+            disabled={messageMutation.isLoading || uploadMutation.isLoading}
+          />
+          <button type="submit" disabled={messageMutation.isLoading || uploadMutation.isLoading}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M22 2L11 13M22 2L15 22L11 13M22 2L2 9L11 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </button>
+        </div>
       </form>
       <ErrorNotification message={uiError} onClose={() => setUiError(null)} />
     </div>

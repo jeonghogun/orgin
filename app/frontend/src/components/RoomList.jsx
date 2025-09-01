@@ -57,13 +57,16 @@ const RoomItem = ({ room, onRoomSelect, level, editingRoomId, setEditingRoomId, 
 
   return (
     <>
-      <li
-        className="room-item-li"
+      <div
+        className="room-item"
         style={{ paddingLeft: `${level * 20}px` }}
         onClick={() => !isEditing && onRoomSelect(room.room_id)}
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
       >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M21 15C21 15.5304 20.7893 16.0391 20.4142 16.4142C20.0391 16.7893 19.5304 17 19 17H7L3 21V5C3 4.46957 3.21071 3.96086 3.58579 3.58579C3.96086 3.21071 4.46957 3 5 3H19C19.5304 3 20.0391 3.21071 20.4142 3.58579C20.7893 3.96086 21 4.46957 21 5V15Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
         {isEditing ? (
           <input
             type="text"
@@ -76,7 +79,7 @@ const RoomItem = ({ room, onRoomSelect, level, editingRoomId, setEditingRoomId, 
           />
         ) : (
           <>
-            <span>{room.name}</span>
+            <span className="room-name">{room.name}</span>
             {isHovered && (
               <button
                 className="room-item-edit-button"
@@ -91,24 +94,22 @@ const RoomItem = ({ room, onRoomSelect, level, editingRoomId, setEditingRoomId, 
             )}
           </>
         )}
-      </li>
+      </div>
       {room.children && room.children.length > 0 && (
-        <li>
-          <ul className="room-item-children-ul">
-            {room.children.map(child => (
-              <RoomItem
-                key={child.room_id}
-                room={child}
-                onRoomSelect={onRoomSelect}
-                level={level + 1}
-                editingRoomId={editingRoomId}
-                setEditingRoomId={setEditingRoomId}
-                setEditingName={setEditingName}
-                handleUpdateName={handleUpdateName}
-              />
-            ))}
-          </ul>
-        </li>
+        <div>
+          {room.children.map(child => (
+            <RoomItem
+              key={child.room_id}
+              room={child}
+              onRoomSelect={onRoomSelect}
+              level={level + 1}
+              editingRoomId={editingRoomId}
+              setEditingRoomId={setEditingRoomId}
+              setEditingName={setEditingName}
+              handleUpdateName={handleUpdateName}
+            />
+          ))}
+        </div>
       )}
     </>
   );
@@ -152,17 +153,17 @@ const RoomList = ({ onRoomSelect }) => {
     }
 
     if (error) {
-      return <ErrorMessage error={error} message="Failed to fetch rooms." />;
+      return <ErrorMessage error={error} message="룸 목록을 불러올 수 없습니다." />;
     }
 
     const hierarchicalRooms = buildRoomHierarchy(rooms);
 
     if (hierarchicalRooms.length === 0) {
-      return <EmptyState message="No rooms found. Create one to get started." />;
+      return <EmptyState message="룸이 없습니다. 시작하려면 하나를 만드세요." />;
     }
 
     return (
-      <ul className="room-list-ul">
+      <div className="room-list">
         {hierarchicalRooms.map((room) => (
           <RoomItem
             key={room.room_id}
@@ -175,13 +176,12 @@ const RoomList = ({ onRoomSelect }) => {
             handleUpdateName={handleUpdateName}
           />
         ))}
-      </ul>
+      </div>
     );
   };
 
   return (
     <div className="room-list-container">
-      <h2 className="room-list-header">Rooms</h2>
       {renderContent()}
     </div>
   );
