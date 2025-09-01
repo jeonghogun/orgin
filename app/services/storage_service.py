@@ -8,6 +8,7 @@ import logging
 from typing import Dict, Any, List, Optional, Literal, TypedDict, Final
 from collections import defaultdict
 
+from app.models.enums import RoomType
 from app.models.schemas import (
     Room,
     Message,
@@ -27,7 +28,7 @@ class RoomRow(TypedDict):
     room_id: str
     name: str
     owner_id: str
-    type: Literal["main", "sub", "review"]
+    type: RoomType
     parent_id: Optional[str]
     created_at: int
     updated_at: int
@@ -83,7 +84,7 @@ class StorageService:
         room_id: str,
         name: str,
         owner_id: str,
-        room_type: Literal["main", "sub", "review"],
+        room_type: RoomType,
         parent_id: Optional[str] = None,
     ) -> Room:
         """Create a new room in the database"""

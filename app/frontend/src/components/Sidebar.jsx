@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
+import { ROOM_TYPES } from '../constants';
+import { useAppContext } from '../context/AppContext';
 
 const fetchRooms = async () => {
   try {
@@ -67,10 +69,12 @@ const buildRoomHierarchy = (rooms) => {
   }
 };
 
-const RoomItem = ({ room, onRoomSelect, level, isActive, onToggleReview, parentRoom = null }) => {
+const RoomItem = ({ room, level, parentRoom = null }) => {
+  const { handleRoomSelect, handleToggleReview, selectedRoomId } = useAppContext();
   const [isHovered, setIsHovered] = useState(false);
-  const isReviewRoom = room.type === 'review' || level === 2;
+  const isReviewRoom = room.type === ROOM_TYPES.REVIEW || level === 2;
   const indent = level * 12;
+  const isActive = selectedRoomId === room.room_id;
 
   const handleClick = () => {
     if (isReviewRoom) {
@@ -80,9 +84,9 @@ const RoomItem = ({ room, onRoomSelect, level, isActive, onToggleReview, parentR
         parent_room: parentRoom, // 부모 세부룸 정보
         sub_room_id: parentRoom?.room_id // 세부룸 ID
       };
-      onToggleReview(reviewData);
+      handleToggleReview(reviewData);
     } else {
-      onRoomSelect(room.room_id);
+      handleRoomSelect(room.room_id);
     }
   };
 
@@ -118,10 +122,7 @@ const RoomItem = ({ room, onRoomSelect, level, isActive, onToggleReview, parentR
             <RoomItem
               key={child.room_id}
               room={child}
-              onRoomSelect={onRoomSelect}
               level={level + 1}
-              isActive={isActive}
-              onToggleReview={onToggleReview}
               parentRoom={room} // 부모 룸 정보 전달
             />
           ))}
@@ -131,14 +132,8 @@ const RoomItem = ({ room, onRoomSelect, level, isActive, onToggleReview, parentR
   );
 };
 
-const Sidebar = ({ 
-  isOpen, 
-  onToggle, 
-  selectedRoomId, 
-  onRoomSelect, 
-  onToggleReview,
-  onClose 
-}) => {
+const Sidebar = () => {
+  const { sidebarOpen, setSidebarOpen, handleRoomSelect } = useAppContext();
   const queryClient = useQueryClient();
 
   const { data: rooms = [], error, isLoading } = useQuery({
@@ -148,19 +143,6 @@ const Sidebar = ({
     initialData: [], // 초기 데이터를 빈 배열로 설정
     retry: 1, // 재시도 횟수 제한
   });
-
-  // 키보드 단축키 처리
-  useEffect(() => {
-    const handleKeyDown = (e) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'b') {
-        e.preventDefault();
-        onToggle();
-      }
-    };
-
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [onToggle]);
 
   const renderContent = () => {
     if (isLoading) {
@@ -212,10 +194,7 @@ const Sidebar = ({
             <RoomItem
               key={room.room_id}
               room={room}
-              onRoomSelect={onRoomSelect}
               level={0}
-              isActive={selectedRoomId === room.room_id}
-              onToggleReview={onToggleReview}
             />
           );
         }).filter(Boolean)} {/* null 값 제거 */}
@@ -223,10 +202,13 @@ const Sidebar = ({
     );
   };
 
+  const onToggle = () => setSidebarOpen(!sidebarOpen);
+  const onClose = () => setSidebarOpen(false);
+
   return (
     <>
       {/* 모바일에서 사이드바가 닫혔을 때 열기 버튼 */}
-      {!isOpen && (
+      {!sidebarOpen && (
         <button
           onClick={onToggle}
           className="fixed top-4 left-4 z-50 p-2 bg-panel border border-border rounded-button hover:bg-panel-elev transition-colors duration-150 focus-ring"
@@ -240,13 +222,13 @@ const Sidebar = ({
       {/* 사이드바 */}
       <div className={`fixed lg:relative inset-y-0 left-0 z-40 bg-panel border-r border-border flex flex-col h-full
         transition-all duration-150 ease-out
-        ${isOpen ? 'w-[280px] translate-x-0' : 'w-0 -translate-x-full lg:w-[280px] lg:translate-x-0'}
+        ${sidebarOpen ? 'w-[280px] translate-x-0' : 'w-0 -translate-x-full lg:w-[280px] lg:translate-x-0'}
       `}>
         {/* 사이드바 내용 - 항상 렌더링하되 너비만 조절 */}
         <div className="flex flex-col h-full w-[280px]">
           {/* 헤더 - 고정 */}
           <div className="flex items-center justify-between p-4 border-b border-border flex-shrink-0">
-            <button className="btn-primary text-body flex items-center" onClick={() => onRoomSelect(null)}> {/* 새 채팅 버튼 클릭 시 메인 룸으로 이동 */}
+            <button className="btn-primary text-body flex items-center" onClick={() => handleRoomSelect(null)}> {/* 새 채팅 버튼 클릭 시 메인 룸으로 이동 */}
               <svg viewBox="0 0 16 16" fill="currentColor" className="w-4 h-4 mr-2">
                 <path d="M8 0C3.6 0 0 3.6 0 8s3.6 8 8 8 8-3.6 8-8-3.6-8-8-8zm4 9H7v5H5V9H0V7h5V2h2v5h5v2z"/>
               </svg>
@@ -270,7 +252,7 @@ const Sidebar = ({
       </div>
 
       {/* 모바일 오버레이 */}
-      {isOpen && (
+      {sidebarOpen && (
         <div
           className="fixed inset-0 bg-black/50 z-30 lg:hidden"
           onClick={onClose}

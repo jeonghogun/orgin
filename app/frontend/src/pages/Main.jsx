@@ -4,8 +4,10 @@ import MessageList from '../components/MessageList';
 import ChatInput from '../components/ChatInput';
 import { useQuery } from '@tanstack/react-query';
 import axios from 'axios';
+import { useAppContext } from '../context/AppContext';
 
-const Main = ({ roomId, onToggleReview }) => {
+const Main = ({ roomId }) => {
+  const { handleToggleReview } = useAppContext();
   const [suggestions, setSuggestions] = useState([]);
 
   // 룸 정보 조회
@@ -22,7 +24,7 @@ const Main = ({ roomId, onToggleReview }) => {
   // 검토 시작 버튼 클릭 핸들러
   const handleStartReview = () => {
     if (roomData) {
-      onToggleReview(roomData);
+      handleToggleReview(roomData);
     }
   };
 
