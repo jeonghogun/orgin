@@ -114,14 +114,22 @@ class MemoryService:
         params = (user_id, kind, key, json.dumps(value), confidence)
         self.db.execute_update(sql, params)
 
-    async def get_user_facts(self, user_id: str, kind: Optional[str] = None) -> List[Dict[str, Any]]:
+    async def get_user_facts(self, user_id: str, kind: Optional[str] = None, key: Optional[str] = None) -> List[Dict[str, Any]]:
+        sql = "SELECT * FROM user_facts WHERE user_id = %s"
+        params = [user_id]
         if kind:
-            sql = "SELECT * FROM user_facts WHERE user_id = %s AND kind = %s ORDER BY confidence DESC"
-            params = (user_id, kind)
-        else:
-            sql = "SELECT * FROM user_facts WHERE user_id = %s ORDER BY confidence DESC"
-            params = (user_id,)
-        return self.db.execute_query(sql, params)
+            sql += " AND kind = %s"
+            params.append(kind)
+        if key:
+            sql += " AND key = %s"
+            params.append(key)
+        sql += " ORDER BY confidence DESC"
+        return self.db.execute_query(sql, tuple(params))
+
+    async def delete_user_fact(self, user_id: str, kind: str, key: str) -> None:
+        sql = "DELETE FROM user_facts WHERE user_id = %s AND kind = %s AND key = %s"
+        params = (user_id, kind, key)
+        self.db.execute_update(sql, params)
 
     async def get_context(self, room_id: str, user_id: str) -> Optional[ConversationContext]:
         """Get conversation context for a room and user"""
@@ -273,6 +281,71 @@ class MemoryService:
         except Exception as e:
             logger.error(f"Failed to update profile for user '{user_id}': {e}", exc_info=True)
             return None
+
+    async def promote_memories(self, sub_room_id: str, main_room_id: str, criteria_text: str, user_id: str) -> str:
+        """
+        Finds messages in a sub-room based on criteria and copies them to the main room.
+        Returns a summary of the action taken.
+        """
+        logger.info(f"Promoting memories from {sub_room_id} to {main_room_id} with criteria: '{criteria_text}'")
+
+        # 1. Use an LLM to parse the criteria text into a structured format.
+        prompt = f"""
+        사용자의 요청을 분석하여 메시지 선택 기준을 JSON 형식으로 추출하세요.
+        요청: "{criteria_text}"
+
+        분석 기준:
+        - "전체", "모든", "전부" 등의 단어가 있으면 type을 "all"로 설정하세요.
+        - 특정 주제나 아이디어에 대한 언급이면 type을 "topic"으로, value에 해당 주제를 명시하세요.
+        - 특정 날짜나 시간 범위이면 type을 "date_range"로 설정하세요. (현재 미지원)
+
+        다음 JSON 형식으로만 응답하세요:
+        {{
+            "type": "all | topic | date_range",
+            "value": "추출된 주제 (topic인 경우, 없으면 null)"
+        }}
+        """
+        try:
+            provider = self.llm_service.get_provider()
+            content, _ = await provider.invoke(
+                model="gpt-3.5-turbo",
+                system_prompt="You are a helpful assistant that analyzes user requests for selecting conversation topics.",
+                user_prompt=prompt,
+                response_format="json",
+            )
+            criteria = json.loads(content)
+            criteria_type = criteria.get("type", "all")
+            criteria_value = criteria.get("value")
+        except Exception as e:
+            logger.error(f"Failed to parse promotion criteria with LLM: {e}. Defaulting to 'all'.")
+            criteria_type = "all"
+            criteria_value = None
+
+        # 2. Fetch messages based on parsed criteria.
+        messages_to_promote = []
+        if criteria_type == "topic" and criteria_value:
+            logger.info(f"Promoting by topic: {criteria_value}")
+            # Use existing hybrid search to find relevant messages
+            messages_to_promote = await self.get_relevant_memories_hybrid(
+                query=criteria_value, room_ids=[sub_room_id], user_id=user_id, limit=50 # Promote up to 50 relevant messages
+            )
+        else: # Default to 'all'
+            logger.info("Promoting all messages.")
+            messages_to_promote = await self.db.get_messages_for_promotion(sub_room_id)
+
+        if not messages_to_promote:
+            return "올릴 만한 대화 내용을 찾지 못했습니다."
+
+        # 3. Copy messages to the main room.
+        copied_count = await self.db.copy_messages_to_room(messages_to_promote, main_room_id, user_id)
+
+        logger.info(f"Copied {copied_count} messages to {main_room_id}.")
+
+        if criteria_type == "topic":
+            return f"'{criteria_value}' 주제와 관련된 {copied_count}개의 메시지를 상위 룸으로 올렸습니다."
+        else:
+            return f"총 {copied_count}개의 메시지를 상위 룸으로 올렸습니다."
+
 
     # The archival methods are placeholders for now and will be implemented next.
     async def archive_old_memories(self, room_id: str):

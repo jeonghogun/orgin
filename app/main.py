@@ -147,6 +147,8 @@ app.include_router(websockets.router)
 app.include_router(admin.router, prefix="/api")
 
 # Mount static files LAST (so it doesn't override API routes)
+# Mount uploads directory first
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 app.mount("/", StaticFiles(directory="app/frontend/dist", html=True), name="static")
 
 
