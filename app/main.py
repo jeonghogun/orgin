@@ -27,7 +27,7 @@ from app.config.settings import settings
 from app.utils.helpers import get_current_timestamp
 
 # Import routers
-from app.api.routes import rooms, messages, search, memory, reviews, rag, metrics, websockets, admin
+from app.api.routes import rooms, messages, search, memory, reviews, rag, metrics, websockets, admin, health
 
 from app.utils.trace_id import trace_id_var
 
@@ -132,12 +132,10 @@ async def rate_limit_exceeded_handler(
 
 app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)  # type: ignore[arg-type]
 
-# Mount static files
-app.mount("/", StaticFiles(directory="app/static", html=True), name="static")
-
 # Router dependencies are now handled within each router module
 
-# Include routers
+# Include routers FIRST (before static files)
+app.include_router(health.router)  # No prefix for health endpoints
 app.include_router(rooms.router, prefix="/api/rooms")
 app.include_router(messages.router, prefix="/api/rooms")
 app.include_router(search.router, prefix="/api/search")
@@ -147,6 +145,9 @@ app.include_router(rag.router, prefix="/api/rag")
 app.include_router(metrics.router, prefix="/api")
 app.include_router(websockets.router)
 app.include_router(admin.router, prefix="/api")
+
+# Mount static files LAST (so it doesn't override API routes)
+app.mount("/", StaticFiles(directory="app/frontend/dist", html=True), name="static")
 
 
 # Health check endpoint

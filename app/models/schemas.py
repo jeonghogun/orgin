@@ -198,3 +198,13 @@ class MetricsResponse(BaseModel):
 
     summary: MetricsSummary
     data: List[ReviewMetrics]
+
+
+class PanelistConfig(BaseModel):
+    """Configuration for a panelist in the review system"""
+    
+    name: str
+    provider: str  # openai, gemini, claude
+    model: str
+    role: Optional[str] = None
+    temperature: Optional[float] = 0.7

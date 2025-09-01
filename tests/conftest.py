@@ -62,28 +62,43 @@ def postgresql_factory():
 
 
 @pytest.fixture(scope="session")
-def test_db(postgresql_factory):
+def test_db():
     """
-    Creates a temporary database, runs alembic migrations, and yields the instance.
+    Use existing Docker database for tests in Docker environment.
     """
-    from alembic.config import Config
-    from alembic import command
+    import os
+    
+    # Check if we're running in Docker
+    if os.path.exists('/.dockerenv'):
+        # Use existing Docker database
+        class MockDB:
+            def url(self):
+                return settings.DATABASE_URL
+            def stop(self):
+                pass
+        
+        yield MockDB()
+    else:
+        # Use temporary database for local tests
+        from alembic.config import Config
+        from alembic import command
+        
+        postgresql_factory_instance = testing.postgresql.PostgresqlFactory(cache_initialized_db=True)
+        postgresql = postgresql_factory_instance()
 
-    postgresql = postgresql_factory()
+        # Temporarily override the database URL for Alembic
+        original_db_url = settings.DATABASE_URL
+        settings.DATABASE_URL = postgresql.url()
 
-    # Temporarily override the database URL for Alembic
-    original_db_url = settings.DATABASE_URL
-    settings.DATABASE_URL = postgresql.url()
+        # Run migrations
+        alembic_cfg = Config("alembic.ini")
+        command.upgrade(alembic_cfg, "heads")
 
-    # Run migrations
-    alembic_cfg = Config("alembic.ini")
-    command.upgrade(alembic_cfg, "head")
+        yield postgresql
 
-    yield postgresql
-
-    # Teardown: restore original settings and stop the database
-    settings.DATABASE_URL = original_db_url
-    postgresql.stop()
+        # Teardown: restore original settings and stop the database
+        settings.DATABASE_URL = original_db_url
+        postgresql.stop()
 
 
 @pytest.fixture(scope="session", autouse=True)

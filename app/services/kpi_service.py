@@ -3,7 +3,7 @@ Service for calculating and storing Key Performance Indicators (KPIs).
 """
 import logging
 from datetime import date
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from app.services.database_service import DatabaseService, get_database_service
 
@@ -72,7 +72,7 @@ class KPIService:
         return pivoted_data
 
 # Singleton instance
-_kpi_service_instance: KPIService | None = None
+_kpi_service_instance: Optional[KPIService] = None
 
 def get_kpi_service() -> KPIService:
     global _kpi_service_instance

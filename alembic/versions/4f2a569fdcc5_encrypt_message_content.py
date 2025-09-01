@@ -28,15 +28,24 @@ def upgrade() -> None:
     if not encryption_key:
         raise ValueError("DB_ENCRYPTION_KEY must be set in environment for this migration.")
 
-    op.add_column('messages', sa.Column('content_encrypted', sa.BYTEA(), nullable=True))
+    # Add encrypted content column
+    op.add_column('messages', sa.Column('content_encrypted', sa.LargeBinary(), nullable=True))
+    
+    # Add searchable content column (for full-text search)
+    op.add_column('messages', sa.Column('content_searchable', sa.Text(), nullable=True))
 
-    stmt = sa.text("UPDATE messages SET content_encrypted = pgp_sym_encrypt(content, :key)")
+    # Encrypt the content and copy to searchable column
+    stmt = sa.text("UPDATE messages SET content_encrypted = pgp_sym_encrypt(content, :key), content_searchable = content")
     stmt = stmt.bindparams(sa.bindparam('key', encryption_key))
     op.execute(stmt)
 
+    # Drop original content column
     op.drop_column('messages', 'content')
+    
+    # Rename encrypted column to content (for backward compatibility)
     op.alter_column('messages', 'content_encrypted', new_column_name='content')
     op.alter_column('messages', 'content', nullable=False)
+    op.alter_column('messages', 'content_searchable', nullable=False)
 
 
 def downgrade() -> None:
@@ -44,7 +53,7 @@ def downgrade() -> None:
     if not encryption_key:
         raise ValueError("DB_ENCRYPTION_KEY must be set in environment for this migration.")
 
-    op.add_column('messages', sa.Column('content_decrypted', sa.TEXT(), nullable=True))
+    op.add_column('messages', sa.Column('content_decrypted', sa.Text(), nullable=True))
 
     stmt = sa.text("UPDATE messages SET content_decrypted = pgp_sym_decrypt(content, :key)")
     stmt = stmt.bindparams(sa.bindparam('key', encryption_key))

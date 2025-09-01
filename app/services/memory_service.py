@@ -8,7 +8,8 @@ import asyncio
 from datetime import datetime, timezone
 from typing import List, Optional, Tuple, Dict, Any
 
-from app.models.schemas import Message, UserProfile, ConversationContext, ContextUpdate
+from app.models.schemas import Message
+from app.models.memory_schemas import UserProfile, ConversationContext, ContextUpdate
 from app.services.database_service import DatabaseService
 from app.services.llm_service import LLMService
 from app.core.secrets import SecretProvider
@@ -60,9 +61,9 @@ class MemoryService:
     async def _vector_candidates(self, query: str, room_ids: List[str], user_id: str) -> List[Dict[str, Any]]:
         query_embedding, _ = await self.llm_service.generate_embedding(query)
         sql = """
-            SELECT message_id, room_id, user_id, role, content, timestamp, 1 - (embedding <=> %s) as score
-            FROM messages WHERE room_id = ANY(%s) AND user_id = %s
-            ORDER BY embedding <=> %s LIMIT %s;
+            SELECT message_id, room_id, user_id, role, content, timestamp, 1 - (embedding <=> %s::vector) as score
+            FROM messages WHERE room_id = ANY(%s) AND user_id = %s AND embedding IS NOT NULL
+            ORDER BY embedding <=> %s::vector LIMIT %s;
         """
         params = (query_embedding, room_ids, user_id, query_embedding, settings.HYBRID_TOPK_VEC)
         return self.db.execute_query(sql, params)
@@ -122,6 +123,36 @@ class MemoryService:
             params = (user_id,)
         return self.db.execute_query(sql, params)
 
+    async def get_context(self, room_id: str, user_id: str) -> Optional[ConversationContext]:
+        """Get conversation context for a room and user"""
+        try:
+            query = """
+                SELECT context_id, room_id, user_id, summary, key_topics, sentiment, created_at, updated_at
+                FROM conversation_contexts 
+                WHERE room_id = %s AND user_id = %s
+                ORDER BY updated_at DESC 
+                LIMIT 1
+            """
+            results = self.db.execute_query(query, (room_id, user_id))
+            
+            if not results:
+                return None
+                
+            row = results[0]
+            return ConversationContext(
+                context_id=row["context_id"],
+                room_id=row["room_id"],
+                user_id=row["user_id"],
+                summary=row["summary"] or "",
+                key_topics=row["key_topics"] if row["key_topics"] else [],  # PostgreSQL 배열을 직접 사용
+                sentiment=row["sentiment"] or "neutral",
+                created_at=row["created_at"],
+                updated_at=row["updated_at"]
+            )
+        except Exception as e:
+            logger.error(f"Failed to get conversation context for room {room_id}, user {user_id}: {e}")
+            return None
+
     async def get_user_profile(self, user_id: str) -> Optional[UserProfile]:
         key = self.db_encryption_key
         try:
@@ -155,6 +186,65 @@ class MemoryService:
         except Exception as e:
             logger.error(f"Failed to get or create user profile for '{user_id}': {e}", exc_info=True)
             return None
+
+    async def update_context(self, context_update: ContextUpdate) -> None:
+        """Update conversation context"""
+        try:
+            # Check if context exists
+            existing_context = await self.get_context(context_update.room_id, context_update.user_id)
+            
+            if existing_context:
+                # Update existing context
+                update_fields = []
+                params = []
+                
+                if context_update.summary is not None:
+                    update_fields.append("summary = %s")
+                    params.append(context_update.summary)
+                
+                if context_update.key_topics is not None:
+                    update_fields.append("key_topics = %s")
+                    params.append(context_update.key_topics)  # PostgreSQL 배열로 직접 전달
+                
+                if context_update.sentiment is not None:
+                    update_fields.append("sentiment = %s")
+                    params.append(context_update.sentiment)
+                
+                if update_fields:
+                    update_fields.append("updated_at = %s")
+                    params.extend([get_current_timestamp(), context_update.room_id, context_update.user_id])
+                    
+                    query = f"""
+                        UPDATE conversation_contexts 
+                        SET {', '.join(update_fields)}
+                        WHERE room_id = %s AND user_id = %s
+                    """
+                    self.db.execute_update(query, tuple(params))
+            else:
+                # Create new context
+                context_id = generate_id()
+                current_time = get_current_timestamp()
+                
+                query = """
+                    INSERT INTO conversation_contexts 
+                    (context_id, room_id, user_id, summary, key_topics, sentiment, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """
+                params = (
+                    context_id,
+                    context_update.room_id,
+                    context_update.user_id,
+                    context_update.summary or "",
+                    context_update.key_topics or [],  # PostgreSQL 배열로 직접 전달
+                    context_update.sentiment or "neutral",
+                    current_time,
+                    current_time
+                )
+                self.db.execute_update(query, params)
+                
+        except Exception as e:
+            logger.error(f"Failed to update context: {e}")
+            raise
 
     async def update_user_profile(self, user_id: str, profile_data: Dict[str, Any]) -> Optional[UserProfile]:
         key = self.db_encryption_key

@@ -64,7 +64,7 @@ class AdminService:
         }
 
 # Singleton
-_admin_service_instance: AdminService | None = None
+_admin_service_instance: Optional[AdminService] = None
 
 def get_admin_service() -> AdminService:
     global _admin_service_instance

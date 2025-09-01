@@ -4,7 +4,7 @@ Service for logging administrator actions.
 import logging
 import json
 import time
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from app.services.database_service import DatabaseService, get_database_service
 
@@ -43,7 +43,7 @@ class AuditService:
             pass
 
 # Singleton instance (though it might be better to inject this via dependencies)
-_audit_service_instance: AuditService | None = None
+_audit_service_instance: Optional[AuditService] = None
 
 def get_audit_service() -> AuditService:
     global _audit_service_instance

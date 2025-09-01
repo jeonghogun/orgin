@@ -40,7 +40,7 @@ docker-compose up --build
 새로운 터미널에서 다음 명령어를 실행하세요:
 ```bash
 # 실행 중인 api 컨테이너 내부에서 alembic upgrade 명령 실행
-docker-compose exec api alembic upgrade head
+docker-compose exec api alembic upgrade heads
 ```
 
 **새로운 마이그레이션 생성하기:**

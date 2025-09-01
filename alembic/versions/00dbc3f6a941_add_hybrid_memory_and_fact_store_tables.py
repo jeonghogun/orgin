@@ -19,10 +19,10 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Add BM25 FTS columns to messages table
+    # Add BM25 FTS columns to messages table (using searchable content)
     op.execute("""
         ALTER TABLE messages ADD COLUMN IF NOT EXISTS ts tsvector
-        GENERATED ALWAYS AS (to_tsvector('simple', coalesce(content, ''))) STORED;
+        GENERATED ALWAYS AS (to_tsvector('simple', coalesce(content_searchable, ''))) STORED;
     """)
     op.execute("""
         CREATE INDEX IF NOT EXISTS idx_messages_ts ON messages USING GIN (ts);
@@ -35,9 +35,9 @@ def upgrade() -> None:
         sa.Column('user_id', sa.Text(), nullable=False),
         sa.Column('kind', sa.Text(), nullable=False),
         sa.Column('key', sa.Text(), nullable=False),
-        sa.Column('value_json', postgresql.JSONB(astext_for_arra=False), nullable=False),
+        sa.Column('value_json', postgresql.JSONB(), nullable=False),
         sa.Column('confidence', sa.Float(), nullable=True),
-        sa.Column('updated_at', postgresql.TIMESTAMPTZ(), nullable=False, server_default=sa.text("now()"))
+        sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()"))
     )
     op.create_index(op.f('idx_user_facts_user_kind_key'), 'user_facts', ['user_id', 'kind', 'key'], unique=True)
 
@@ -49,7 +49,7 @@ def upgrade() -> None:
         sa.Column('week_start', sa.Date(), nullable=False),
         sa.Column('text', sa.Text(), nullable=False),
         sa.Column('tokens_saved_estimate', sa.Integer(), nullable=True),
-        sa.Column('created_at', postgresql.TIMESTAMPTZ(), nullable=False, server_default=sa.text("now()"))
+        sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()"))
     )
     op.create_index(op.f('idx_summary_notes_room_week'), 'summary_notes', ['room_id', 'week_start'], unique=False)
 

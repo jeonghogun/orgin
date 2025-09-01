@@ -34,7 +34,19 @@ async def get_metrics(
         )
 
         if not all_metrics:
-            return MetricsResponse(summary=MetricsSummary(total_reviews=0), data=[])
+            return MetricsResponse(
+                summary=MetricsSummary(
+                    total_reviews=0,
+                    avg_duration=0.0,
+                    median_duration=0.0,
+                    p95_duration=0.0,
+                    avg_tokens=0.0,
+                    median_tokens=0.0,
+                    p95_tokens=0.0,
+                    provider_summary={}
+                ), 
+                data=[]
+            )
 
         # Calculate overall aggregations
         durations = [m.total_duration_seconds for m in all_metrics]

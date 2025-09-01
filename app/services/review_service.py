@@ -2,6 +2,7 @@
 Review Service - Orchestrates the multi-agent review process using Celery.
 """
 import logging
+from typing import Optional, List
 from app.services.storage_service import StorageService
 from app.celery_app import celery_app
 
@@ -32,7 +33,7 @@ class ReviewService:
                 review_id=review_id,
                 topic=topic,
                 instruction=instruction,
-                panelists=panelists,
+                panelists_override=panelists,
                 trace_id=trace_id,
             )
         else:

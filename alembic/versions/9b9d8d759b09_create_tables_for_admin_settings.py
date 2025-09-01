@@ -26,12 +26,12 @@ def upgrade() -> None:
         sa.Column('timeout_ms', sa.Integer(), nullable=False),
         sa.Column('retries', sa.Integer(), nullable=False),
         sa.Column('enabled', sa.Boolean(), nullable=False, server_default=sa.text('true')),
-        sa.Column('updated_at', postgresql.TIMESTAMPTZ(), nullable=False, server_default=sa.text('now()'))
+        sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('now()'))
     )
     op.create_table('system_settings',
         sa.Column('key', sa.String(length=100), nullable=False, primary_key=True),
-        sa.Column('value_json', postgresql.JSONB(astext_for_arra=False), nullable=False),
-        sa.Column('updated_at', postgresql.TIMESTAMPTZ(), nullable=False, server_default=sa.text('now()'))
+        sa.Column('value_json', postgresql.JSONB(), nullable=False),
+        sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('now()'))
     )
     op.add_column('audit_logs', sa.Column('trace_id', sa.String(length=255), nullable=True))
     # ### end Alembic commands ###
