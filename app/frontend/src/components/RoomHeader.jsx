@@ -1,19 +1,21 @@
 import React from 'react';
+import { useNavigate } from 'react-router-dom';
 
 const RoomHeader = ({ 
   title, 
   subtitle, 
   actions = [], 
-  onBack,
   showBackButton = false 
 }) => {
+  const navigate = useNavigate();
+
   return (
     <div className="bg-panel-elev border-b border-border px-6 py-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           {showBackButton && (
             <button
-              onClick={onBack}
+              onClick={() => navigate(-1)} // Go back one step in history
               className="p-2 text-muted hover:text-text transition-colors duration-150 focus-ring"
             >
               <svg viewBox="0 0 16 16" fill="currentColor" className="w-4 h-4">
