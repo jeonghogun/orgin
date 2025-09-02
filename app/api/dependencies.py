@@ -155,7 +155,11 @@ async def require_auth_ws(websocket: WebSocket) -> str:
     """
     Dependency for authenticating WebSockets.
     Reads a JWT from the 'sec-websocket-protocol' header.
+    Respects the AUTH_OPTIONAL setting.
     """
+    if settings.AUTH_OPTIONAL:
+        return "anonymous"
+
     # The token is expected to be the second element in the subprotocols list
     # e.g., ['graphql-ws', 'your_jwt_here']
     token = None

@@ -40,25 +40,27 @@ const Main = ({ roomId }) => {
   }, [roomId]);
 
   return (
-    <div className="flex flex-col h-full bg-bg">
+    <div className="flex flex-col h-full bg-bg relative">
       {/* 헤더 - 고정 */}
-      <RoomHeader
-        title={roomData?.name || "새 채팅"}
-        subtitle={roomData?.description || "새로운 대화를 시작하세요"}
-        actions={
-          roomData && (
-            <button
-              onClick={handleStartReview}
-              className="btn-primary text-body px-4 py-2 rounded-button"
-            >
-              검토 시작
-            </button>
-          )
-        }
-      />
+      <div className="flex-shrink-0">
+        <RoomHeader
+          title={roomData?.name || "새 채팅"}
+          subtitle={roomData?.description || "새로운 대화를 시작하세요"}
+          actions={
+            roomData && (
+              <button
+                onClick={handleStartReview}
+                className="btn-primary text-body px-4 py-2 rounded-button"
+              >
+                검토 시작
+              </button>
+            )
+          }
+        />
+      </div>
 
       {/* 메시지 목록 - 스크롤 가능, 입력창 위 공간 확보 */}
-      <div className="flex-1 overflow-y-auto px-4 pb-4">
+      <div className="flex-1 overflow-y-auto px-4 pb-4 min-h-0">
         {roomId ? (
           <>
             <MessageList roomId={roomId} />
@@ -90,8 +92,8 @@ const Main = ({ roomId }) => {
         )}
       </div>
 
-      {/* 채팅 입력창 - 항상 하단 고정 */}
-      <div className="border-t border-border bg-panel p-4">
+      {/* 채팅 입력창 - 절대적으로 하단 고정 */}
+      <div className="flex-shrink-0 border-t border-border bg-panel p-4">
         <ChatInput roomId={roomId} disabled={!roomId} />
       </div>
     </div>

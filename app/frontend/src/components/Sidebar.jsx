@@ -222,33 +222,35 @@ const Sidebar = () => {
       {/* 사이드바 */}
       <div className={`fixed lg:relative inset-y-0 left-0 z-40 bg-panel border-r border-border flex flex-col h-full
         transition-all duration-150 ease-out
-        ${sidebarOpen ? 'w-[280px] translate-x-0' : 'w-0 -translate-x-full lg:w-[280px] lg:translate-x-0'}
+        ${sidebarOpen ? 'w-[280px] translate-x-0' : 'w-0 -translate-x-full lg:w-0 lg:translate-x-0'}
       `}>
-        {/* 사이드바 내용 - 항상 렌더링하되 너비만 조절 */}
-        <div className="flex flex-col h-full w-[280px]">
-          {/* 헤더 - 고정 */}
-          <div className="flex items-center justify-between p-4 border-b border-border flex-shrink-0">
-            <button className="btn-primary text-body flex items-center" onClick={() => handleRoomSelect(null)}> {/* 새 채팅 버튼 클릭 시 메인 룸으로 이동 */}
-              <svg viewBox="0 0 16 16" fill="currentColor" className="w-4 h-4 mr-2">
-                <path d="M8 0C3.6 0 0 3.6 0 8s3.6 8 8 8 8-3.6 8-8-3.6-8-8-8zm4 9H7v5H5V9H0V7h5V2h2v5h5v2z"/>
-              </svg>
-              새채팅
-            </button>
-            <button
-              onClick={onClose}
-              className="p-2 text-muted hover:text-text transition-colors duration-150 focus-ring lg:hidden"
-            >
-              <svg viewBox="0 0 16 16" fill="currentColor" className="w-4 h-4">
-                <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z"/>
-              </svg>
-            </button>
-          </div>
+        {/* 사이드바 내용 - 사이드바가 열려있을 때만 렌더링 */}
+        {sidebarOpen && (
+          <div className="flex flex-col h-full w-[280px]">
+            {/* 헤더 - 고정 */}
+            <div className="flex items-center justify-between p-4 border-b border-border flex-shrink-0">
+              <button className="btn-primary text-body flex items-center" onClick={() => handleRoomSelect(null)}> {/* 새 채팅 버튼 클릭 시 메인 룸으로 이동 */}
+                <svg viewBox="0 0 16 16" fill="currentColor" className="w-4 h-4 mr-2">
+                  <path d="M8 0C3.6 0 0 3.6 0 8s3.6 8 8 8 8-3.6 8-8-3.6-8-8-8zm4 9H7v5H5V9H0V7h5V2h2v5h5v2z"/>
+                </svg>
+                새채팅
+              </button>
+              <button
+                onClick={onClose}
+                className="p-2 text-muted hover:text-text transition-colors duration-150 focus-ring lg:hidden"
+              >
+                <svg viewBox="0 0 16 16" fill="currentColor" className="w-4 h-4">
+                  <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z"/>
+                </svg>
+              </button>
+            </div>
 
-          {/* 룸 목록 - 독립 스크롤 */}
-          <div className="flex-1 overflow-y-auto overflow-x-hidden">
-            {renderContent()}
+            {/* 룸 목록 - 독립 스크롤 */}
+            <div className="flex-1 overflow-y-auto overflow-x-hidden">
+              {renderContent()}
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* 모바일 오버레이 */}

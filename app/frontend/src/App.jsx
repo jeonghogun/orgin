@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Sidebar from './components/Sidebar';
 import SplitView from './components/SplitView';
 import Main from './pages/Main';
+import Sub from './pages/Sub';
 import Review from './pages/Review';
 import { AppProvider, useAppContext } from './context/AppContext';
 
@@ -38,9 +39,9 @@ const AppContent = () => {
       case VIEWS.SPLIT:
         return (
           <SplitView
-            leftPanel={<Main roomId={splitData.subRoomId} />}
+            leftPanel={<Sub roomId={splitData.subRoomId} onToggleReview={handleToggleReview} />}
             rightPanel={<Review reviewId={splitData.reviewId} />}
-            defaultRatio={0.4}
+            defaultRatio={0.4} // 좌측 2/5, 우측 3/5
             minLeftWidth={360}
             minRightWidth={360}
           />
@@ -63,7 +64,6 @@ const AppContent = () => {
     </div>
   );
 };
-
 
 const App = () => {
   return (

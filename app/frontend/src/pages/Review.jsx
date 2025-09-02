@@ -41,17 +41,19 @@ const Review = ({ reviewId }) => {
   }
 
   return (
-    <div className="flex flex-col h-full bg-bg">
+    <div className="flex flex-col h-full bg-bg relative">
       {/* 헤더 - 고정 */}
-      <RoomHeader
-        title={`검토: ${review?.title || '검토'}`}
-        subtitle={review?.description || 'AI 검토 결과'}
-        showBackButton={true}
-        onBack={handleBackToSub}
-      />
+      <div className="flex-shrink-0">
+        <RoomHeader
+          title={`검토: ${review?.title || '검토'}`}
+          subtitle={review?.description || 'AI 검토 결과'}
+          showBackButton={true}
+          onBack={handleBackToSub}
+        />
+      </div>
 
       {/* 검토 리포트 - 스크롤 가능 */}
-      <div className="flex-1 overflow-y-auto px-4 pb-4">
+      <div className="flex-1 overflow-y-auto px-4 pb-4 min-h-0">
         {review?.report && (
           <div className="mb-6">
             <h2 className="text-h1 text-text mb-4">검토 리포트</h2>
@@ -65,8 +67,8 @@ const Review = ({ reviewId }) => {
         <MessageList roomId={review?.room_id} />
       </div>
 
-      {/* 채팅 입력창 - 항상 하단 고정 */}
-      <div className="border-t border-border bg-panel p-4">
+      {/* 채팅 입력창 - 절대적으로 하단 고정 */}
+      <div className="flex-shrink-0 border-t border-border bg-panel p-4">
         <ChatInput roomId={review?.room_id} />
       </div>
     </div>
