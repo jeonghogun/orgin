@@ -144,6 +144,14 @@ def client(db_session):
 
 
 @pytest.fixture
+async def storage_service():
+    """Provides an instance of the StorageService."""
+    # This uses the async dependency provider. Tests using this fixture must be async.
+    from app.api.dependencies import get_storage_service
+    service = await get_storage_service()
+    return service
+
+@pytest.fixture
 def authenticated_client(client: TestClient):
     """
     A TestClient that is pre-authenticated and connected to the test database.

@@ -19,9 +19,13 @@ def mock_secret_provider():
 @pytest.fixture
 def storage_service(mock_db_service, mock_secret_provider):
     """Fixture for StorageService with mocked dependencies."""
-    with patch('app.services.storage_service.get_database_service', return_value=mock_db_service):
-        service = StorageService(secret_provider=mock_secret_provider)
-        yield service
+    # The patch is no longer needed as we inject the db_service directly.
+    service = StorageService(
+        db_service=mock_db_service,
+        secret_provider=mock_secret_provider,
+        cache_service=None  # Caching is not relevant for these unit tests
+    )
+    yield service
 
 class TestStorageServiceWithDB:
     """Test Storage Service with a mocked DatabaseService."""

@@ -16,7 +16,6 @@ from app.services.llm_strategy import llm_strategy_service, PanelistConfig
 from app.utils.helpers import generate_id, get_current_timestamp
 from app.tasks.base_task import BaseTask
 from app.services.llm_service import LLMService
-from app.services.storage_service import storage_service
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +44,7 @@ def run_panelist_turn(
         logger.error(f"Failed to get response from {panelist_config.provider} for persona {panelist_config.persona}: {e}", exc_info=True)
         return panelist_config, e
 
-def _save_panelist_message(review_room_id: str, content: str, persona: str, round_num: int):
+def _save_panelist_message(task_self: BaseTask, review_room_id: str, content: str, persona: str, round_num: int):
     """Saves a panelist's output as a message in the review room."""
     message = Message(
         message_id=generate_id("msg"),
@@ -56,7 +55,7 @@ def _save_panelist_message(review_room_id: str, content: str, persona: str, roun
         timestamp=get_current_timestamp(),
         metadata={"persona": persona, "round": round_num}
     )
-    storage_service.save_message(message)
+    task_self.storage_service.save_message(message)
 
 def _check_review_budget(review_id: str, all_metrics: List[List[Dict[str, Any]]]):
     """Checks if the review has exceeded its token budget."""
@@ -69,6 +68,7 @@ def _check_review_budget(review_id: str, all_metrics: List[List[Dict[str, Any]]]
         raise BudgetExceededError(error_msg)
 
 def _process_turn_results(
+    task_self: BaseTask,
     review_id: str,
     review_room_id: str,
     round_num: int,
@@ -88,7 +88,7 @@ def _process_turn_results(
                 turn_outputs[persona] = json.loads(content)
                 round_metrics.append(metrics)
                 successful_panelists.append(panelist_config)
-                _save_panelist_message(review_room_id, content, persona, round_num)
+                _save_panelist_message(task_self, review_room_id, content, persona, round_num)
             except json.JSONDecodeError:
                 logger.error(f"Panelist {persona} in round {round_num} returned invalid JSON: {content}")
                 round_metrics.append({"persona": persona, "success": False, "error": "Invalid JSON response", "provider": panelist_config.provider})
@@ -117,18 +117,18 @@ def run_initial_panel_turn(self: BaseTask, review_id: str, review_room_id: str, 
 
         results = [run_panelist_turn(self.llm_service, p_config, prompt, trace_id) for p_config in panel_configs]
 
-        turn_outputs, round_metrics, successful_panelists = _process_turn_results(review_id, review_room_id, 1, results, [])
+        turn_outputs, round_metrics, successful_panelists = _process_turn_results(self, review_id, review_room_id, 1, results, [])
 
         redis_pubsub_manager.publish_sync(f"review_{review_id}", WebSocketMessage(type="status_update", review_id=review_id, payload={"status": "initial_turn_complete"}).model_dump_json())
         run_rebuttal_turn.delay(review_id, review_room_id, turn_outputs, [round_metrics], [p.model_dump() for p in successful_panelists], trace_id)
     except BudgetExceededError as e:
         logger.error(f"Failed to start review {review_id}: {e}")
-        storage_service.update_review(review_id, {"status": "failed", "final_report": {"error": str(e)}})
+        self.storage_service.update_review(review_id, {"status": "failed", "final_report": {"error": str(e)}})
         self.update_state(state=states.FAILURE, meta={'exc_type': 'BudgetExceededError', 'exc_message': str(e)})
         raise Ignore()
     except Exception as e:
         logger.error(f"Unhandled error in initial turn for review {review_id}: {e}", exc_info=True)
-        storage_service.update_review(review_id, {"status": "failed", "final_report": {"error": "An unexpected error occurred."}})
+        self.storage_service.update_review(review_id, {"status": "failed", "final_report": {"error": "An unexpected error occurred."}})
         raise
 
 @celery_app.task(bind=True, base=BaseTask, autoretry_for=(Exception,), retry_kwargs={'max_retries': 3}, retry_backoff=True)
@@ -139,19 +139,19 @@ def run_rebuttal_turn(self: BaseTask, review_id: str, review_room_id: str, turn_
         prompt = f"Rebuttal Round. Here are the summaries of the initial arguments:\n{rebuttal_context}\n\nPlease provide a thoughtful rebuttal or build upon the other arguments."
         
         results = [run_panelist_turn(self.llm_service, p_config, prompt, f"{trace_id}-r2") for p_config in panel_configs]
-        turn_outputs, round_metrics, successful_panelists = _process_turn_results(review_id, review_room_id, 2, results, all_metrics)
+        turn_outputs, round_metrics, successful_panelists = _process_turn_results(self, review_id, review_room_id, 2, results, all_metrics)
         
         all_metrics.append(round_metrics)
         redis_pubsub_manager.publish_sync(f"review_{review_id}", WebSocketMessage(type="status_update", review_id=review_id, payload={"status": "rebuttal_turn_complete"}).model_dump_json())
         run_synthesis_turn.delay(review_id, review_room_id, turn_1_outputs, turn_outputs, all_metrics, [p.model_dump() for p in successful_panelists], trace_id)
     except BudgetExceededError as e:
         logger.error(f"Failed rebuttal turn for review {review_id}: {e}")
-        storage_service.update_review(review_id, {"status": "failed", "final_report": {"error": str(e)}})
+        self.storage_service.update_review(review_id, {"status": "failed", "final_report": {"error": str(e)}})
         self.update_state(state=states.FAILURE, meta={'exc_type': 'BudgetExceededError', 'exc_message': str(e)})
         raise Ignore()
     except Exception as e:
         logger.error(f"Unhandled error in rebuttal turn for review {review_id}: {e}", exc_info=True)
-        storage_service.update_review(review_id, {"status": "failed", "final_report": {"error": "An unexpected error occurred."}})
+        self.storage_service.update_review(review_id, {"status": "failed", "final_report": {"error": "An unexpected error occurred."}})
         raise
 
 @celery_app.task(bind=True, base=BaseTask, autoretry_for=(Exception,), retry_kwargs={'max_retries': 3}, retry_backoff=True)
@@ -163,30 +163,27 @@ def run_synthesis_turn(self: BaseTask, review_id: str, review_room_id: str, turn
         prompt = f"Synthesis Round. Based on all previous arguments, please synthesize them into your final, comprehensive position and provide actionable recommendations.\n\n{synthesis_context}"
 
         results = [run_panelist_turn(self.llm_service, p_config, prompt, f"{trace_id}-r3") for p_config in panel_configs]
-        turn_outputs, round_metrics, successful_panelists = _process_turn_results(review_id, review_room_id, 3, results, all_metrics)
+        turn_outputs, round_metrics, successful_panelists = _process_turn_results(self, review_id, review_room_id, 3, results, all_metrics)
         
         all_metrics.append(round_metrics)
         redis_pubsub_manager.publish_sync(f"review_{review_id}", WebSocketMessage(type="status_update", review_id=review_id, payload={"status": "synthesis_turn_complete"}).model_dump_json())
         generate_consolidated_report.delay(review_id, turn_outputs, all_metrics, trace_id)
     except BudgetExceededError as e:
         logger.error(f"Failed synthesis turn for review {review_id}: {e}")
-        storage_service.update_review(review_id, {"status": "failed", "final_report": {"error": str(e)}})
+        self.storage_service.update_review(review_id, {"status": "failed", "final_report": {"error": str(e)}})
         self.update_state(state=states.FAILURE, meta={'exc_type': 'BudgetExceededError', 'exc_message': str(e)})
         raise Ignore()
     except Exception as e:
         logger.error(f"Unhandled error in synthesis turn for review {review_id}: {e}", exc_info=True)
-        storage_service.update_review(review_id, {"status": "failed", "final_report": {"error": "An unexpected error occurred."}})
+        self.storage_service.update_review(review_id, {"status": "failed", "final_report": {"error": "An unexpected error occurred."}})
         raise
 
 @celery_app.task(bind=True, base=BaseTask, autoretry_for=(Exception,), retry_kwargs={'max_retries': 3}, retry_backoff=True)
 def generate_consolidated_report(self: BaseTask, review_id: str, turn_3_outputs: Dict[str, Any], all_metrics: List[List[Dict[str, Any]]], trace_id: str):
     try:
-        # Bug fix: The original code called a non-existent method.
-        # Now, we construct a prompt and call the standard invoke_sync method.
         synthesis_prompt = "The following are the final reports from several AI panelists. Please synthesize them into a single, consolidated final report. The final report should include an executive summary and a list of actionable recommendations. Respond with only the JSON for the final report. The JSON schema should be: {'executive_summary': '...', 'recommendations': ['...', '...']}\n\n"
         synthesis_prompt += json.dumps(list(turn_3_outputs.values()), indent=2)
 
-        # Use a powerful model for the final synthesis
         final_report_str, _ = self.llm_service.invoke_sync(
             provider_name="openai",
             model="gpt-4-turbo",
@@ -197,7 +194,7 @@ def generate_consolidated_report(self: BaseTask, review_id: str, turn_3_outputs:
         )
 
         final_report_data = json.loads(final_report_str)
-        storage_service.save_final_report(review_id=review_id, report_data=final_report_data)
+        self.storage_service.save_final_report(review_id=review_id, report_data=final_report_data)
 
         if settings.METRICS_ENABLED:
             total_tokens = sum(m.get("total_tokens", 0) for r in all_metrics for m in r if m)
@@ -211,5 +208,5 @@ def generate_consolidated_report(self: BaseTask, review_id: str, turn_3_outputs:
         redis_pubsub_manager.publish_sync(f"review_{review_id}", WebSocketMessage(type="status_update", review_id=review_id, payload={"status": "completed"}).model_dump_json())
     except Exception as e:
         logger.error(f"Error generating consolidated report for review {review_id}: {e}", exc_info=True)
-        storage_service.update_review(review_id, {"status": "failed", "final_report": {"error": "Failed to generate final report."}})
+        self.storage_service.update_review(review_id, {"status": "failed", "final_report": {"error": "Failed to generate final report."}})
         raise

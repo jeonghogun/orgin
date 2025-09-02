@@ -5,8 +5,10 @@ Shared API Dependencies
 from typing import Dict, Optional, Any, Callable
 from fastapi import HTTPException, Request, Depends, WebSocket, WebSocketDisconnect, status
 from firebase_admin import auth
+import redis
 
 from app.config.settings import settings
+from app.core.secrets import SecretProvider, env_secrets_provider
 from app.services.storage_service import StorageService
 from app.services.database_service import get_database_service
 from app.services.llm_service import LLMService
@@ -18,8 +20,7 @@ from app.services.external_api_service import ExternalSearchService
 from app.services.context_llm_service import ContextLLMService
 from app.services.audit_service import AuditService
 from app.services.admin_service import AdminService
-from app.core.secrets import SecretProvider, env_secrets_provider
-import redis
+from app.services.cache_service import CacheService, get_cache_service
 
 
 # --- Service Singletons ---
@@ -37,10 +38,16 @@ _search_service: Optional[ExternalSearchService] = None
 _context_llm_service: Optional["ContextLLMService"] = None
 
 
-def get_storage_service() -> StorageService:
+async def get_storage_service() -> StorageService:
+    """Async provider for StorageService, required to inject CacheService."""
     global _storage_service
     if _storage_service is None:
-        _storage_service = StorageService(secret_provider=get_secret_provider())
+        cache_service = await get_cache_service()
+        _storage_service = StorageService(
+            db_service=get_database_service(),
+            secret_provider=get_secret_provider(),
+            cache_service=cache_service
+        )
     return _storage_service
 
 def get_llm_service() -> LLMService:
@@ -49,10 +56,12 @@ def get_llm_service() -> LLMService:
         _llm_service = LLMService(secret_provider=get_secret_provider())
     return _llm_service
 
-def get_review_service() -> ReviewService:
+async def get_review_service() -> ReviewService:
+    """Async provider for ReviewService."""
     global _review_service
     if _review_service is None:
-        _review_service = ReviewService(storage_service=get_storage_service())
+        storage_service = await get_storage_service()
+        _review_service = ReviewService(storage_service=storage_service)
     return _review_service
 
 def get_memory_service() -> MemoryService:
@@ -65,14 +74,16 @@ def get_memory_service() -> MemoryService:
         )
     return _memory_service
 
-def get_rag_service() -> RAGService:
+async def get_rag_service() -> RAGService:
+    """Async provider for RAGService."""
     global _rag_service
     if _rag_service is None:
+        storage_service = await get_storage_service()
         _rag_service = RAGService(
             search_service=get_search_service(),
             llm_service=get_llm_service(),
             memory_service=get_memory_service(),
-            storage_service=get_storage_service(),
+            storage_service=storage_service,
         )
     return _rag_service
 
@@ -160,12 +171,9 @@ async def require_auth_ws(websocket: WebSocket) -> str:
     if settings.AUTH_OPTIONAL:
         return "anonymous"
 
-    # The token is expected to be the second element in the subprotocols list
-    # e.g., ['graphql-ws', 'your_jwt_here']
     token = None
     if websocket.scope.get("subprotocols"):
         for subprotocol in websocket.scope["subprotocols"]:
-            # A simple heuristic to find what looks like a JWT
             if "ey" in subprotocol:
                 token = subprotocol
                 break
@@ -195,7 +203,6 @@ def require_role(required_role: str) -> Callable:
         """
         user_id = user_info.get("user_id")
         if not user_id:
-            # This should not happen if AUTH_DEPENDENCY is working
             raise HTTPException(status_code=401, detail="Not authenticated")
 
         user_profile = await memory_service.get_user_profile(user_id)
