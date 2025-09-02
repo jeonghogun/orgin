@@ -57,12 +57,14 @@ const SplitView = ({
       className="flex h-full relative"
       style={{ cursor: isDragging ? 'col-resize' : 'default' }}
     >
-      {/* 좌측 패널 */}
+      {/* 좌측 패널 - 독립적인 스크롤 */}
       <div 
         className="flex-shrink-0 overflow-hidden"
-        style={{ width: `${leftWidth * 100}%` }}
+        style={{ width: `${leftWidth * 100}%`, height: '100vh' }}
       >
-        {leftPanel}
+        <div className="h-full overflow-y-auto">
+          {leftPanel}
+        </div>
       </div>
 
       {/* 분할 핸들 */}
@@ -72,12 +74,14 @@ const SplitView = ({
         onMouseDown={handleMouseDown}
       />
 
-      {/* 우측 패널 */}
+      {/* 우측 패널 - 독립적인 스크롤 */}
       <div 
         className="flex-1 overflow-hidden"
-        style={{ width: `${(1 - leftWidth) * 100}%` }}
+        style={{ width: `${(1 - leftWidth) * 100}%`, height: '100vh' }}
       >
-        {rightPanel}
+        <div className="h-full overflow-y-auto">
+          {rightPanel}
+        </div>
       </div>
     </div>
   );

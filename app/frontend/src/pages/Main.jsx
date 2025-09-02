@@ -7,7 +7,7 @@ import axios from 'axios';
 import { useAppContext } from '../context/AppContext';
 
 const Main = ({ roomId }) => {
-  const { handleToggleReview } = useAppContext();
+  const { handleToggleReview, sidebarOpen } = useAppContext();
   const [suggestions, setSuggestions] = useState([]);
 
   // 룸 정보 조회
@@ -40,9 +40,9 @@ const Main = ({ roomId }) => {
   }, [roomId]);
 
   return (
-    <div className="flex flex-col h-full bg-bg relative">
+    <div className="flex flex-col h-full bg-bg relative overflow-hidden">
       {/* 헤더 - 고정 */}
-      <div className="flex-shrink-0">
+      <div className="flex-shrink-0 z-10">
         <RoomHeader
           title={roomData?.name || "새 채팅"}
           subtitle={roomData?.description || "새로운 대화를 시작하세요"}
@@ -59,8 +59,8 @@ const Main = ({ roomId }) => {
         />
       </div>
 
-      {/* 메시지 목록 - 스크롤 가능, 입력창 위 공간 확보 */}
-      <div className="flex-grow overflow-y-auto px-4 pb-4 min-h-0">
+      {/* 메시지 목록 - 독립적인 스크롤 영역 */}
+      <div className="flex-1 overflow-y-auto px-4 pb-4 min-h-0">
         {roomId ? (
           <>
             <MessageList roomId={roomId} />
@@ -92,8 +92,14 @@ const Main = ({ roomId }) => {
         )}
       </div>
 
-      {/* 채팅 입력창 - 절대적으로 하단 고정 */}
-      <div className="flex-shrink-0 border-t border-border bg-panel p-4">
+      {/* 채팅 입력창 - 화면 전체 하단에 고정 */}
+      <div 
+        className="fixed bottom-0 border-t border-border bg-panel p-4 z-50 transition-all duration-150"
+        style={{ 
+          left: sidebarOpen ? '280px' : '0px', 
+          right: '0px' 
+        }}
+      >
         <ChatInput roomId={roomId} disabled={!roomId} />
       </div>
     </div>

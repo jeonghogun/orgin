@@ -55,16 +55,21 @@ const AppContent = () => {
   };
 
   return (
-    <div className="h-screen bg-bg text-text font-sans">
+    <div className="h-screen bg-bg text-text font-sans overflow-hidden">
       {error && (
         <div className="absolute top-5 right-5 bg-danger text-white px-6 py-3 rounded-lg shadow-lg z-50 animate-fade-in">
           <p className="font-semibold">에러 발생</p>
           <p className="text-sm">{error}</p>
         </div>
       )}
-      <div className="grid h-full" style={{ gridTemplateColumns: sidebarOpen ? '280px 1fr' : '0 1fr' }}>
-        <Sidebar />
-        <div className="flex flex-col h-full">
+      <div className="flex h-full">
+        {/* 사이드바 - 고정, 스크롤 없음 */}
+        <div className={`flex-shrink-0 ${sidebarOpen ? 'w-[280px]' : 'w-0'} transition-all duration-150`}>
+          <Sidebar />
+        </div>
+        
+        {/* 메인 콘텐츠 영역 - 독립적인 스크롤 */}
+        <div className="flex-1 overflow-hidden">
           {renderContent()}
         </div>
       </div>

@@ -4,8 +4,11 @@ import MessageList from '../components/MessageList';
 import ChatInput from '../components/ChatInput';
 import { useQuery } from '@tanstack/react-query';
 import axios from 'axios';
+import { useAppContext } from '../context/AppContext';
 
 const Sub = ({ roomId, onToggleReview }) => {
+  const { sidebarOpen } = useAppContext();
+  
   // 룸 정보 조회
   const { data: roomData } = useQuery({
     queryKey: ['room', roomId],
@@ -18,9 +21,9 @@ const Sub = ({ roomId, onToggleReview }) => {
   });
 
   return (
-    <div className="flex flex-col h-full bg-bg relative">
+    <div className="flex flex-col h-full bg-bg relative overflow-hidden">
       {/* 헤더 - 고정 */}
-      <div className="flex-shrink-0">
+      <div className="flex-shrink-0 z-10">
         <RoomHeader
           title={roomData?.name || "세부 룸"}
           subtitle={roomData?.description || "세부 대화"}
@@ -38,13 +41,19 @@ const Sub = ({ roomId, onToggleReview }) => {
         />
       </div>
 
-      {/* 메시지 목록 - 스크롤 가능, 입력창 위 공간 확보 */}
+      {/* 메시지 목록 - 독립적인 스크롤 영역 */}
       <div className="flex-1 overflow-y-auto px-4 pb-4 min-h-0">
         <MessageList roomId={roomId} />
       </div>
 
-      {/* 채팅 입력창 - 절대적으로 하단 고정 */}
-      <div className="flex-shrink-0 border-t border-border bg-panel p-4">
+      {/* 채팅 입력창 - 화면 전체 하단에 고정 */}
+      <div 
+        className="fixed bottom-0 border-t border-border bg-panel p-4 z-50 transition-all duration-150"
+        style={{ 
+          left: sidebarOpen ? '280px' : '0px', 
+          right: '0px' 
+        }}
+      >
         <ChatInput roomId={roomId} />
       </div>
     </div>

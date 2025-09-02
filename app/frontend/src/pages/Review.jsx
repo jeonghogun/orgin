@@ -7,7 +7,7 @@ import axios from 'axios';
 import { useAppContext } from '../context/AppContext';
 
 const Review = ({ reviewId }) => {
-  const { handleBackToSub } = useAppContext();
+  const { handleBackToSub, sidebarOpen } = useAppContext();
   const [reviewData, setReviewData] = useState(null);
 
   // 검토 데이터 조회
@@ -41,9 +41,9 @@ const Review = ({ reviewId }) => {
   }
 
   return (
-    <div className="flex flex-col h-full bg-bg relative">
+    <div className="flex flex-col h-full bg-bg relative overflow-hidden">
       {/* 헤더 - 고정 */}
-      <div className="flex-shrink-0">
+      <div className="flex-shrink-0 z-10">
         <RoomHeader
           title={`검토: ${review?.title || '검토'}`}
           subtitle={review?.description || 'AI 검토 결과'}
@@ -52,7 +52,7 @@ const Review = ({ reviewId }) => {
         />
       </div>
 
-      {/* 검토 리포트 - 스크롤 가능 */}
+      {/* 검토 리포트 - 독립적인 스크롤 영역 */}
       <div className="flex-1 overflow-y-auto px-4 pb-4 min-h-0">
         {review?.report && (
           <div className="mb-6">
@@ -67,8 +67,14 @@ const Review = ({ reviewId }) => {
         <MessageList roomId={review?.room_id} />
       </div>
 
-      {/* 채팅 입력창 - 절대적으로 하단 고정 */}
-      <div className="flex-shrink-0 border-t border-border bg-panel p-4">
+      {/* 채팅 입력창 - 화면 전체 하단에 고정 */}
+      <div 
+        className="fixed bottom-0 border-t border-border bg-panel p-4 z-50 transition-all duration-150"
+        style={{ 
+          left: sidebarOpen ? '280px' : '0px', 
+          right: '0px' 
+        }}
+      >
         <ChatInput roomId={review?.room_id} />
       </div>
     </div>

@@ -220,9 +220,9 @@ const Sidebar = () => {
       )}
 
       {/* 사이드바 */}
-      <div className={`fixed lg:relative inset-y-0 left-0 z-40 bg-panel border-r border-border flex flex-col h-full
+      <div className={`h-full bg-panel border-r border-border flex flex-col
         transition-all duration-150 ease-out
-        ${sidebarOpen ? 'w-[280px] translate-x-0' : 'w-0 -translate-x-full lg:w-0 lg:translate-x-0'}
+        ${sidebarOpen ? 'w-[280px]' : 'w-0'}
       `}>
         {/* 사이드바 내용 - 사이드바가 열려있을 때만 렌더링 */}
         {sidebarOpen && (
