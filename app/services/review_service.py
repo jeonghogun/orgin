@@ -18,7 +18,7 @@ class ReviewService:
         self.storage: StorageService = storage_service
 
     async def start_review_process(
-        self, review_id: str, topic: str, instruction: str, panelists: Optional[List[str]], trace_id: str
+        self, review_id: str, review_room_id: str, topic: str, instruction: str, panelists: Optional[List[str]], trace_id: str
     ) -> None:
         """
         Starts the asynchronous review process by kicking off the Celery task chain.
@@ -31,6 +31,7 @@ class ReviewService:
         if task:
             task.delay(
                 review_id=review_id,
+                review_room_id=review_room_id,
                 topic=topic,
                 instruction=instruction,
                 panelists_override=panelists,

@@ -22,31 +22,66 @@ const uploadFile = async ({ roomId, file }) => {
   return data;
 };
 
+import { useAppContext } from '../context/AppContext';
+
 const ChatInput = ({ roomId, disabled = false }) => {
   const [message, setMessage] = useState('');
   const [isUploading, setIsUploading] = useState(false);
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
   const fileInputRef = useRef(null);
   const queryClient = useQueryClient();
+  const { showError } = useAppContext();
 
   const messageMutation = useMutation({
-    mutationFn: async ({ roomId, content }) => {
-      const response = await axios.post(`/api/rooms/${roomId}/messages`, { content });
-      return response.data;
+    mutationFn: sendMessage,
+    onMutate: async (newMessage) => {
+      setMessage(''); // 입력 필드 즉시 비우기
+      await queryClient.cancelQueries({ queryKey: ['messages', roomId] });
+      const previousMessages = queryClient.getQueryData(['messages', roomId]);
+
+      const optimisticUserMessage = {
+        id: `temp-user-${Date.now()}`,
+        role: 'user',
+        content: newMessage.content,
+        timestamp: new Date().toISOString(),
+      };
+
+      const optimisticThinkingMessage = {
+        id: `temp-assistant-${Date.now()}`,
+        role: 'assistant',
+        content: '생각 중...',
+        timestamp: new Date().toISOString(),
+        isThinking: true, // 로딩 상태 식별자
+      };
+
+      queryClient.setQueryData(['messages', roomId], (old) =>
+        [...(old || []), optimisticUserMessage, optimisticThinkingMessage]
+      );
+
+      return { previousMessages };
     },
-    onSuccess: () => {
-      setMessage('');
-      queryClient.invalidateQueries(['messages', roomId]);
+    onError: (err, newMessage, context) => {
+      // 에러 발생 시, 이전 메시지 상태로 롤백
+      if (context?.previousMessages) {
+        queryClient.setQueryData(['messages',roomId], context.previousMessages);
+      }
+      showError('메시지 전송에 실패했습니다. 다시 시도해주세요.');
+    },
+    onSuccess: (data, variables, context) => {
+      // 성공 시 '생각 중...' 메시지를 실제 응답으로 교체
+      queryClient.setQueryData(['messages', roomId], (old) => {
+        // '생각 중...' 메시지를 찾아서 실제 응답으로 교체
+        const newMessages = old.filter(msg => !msg.isThinking);
+        return [...newMessages, data];
+      });
+    },
+    onSettled: () => {
+      // 최종적으로 서버 데이터와 동기화
+      queryClient.invalidateQueries({ queryKey: ['messages', roomId] });
     },
   });
 
   const uploadMutation = useMutation({
-    mutationFn: async ({ roomId, file }) => {
-      const formData = new FormData();
-      formData.append('file', file);
-      const response = await axios.post(`/api/rooms/${roomId}/upload`, formData);
-      return response.data;
-    },
+    mutationFn: uploadFile,
     onSuccess: () => {
       queryClient.invalidateQueries(['messages', roomId]);
       setIsUploading(false);
@@ -56,16 +91,10 @@ const ChatInput = ({ roomId, disabled = false }) => {
     },
   });
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = (e) => {
     e.preventDefault();
-    if (!message.trim() || !roomId || messageMutation.isLoading || isUploading || disabled) return; // 중복 전송 방지
-
-    try {
-      await messageMutation.mutateAsync({ roomId, content: message });
-    } catch (error) {
-      // 에러 처리 (예: UI에 에러 메시지 표시)
-      console.error("메시지 전송 실패:", error);
-    }
+    if (!message.trim() || !roomId || messageMutation.isLoading || isUploading || disabled) return;
+    messageMutation.mutate({ roomId, content: message });
   };
 
   const handleFileSelect = (e) => {

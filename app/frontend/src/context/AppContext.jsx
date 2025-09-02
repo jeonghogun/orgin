@@ -14,6 +14,14 @@ export const AppProvider = ({ children }) => {
   const [selectedRoomId, setSelectedRoomId] = useState(null);
   const [currentView, setCurrentView] = useState(VIEWS.MAIN);
   const [splitData, setSplitData] = useState({ subRoomId: null, reviewId: null });
+  const [error, setError] = useState(null);
+
+  const showError = (message, duration = 5000) => {
+    setError(message);
+    setTimeout(() => {
+      setError(null);
+    }, duration);
+  };
 
   const handleRoomSelect = (roomId) => {
     setSelectedRoomId(roomId);
@@ -71,6 +79,8 @@ export const AppProvider = ({ children }) => {
     handleBackToMain,
     handleBackToSub,
     VIEWS,
+    error,
+    showError,
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

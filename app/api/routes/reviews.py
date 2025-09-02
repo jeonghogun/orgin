@@ -4,6 +4,7 @@ Review-related API endpoints
 
 import logging
 import uuid
+import uuid
 from typing import Dict, List, Optional, Any
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import JSONResponse
@@ -11,7 +12,7 @@ from fastapi.responses import JSONResponse
 from app.services.storage_service import StorageService
 from app.services.review_service import ReviewService
 from app.utils.helpers import generate_id, get_current_timestamp, create_success_response
-from app.models.schemas import CreateReviewRequest, ReviewMeta, ReviewEvent
+from app.models.schemas import CreateReviewRequest, ReviewMeta, ReviewEvent, Room
 from app.api.dependencies import (
     AUTH_DEPENDENCY,
     get_storage_service,
@@ -59,10 +60,25 @@ async def create_review_and_start_process(
         raise HTTPException(status_code=400, detail="Reviews can only be created from sub-rooms.")
 
     try:
-        review_id = generate_id()
+        # 1. Create the review room
+        review_room_id = generate_id("review")
+        review_room = Room(
+            room_id=review_room_id,
+            name=f"검토: {review_request.topic}",
+            owner_id=user_info["user_id"],
+            parent_id=sub_room_id,
+            type="review",
+            created_at=get_current_timestamp(),
+            updated_at=get_current_timestamp(),
+        )
+        await storage_service.save_room(review_room)
+        logger.info(f"Created review room {review_room_id} for sub-room {sub_room_id}")
+
+        # 2. Create the review metadata, linking it to the new room
+        review_id = generate_id("review-meta")
         review_meta = ReviewMeta(
             review_id=review_id,
-            room_id=sub_room_id,
+            room_id=review_room_id,  # Link to the new review room
             topic=review_request.topic,
             instruction=review_request.instruction,
             status="pending",
@@ -70,12 +86,14 @@ async def create_review_and_start_process(
             created_at=get_current_timestamp(),
         )
         await storage_service.save_review_meta(review_meta)
+        logger.info(f"Created review metadata {review_id} for room {review_room_id}")
 
+        # 3. Start the asynchronous review process
         trace_id = str(uuid.uuid4())
-        logger.info(f"Starting review {review_id} with trace_id: {trace_id}")
-
+        logger.info(f"Starting review process for review {review_id} with trace_id: {trace_id}")
         await review_service.start_review_process(
             review_id=review_id,
+            review_room_id=review_room_id, # Pass the new room ID
             topic=review_request.topic,
             instruction=review_request.instruction,
             panelists=review_request.panelists,

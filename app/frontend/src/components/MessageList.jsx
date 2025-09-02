@@ -80,7 +80,17 @@ const MessageList = ({ roomId }) => {
                 ? 'bg-accent text-white' 
                 : 'bg-panel-elev border border-border text-text'
             }`}>
-              <div className="text-body whitespace-pre-wrap">{message.content}</div>
+              <div className="text-body whitespace-pre-wrap">
+                {message.isThinking ? (
+                  <div className="flex items-center space-x-2">
+                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
+                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
+                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
+                  </div>
+                ) : (
+                  message.content
+                )}
+              </div>
             </div>
             <div className={`text-meta text-muted mt-1 ${
               message.role === 'user' ? 'text-right' : 'text-left'
