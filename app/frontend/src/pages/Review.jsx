@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import RoomHeader from '../components/RoomHeader';
 import MessageList from '../components/MessageList';
 import ChatInput from '../components/ChatInput';
@@ -6,11 +7,10 @@ import { useQuery } from '@tanstack/react-query';
 import axios from 'axios';
 import { useAppContext } from '../context/AppContext';
 
-const Review = ({ reviewId }) => {
-  const { handleBackToSub, sidebarOpen } = useAppContext();
-  const [reviewData, setReviewData] = useState(null);
+const Review = ({ reviewId, isSplitView = false }) => {
+  const { sidebarOpen } = useAppContext();
+  const navigate = useNavigate();
 
-  // 검토 데이터 조회
   const { data: review, isLoading } = useQuery({
     queryKey: ['review', reviewId],
     queryFn: async () => {
@@ -20,59 +20,53 @@ const Review = ({ reviewId }) => {
     enabled: !!reviewId,
   });
 
-  // ESC 키로 뒤로가기
+  // ESC key to navigate back
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') {
-        handleBackToSub();
+        navigate(-1);
       }
     };
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [handleBackToSub]);
+  }, [navigate]);
 
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-full">
-        <div className="text-text">검토 데이터를 불러오는 중...</div>
+        <div className="text-text">Loading review data...</div>
       </div>
     );
   }
 
   return (
     <div className="flex flex-col h-full bg-bg relative overflow-hidden">
-      {/* 헤더 - 고정 */}
       <div className="flex-shrink-0 z-10">
         <RoomHeader
-          title={`검토: ${review?.title || '검토'}`}
-          subtitle={review?.description || 'AI 검토 결과'}
-          showBackButton={true}
-          onBack={handleBackToSub}
+          title={`Review: ${review?.topic || '...'}`}
+          subtitle={review?.instruction || 'AI Review Results'}
+          showBackButton={!isSplitView}
         />
       </div>
 
-      {/* 검토 리포트 - 독립적인 스크롤 영역 */}
       <div className="flex-1 overflow-y-auto px-4 pb-4 min-h-0">
-        {review?.report && (
+        {review?.final_report && (
           <div className="mb-6">
-            <h2 className="text-h1 text-text mb-4">검토 리포트</h2>
+            <h2 className="text-h1 text-text mb-4">Final Report</h2>
             <div className="bg-panel border border-border rounded-card p-4">
-              <pre className="text-body text-text whitespace-pre-wrap">{review.report}</pre>
+              <pre className="text-body text-text whitespace-pre-wrap">{JSON.stringify(review.final_report, null, 2)}</pre>
             </div>
           </div>
         )}
 
-        {/* 메시지 목록 */}
         <MessageList roomId={review?.room_id} />
       </div>
 
-      {/* 채팅 입력창 - 화면 전체 하단에 고정 */}
       <div 
-        className="fixed bottom-0 border-t border-border bg-panel p-4 z-50 transition-all duration-150"
+        className="flex-shrink-0 border-t border-border bg-panel p-4 z-20"
         style={{ 
-          left: sidebarOpen ? '280px' : '0px', 
-          right: '0px' 
+          left: !isSplitView && sidebarOpen ? '280px' : '0px',
         }}
       >
         <ChatInput roomId={review?.room_id} />

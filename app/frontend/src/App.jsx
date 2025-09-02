@@ -1,27 +1,53 @@
 import React, { useEffect } from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { Routes, Route, useParams } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
 import SplitView from './components/SplitView';
 import Main from './pages/Main';
-import Sub from './pages/Sub';
 import Review from './pages/Review';
 import { AppProvider, useAppContext } from './context/AppContext';
+import EmptyState from './components/common/EmptyState';
 
-const queryClient = new QueryClient();
+// Wrapper component to pass route params to Main page
+const MainWrapper = () => {
+  const { roomId } = useParams();
+  const { setSelectedRoomId } = useAppContext();
+  useEffect(() => {
+    setSelectedRoomId(roomId || null);
+  }, [roomId, setSelectedRoomId]);
+  return <Main roomId={roomId} />;
+};
+
+// Wrapper component for the Review page
+const ReviewWrapper = () => {
+  const { reviewId } = useParams();
+  return <Review reviewId={reviewId} />;
+};
+
+// Wrapper for the Split View
+const SplitViewWrapper = () => {
+  const { roomId, reviewId } = useParams();
+  // In split view, we don't want the sidebar, so we can control it here if needed
+  const { setSidebarOpen } = useAppContext();
+  useEffect(() => {
+    if (window.innerWidth >= 1024) {
+      setSidebarOpen(false);
+    }
+  }, [setSidebarOpen]);
+
+  return (
+    <SplitView
+      leftPanel={<Main roomId={roomId} isSplitView={true} />}
+      rightPanel={<Review reviewId={reviewId} isSplitView={true} />}
+      defaultRatio={0.4}
+      minLeftWidth={360}
+      minRightWidth={360}
+    />
+  );
+};
+
 
 const AppContent = () => {
-  const {
-    sidebarOpen,
-    setSidebarOpen,
-    currentView,
-    splitData,
-    VIEWS,
-    handleToggleReview,
-    handleBackToSub,
-    handleBackToMain,
-    selectedRoomId,
-    error,
-  } = useAppContext();
+  const { sidebarOpen, setSidebarOpen, error } = useAppContext();
 
   // Keyboard shortcut for sidebar
   useEffect(() => {
@@ -35,25 +61,6 @@ const AppContent = () => {
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [sidebarOpen, setSidebarOpen]);
 
-  const renderContent = () => {
-    switch (currentView) {
-      case VIEWS.SPLIT:
-        return (
-          <SplitView
-            leftPanel={<Sub roomId={splitData.subRoomId} onToggleReview={handleToggleReview} />}
-            rightPanel={<Review reviewId={splitData.reviewId} />}
-            defaultRatio={0.4} // 좌측 2/5, 우측 3/5
-            minLeftWidth={360}
-            minRightWidth={360}
-          />
-        );
-      case VIEWS.REVIEW:
-        return <Review reviewId={splitData.reviewId} />;
-      default:
-        return <Main roomId={selectedRoomId} />;
-    }
-  };
-
   return (
     <div className="h-screen bg-bg text-text font-sans overflow-hidden">
       {error && (
@@ -63,14 +70,18 @@ const AppContent = () => {
         </div>
       )}
       <div className="flex h-full">
-        {/* 사이드바 - 고정, 스크롤 없음 */}
         <div className={`flex-shrink-0 ${sidebarOpen ? 'w-[280px]' : 'w-0'} transition-all duration-150`}>
           <Sidebar />
         </div>
         
-        {/* 메인 콘텐츠 영역 - 독립적인 스크롤 */}
         <div className="flex-1 overflow-hidden">
-          {renderContent()}
+          <Routes>
+            <Route path="/" element={<MainWrapper />} />
+            <Route path="/rooms/:roomId" element={<MainWrapper />} />
+            <Route path="/reviews/:reviewId" element={<ReviewWrapper />} />
+            <Route path="/rooms/:roomId/reviews/:reviewId" element={<SplitViewWrapper />} />
+            <Route path="*" element={<EmptyState message="Page Not Found" />} />
+          </Routes>
         </div>
       </div>
     </div>
@@ -79,11 +90,9 @@ const AppContent = () => {
 
 const App = () => {
   return (
-    <QueryClientProvider client={queryClient}>
-      <AppProvider>
-        <AppContent />
-      </AppProvider>
-    </QueryClientProvider>
+    <AppProvider>
+      <AppContent />
+    </AppProvider>
   );
 };
 

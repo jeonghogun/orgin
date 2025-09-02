@@ -6,20 +6,20 @@ import redis
 from datetime import datetime
 from typing import List, Dict, Any, Callable, Awaitable, Tuple, Union, Optional
 from asgiref.sync import async_to_sync
-from celery import Task, states
+from celery import states
 from celery.exceptions import Ignore
 from tenacity import retry, stop_after_attempt, wait_exponential
-from collections import defaultdict
 
 from app.celery_app import celery_app
 from app.config.settings import settings
-from app.services.llm_service import LLMService
-from app.services.storage_service import StorageService
-from app.models.schemas import Message, ReviewMetrics, WebSocketMessage
+from app.models.schemas import Message, WebSocketMessage
 from app.services.redis_pubsub import redis_pubsub_manager
 from app.services.llm_strategy import llm_strategy_service, PanelistConfig
 from app.core.metrics import LLM_CALLS_TOTAL, LLM_LATENCY_SECONDS, LLM_TOKENS_TOTAL
 from app.utils.helpers import generate_id, get_current_timestamp
+from app.tasks.base_task import BaseTask
+from app.services.llm_service import LLMService
+from app.services.storage_service import StorageService
 
 logger = logging.getLogger(__name__)
 
@@ -121,11 +121,15 @@ async def _process_turn_results(
 
     return turn_outputs, round_metrics, successful_panelists
 
-@celery_app.task(bind=True, autoretry_for=(Exception,), retry_kwargs={'max_retries': 3}, retry_backoff=True)
-def run_initial_panel_turn(self: Task, review_id: str, review_room_id: str, topic: str, instruction: str, panelists_override: Optional[List[str]], trace_id: str):
-    from app.core.secrets import env_secrets_provider
-    storage_service = StorageService(env_secrets_provider)
+@celery_app.task(bind=True, base=BaseTask, autoretry_for=(Exception,), retry_kwargs={'max_retries': 3}, retry_backoff=True)
+def run_initial_panel_turn(self: BaseTask, review_id: str, review_room_id: str, topic: str, instruction: str, panelists_override: Optional[List[str]], trace_id: str):
     try:
+        # Immediately publish that the review has started
+        async_to_sync(redis_pubsub_manager.publish)(
+            f"review_{review_id}",
+            WebSocketMessage(type="status_update", review_id=review_id, payload={"status": "processing"}).model_dump_json()
+        )
+
         if settings.DAILY_ORG_TOKEN_BUDGET:
             redis_client = redis.from_url(settings.REDIS_URL, decode_responses=True)
             today_key = f"daily_token_usage:{datetime.utcnow().strftime('%Y-%m-%d')}"
@@ -133,95 +137,86 @@ def run_initial_panel_turn(self: Task, review_id: str, review_room_id: str, topi
             if current_usage > settings.DAILY_ORG_TOKEN_BUDGET:
                 raise BudgetExceededError(f"Daily token budget of {settings.DAILY_ORG_TOKEN_BUDGET} exceeded.")
 
-        llm_service = LLMService(env_secrets_provider)
         panel_configs = llm_strategy_service.get_default_panelists()
         if panelists_override:
             panel_configs = [p for p in panel_configs if p.provider in panelists_override]
 
-        tasks = [run_panelist_turn_with_fallback(llm_service, p_config, topic, instruction, trace_id) for p_config in panel_configs]
+        tasks = [run_panelist_turn_with_fallback(self.llm_service, p_config, topic, instruction, trace_id) for p_config in panel_configs]
         results = async_to_sync(asyncio.gather)(*tasks)
-        turn_outputs, round_metrics, successful_panelists = async_to_sync(_process_turn_results)(review_id, review_room_id, 1, results, storage_service, [])
+        turn_outputs, round_metrics, successful_panelists = async_to_sync(_process_turn_results)(review_id, review_room_id, 1, results, self.storage_service, [])
 
         async_to_sync(redis_pubsub_manager.publish)(f"review_{review_id}", WebSocketMessage(type="status_update", review_id=review_id, payload={"status": "initial_turn_complete"}).model_dump_json())
         run_rebuttal_turn.delay(review_id, review_room_id, turn_outputs, [round_metrics], [p.model_dump() for p in successful_panelists], trace_id)
     except BudgetExceededError as e:
         logger.error(f"Failed to start review {review_id}: {e}")
-        async_to_sync(storage_service.update_review)(review_id, {"status": "failed", "final_report": {"error": str(e)}})
+        async_to_sync(self.storage_service.update_review)(review_id, {"status": "failed", "final_report": {"error": str(e)}})
         self.update_state(state=states.FAILURE, meta={'exc_type': 'BudgetExceededError', 'exc_message': str(e)})
         raise Ignore()
     except Exception as e:
         logger.error(f"Unhandled error in initial turn for review {review_id}: {e}", exc_info=True)
-        async_to_sync(storage_service.update_review)(review_id, {"status": "failed", "final_report": {"error": "An unexpected error occurred."}})
+        async_to_sync(self.storage_service.update_review)(review_id, {"status": "failed", "final_report": {"error": "An unexpected error occurred."}})
         raise
 
-@celery_app.task(bind=True, autoretry_for=(Exception,), retry_kwargs={'max_retries': 3}, retry_backoff=True)
-def run_rebuttal_turn(self: Task, review_id: str, review_room_id: str, turn_1_outputs: Dict[str, Any], all_metrics: List[List[Dict[str, Any]]], successful_panelists: List[Dict[str, Any]], trace_id: str):
+@celery_app.task(bind=True, base=BaseTask, autoretry_for=(Exception,), retry_kwargs={'max_retries': 3}, retry_backoff=True)
+def run_rebuttal_turn(self: BaseTask, review_id: str, review_room_id: str, turn_1_outputs: Dict[str, Any], all_metrics: List[List[Dict[str, Any]]], successful_panelists: List[Dict[str, Any]], trace_id: str):
     """Second turn: panelists respond to each other's initial arguments"""
-    from app.core.secrets import env_secrets_provider
-    storage_service = StorageService(env_secrets_provider)
     try:
-        llm_service = LLMService(env_secrets_provider)
         panel_configs = [PanelistConfig(**p) for p in successful_panelists]
         
         # Create rebuttal prompts based on turn 1 outputs
         rebuttal_context = "\n".join([f"{provider}: {output.get('summary', '')}" for provider, output in turn_1_outputs.items()])
         
-        tasks = [run_panelist_turn_with_fallback(llm_service, p_config, f"Rebuttal Round - Previous arguments:\n{rebuttal_context}", "Provide a thoughtful rebuttal or counter-argument to the previous responses.", f"{trace_id}-r2") for p_config in panel_configs]
+        tasks = [run_panelist_turn_with_fallback(self.llm_service, p_config, f"Rebuttal Round - Previous arguments:\n{rebuttal_context}", "Provide a thoughtful rebuttal or counter-argument to the previous responses.", f"{trace_id}-r2") for p_config in panel_configs]
         results = async_to_sync(asyncio.gather)(*tasks)
-        turn_outputs, round_metrics, successful_panelists = async_to_sync(_process_turn_results)(review_id, review_room_id, 2, results, storage_service, all_metrics)
+        turn_outputs, round_metrics, successful_panelists = async_to_sync(_process_turn_results)(review_id, review_room_id, 2, results, self.storage_service, all_metrics)
         
         all_metrics.append(round_metrics)
         async_to_sync(redis_pubsub_manager.publish)(f"review_{review_id}", WebSocketMessage(type="status_update", review_id=review_id, payload={"status": "rebuttal_turn_complete"}).model_dump_json())
         run_synthesis_turn.delay(review_id, review_room_id, turn_1_outputs, turn_outputs, all_metrics, [p.model_dump() for p in successful_panelists], trace_id)
     except BudgetExceededError as e:
         logger.error(f"Failed rebuttal turn for review {review_id}: {e}")
-        async_to_sync(storage_service.update_review)(review_id, {"status": "failed", "final_report": {"error": str(e)}})
+        async_to_sync(self.storage_service.update_review)(review_id, {"status": "failed", "final_report": {"error": str(e)}})
         self.update_state(state=states.FAILURE, meta={'exc_type': 'BudgetExceededError', 'exc_message': str(e)})
         raise Ignore()
     except Exception as e:
         logger.error(f"Unhandled error in rebuttal turn for review {review_id}: {e}", exc_info=True)
-        async_to_sync(storage_service.update_review)(review_id, {"status": "failed", "final_report": {"error": "An unexpected error occurred."}})
+        async_to_sync(self.storage_service.update_review)(review_id, {"status": "failed", "final_report": {"error": "An unexpected error occurred."}})
         raise
 
-@celery_app.task(bind=True, autoretry_for=(Exception,), retry_kwargs={'max_retries': 3}, retry_backoff=True)
-def run_synthesis_turn(self: Task, review_id: str, review_room_id: str, turn_1_outputs: Dict[str, Any], turn_2_outputs: Dict[str, Any], all_metrics: List[List[Dict[str, Any]]], successful_panelists: List[Dict[str, Any]], trace_id: str):
+@celery_app.task(bind=True, base=BaseTask, autoretry_for=(Exception,), retry_kwargs={'max_retries': 3}, retry_backoff=True)
+def run_synthesis_turn(self: BaseTask, review_id: str, review_room_id: str, turn_1_outputs: Dict[str, Any], turn_2_outputs: Dict[str, Any], all_metrics: List[List[Dict[str, Any]]], successful_panelists: List[Dict[str, Any]], trace_id: str):
     """Third turn: panelists synthesize all previous arguments into final positions"""
-    from app.core.secrets import env_secrets_provider
-    storage_service = StorageService(env_secrets_provider)
     try:
-        llm_service = LLMService(env_secrets_provider)
         panel_configs = [PanelistConfig(**p) for p in successful_panelists]
         
         # Create synthesis context from both previous turns
         synthesis_context = "Initial Arguments:\n" + "\n".join([f"{provider}: {output.get('summary', '')}" for provider, output in turn_1_outputs.items()])
         synthesis_context += "\n\nRebuttal Arguments:\n" + "\n".join([f"{provider}: {output.get('summary', '')}" for provider, output in turn_2_outputs.items()])
         
-        tasks = [run_panelist_turn_with_fallback(llm_service, p_config, f"Synthesis Round - All previous arguments:\n{synthesis_context}", "Synthesize all arguments into your final position and recommendations.", f"{trace_id}-r3") for p_config in panel_configs]
+        tasks = [run_panelist_turn_with_fallback(self.llm_service, p_config, f"Synthesis Round - All previous arguments:\n{synthesis_context}", "Synthesize all arguments into your final position and recommendations.", f"{trace_id}-r3") for p_config in panel_configs]
         results = async_to_sync(asyncio.gather)(*tasks)
-        turn_outputs, round_metrics, successful_panelists = async_to_sync(_process_turn_results)(review_id, review_room_id, 3, results, storage_service, all_metrics)
+        turn_outputs, round_metrics, successful_panelists = async_to_sync(_process_turn_results)(review_id, review_room_id, 3, results, self.storage_service, all_metrics)
         
         all_metrics.append(round_metrics)
         async_to_sync(redis_pubsub_manager.publish)(f"review_{review_id}", WebSocketMessage(type="status_update", review_id=review_id, payload={"status": "synthesis_turn_complete"}).model_dump_json())
         generate_consolidated_report.delay(review_id, turn_outputs, all_metrics, trace_id)
     except BudgetExceededError as e:
         logger.error(f"Failed synthesis turn for review {review_id}: {e}")
-        async_to_sync(storage_service.update_review)(review_id, {"status": "failed", "final_report": {"error": str(e)}})
+        async_to_sync(self.storage_service.update_review)(review_id, {"status": "failed", "final_report": {"error": str(e)}})
         self.update_state(state=states.FAILURE, meta={'exc_type': 'BudgetExceededError', 'exc_message': str(e)})
         raise Ignore()
     except Exception as e:
         logger.error(f"Unhandled error in synthesis turn for review {review_id}: {e}", exc_info=True)
-        async_to_sync(storage_service.update_review)(review_id, {"status": "failed", "final_report": {"error": "An unexpected error occurred."}})
+        async_to_sync(self.storage_service.update_review)(review_id, {"status": "failed", "final_report": {"error": "An unexpected error occurred."}})
         raise
 
-@celery_app.task(bind=True, autoretry_for=(Exception,), retry_kwargs={'max_retries': 3}, retry_backoff=True)
-def generate_consolidated_report(self: Task, review_id: str, turn_3_outputs: Dict[str, Any], all_metrics: List[List[Dict[str, Any]]], trace_id: str):
-    from app.core.secrets import env_secrets_provider
-    llm_service, storage_service = LLMService(env_secrets_provider), StorageService(env_secrets_provider)
+@celery_app.task(bind=True, base=BaseTask, autoretry_for=(Exception,), retry_kwargs={'max_retries': 3}, retry_backoff=True)
+def generate_consolidated_report(self: BaseTask, review_id: str, turn_3_outputs: Dict[str, Any], all_metrics: List[List[Dict[str, Any]]], trace_id: str):
 
     async def _report_and_metrics_logic():
-        report_content, _ = await call_llm_with_metrics(llm_service.generate_consolidated_report, topic="", round_number=3, mode="synthesis", panel_reports=list(turn_3_outputs.values()), request_id=f"{trace_id}-report", provider_name="openai")
+        report_content, _ = await call_llm_with_metrics(self.llm_service.generate_consolidated_report, topic="", round_number=3, mode="synthesis", panel_reports=list(turn_3_outputs.values()), request_id=f"{trace_id}-report", provider_name="openai")
         final_report_data = json.loads(report_content)
-        await storage_service.save_final_report(review_id=review_id, report_data=final_report_data)
+        await self.storage_service.save_final_report(review_id=review_id, report_data=final_report_data)
 
         if settings.METRICS_ENABLED:
             total_tokens = sum(m.get("total_tokens", 0) for r in all_metrics for m in r)

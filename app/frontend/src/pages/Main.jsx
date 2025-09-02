@@ -1,16 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import RoomHeader from '../components/RoomHeader';
 import MessageList from '../components/MessageList';
 import ChatInput from '../components/ChatInput';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 import { useAppContext } from '../context/AppContext';
 
-const Main = ({ roomId }) => {
-  const { handleToggleReview, sidebarOpen } = useAppContext();
-  const [suggestions, setSuggestions] = useState([]);
+const Main = ({ roomId, isSplitView = false }) => {
+  const { sidebarOpen, showError } = useAppContext();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
 
-  // 룸 정보 조회
   const { data: roomData } = useQuery({
     queryKey: ['room', roomId],
     queryFn: async () => {
@@ -21,86 +22,68 @@ const Main = ({ roomId }) => {
     enabled: !!roomId,
   });
 
-  // 검토 시작 버튼 클릭 핸들러
+  const createReviewMutation = useMutation({
+    mutationFn: (reviewData) => axios.post(`/api/rooms/${roomId}/reviews`, reviewData),
+    onSuccess: (response) => {
+      const newReview = response.data;
+      queryClient.invalidateQueries(['rooms']); // Invalidate rooms to show the new review room in sidebar
+      // Navigate to the split view
+      navigate(`/rooms/${roomId}/reviews/${newReview.review_id}`);
+    },
+    onError: (error) => {
+      showError("Failed to start review: " + (error.response?.data?.detail || error.message));
+    }
+  });
+
   const handleStartReview = () => {
-    if (roomData) {
-      handleToggleReview(roomData);
+    // Simple prompt for now. Could be a modal in the future.
+    const topic = prompt("Enter the topic for the review:", roomData?.name || "New Review");
+    if (topic && roomData) {
+      createReviewMutation.mutate({ topic, instruction: "Please analyze this topic." });
     }
   };
 
-  // 제안사항 (예시)
-  useEffect(() => {
-    if (roomId) {
-      setSuggestions([
-        "이 주제에 대해 더 자세히 설명해주세요",
-        "관련 예시를 들어주세요",
-        "실용적인 적용 방법을 알려주세요"
-      ]);
+  const roomHeaderActions = roomData && roomData.type === 'sub' && !isSplitView ? [
+    {
+      label: createReviewMutation.isLoading ? "Starting..." : "Start Review",
+      onClick: handleStartReview,
+      variant: 'primary',
+      disabled: createReviewMutation.isLoading,
     }
-  }, [roomId]);
+  ] : [];
 
   return (
     <div className="flex flex-col h-full bg-bg relative overflow-hidden">
-      {/* 헤더 - 고정 */}
       <div className="flex-shrink-0 z-10">
         <RoomHeader
-          title={roomData?.name || "새 채팅"}
-          subtitle={roomData?.description || "새로운 대화를 시작하세요"}
-          actions={
-            roomData && (
-              <button
-                onClick={handleStartReview}
-                className="btn-primary text-body px-4 py-2 rounded-button"
-              >
-                검토 시작
-              </button>
-            )
-          }
+          title={roomData?.name || "New Chat"}
+          subtitle={roomData?.description || "Select a room or start a new conversation"}
+          actions={roomHeaderActions}
+          showBackButton={isSplitView}
         />
       </div>
 
-      {/* 메시지 목록 - 독립적인 스크롤 영역 */}
       <div className="flex-1 overflow-y-auto px-4 pb-4 min-h-0">
         {roomId ? (
-          <>
-            <MessageList roomId={roomId} />
-            
-            {/* 제안사항 */}
-            {suggestions.length > 0 && (
-              <div className="mt-6 space-y-2">
-                <h3 className="text-h2 text-text mb-3">제안사항</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {suggestions.map((suggestion, index) => (
-                    <button
-                      key={index}
-                      className="p-3 text-left bg-panel border border-border rounded-card hover:bg-panel-elev transition-colors duration-150 text-body"
-                    >
-                      {suggestion}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </>
+          <MessageList roomId={roomId} />
         ) : (
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
-              <div className="text-h1 text-text mb-4">룸을 선택하여 대화를 시작하세요</div>
-              <div className="text-body text-muted">왼쪽 사이드바에서 채팅방을 선택하거나 새 채팅을 시작하세요</div>
+              <h1 className="text-h1 text-text mb-4">Select a room to begin</h1>
+              <p className="text-body text-muted">Choose a chat from the sidebar or start a new one.</p>
             </div>
           </div>
         )}
       </div>
 
-      {/* 채팅 입력창 - 화면 전체 하단에 고정 */}
       <div 
-        className="fixed bottom-0 border-t border-border bg-panel p-4 z-50 transition-all duration-150"
-        style={{ 
-          left: sidebarOpen ? '280px' : '0px', 
-          right: '0px' 
+        className="flex-shrink-0 border-t border-border bg-panel p-4 z-20"
+        style={{
+          // Adjust based on sidebar state only if not in split view
+          left: !isSplitView && sidebarOpen ? '280px' : '0px',
         }}
       >
-        <ChatInput roomId={roomId} disabled={!roomId} />
+        <ChatInput roomId={roomId} disabled={!roomId || createReviewMutation.isLoading} />
       </div>
     </div>
   );

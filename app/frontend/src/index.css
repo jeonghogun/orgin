@@ -36,3 +36,20 @@
     @apply bg-panel border border-border rounded-card shadow-card;
   }
 }
+
+@layer utilities {
+  .animate-flash {
+    animation: flash 1.5s ease-out;
+  }
+
+  @keyframes flash {
+    0% {
+      background-color: theme('colors.accent / 0.2');
+      border-color: theme('colors.accent / 0.5');
+    }
+    100% {
+      background-color: transparent;
+      border-color: theme('colors.border');
+    }
+  }
+}
