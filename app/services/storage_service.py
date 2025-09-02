@@ -1,12 +1,12 @@
 """
-Storage Service - Unified interface for data persistence
+Storage Service - Unified interface for data persistence.
+This service is now fully synchronous.
 """
 
 import json
 import time
 import logging
 from typing import Dict, Any, List, Optional, Literal, TypedDict, Final
-from collections import defaultdict
 
 from app.models.enums import RoomType
 from app.models.schemas import (
@@ -44,10 +44,6 @@ class MessageRow(TypedDict):
     timestamp: int
 
 
-# In-memory storage for room-specific data
-_room_memory: Dict[str, Dict[str, str]] = defaultdict(dict)
-
-
 from app.core.secrets import SecretProvider, env_secrets_provider
 
 class StorageService:
@@ -60,26 +56,8 @@ class StorageService:
         if not self.db_encryption_key:
             raise ValueError("DB_ENCRYPTION_KEY not found for StorageService.")
 
-    # Memory functions for room-specific data
-    async def memory_set(self, room_id: str, key: str, value: str) -> None:
-        """Set a value in room memory"""
-        _room_memory[room_id][key] = value
-        logger.info(f"Memory set: {room_id}.{key} = {value}")
-
-    async def memory_get(self, room_id: str, key: str) -> Optional[str]:
-        """Get a value from room memory"""
-        value = _room_memory[room_id].get(key)
-        logger.info(f"Memory get: {room_id}.{key} = {value}")
-        return value
-
-    async def memory_clear(self, room_id: str) -> None:
-        """Clear all memory for a room"""
-        if room_id in _room_memory:
-            del _room_memory[room_id]
-            logger.info(f"Memory cleared for room: {room_id}")
-
     # Room operations
-    async def create_room(
+    def create_room(
         self,
         room_id: str,
         name: str,
@@ -120,7 +98,7 @@ class StorageService:
             message_count=message_count,
         )
 
-    async def get_room(self, room_id: str) -> Optional[Room]:
+    def get_room(self, room_id: str) -> Optional[Room]:
         """Get room by ID from the database"""
         query = "SELECT * FROM rooms WHERE room_id = %s"
         params = (room_id,)
@@ -131,34 +109,34 @@ class StorageService:
 
         return Room(**result[0])
 
-    async def delete_room(self, room_id: str) -> bool:
+    def delete_room(self, room_id: str) -> bool:
         """Delete a room and its associated data from the database."""
         query = "DELETE FROM rooms WHERE room_id = %s"
         params = (room_id,)
         rows_affected = self.db.execute_update(query, params)
         return rows_affected > 0
 
-    async def get_rooms_by_owner(self, owner_id: str) -> List[Room]:
+    def get_rooms_by_owner(self, owner_id: str) -> List[Room]:
         """Get all rooms for a given owner from the database."""
         query = "SELECT * FROM rooms WHERE owner_id = %s"
         params = (owner_id,)
         results: List[RoomRow] = self.db.execute_query(query, params) # type: ignore
         return [Room(**row) for row in results]
 
-    async def get_all_rooms(self) -> List[Room]:
+    def get_all_rooms(self) -> List[Room]:
         """Get all rooms in the system, e.g., for batch processing."""
         query = "SELECT * FROM rooms"
         results: List[RoomRow] = self.db.execute_query(query) # type: ignore
         return [Room(**row) for row in results]
 
-    async def update_room_name(self, room_id: str, new_name: str) -> bool:
+    def update_room_name(self, room_id: str, new_name: str) -> bool:
         """Updates the name of a specific room."""
         query = "UPDATE rooms SET name = %s, updated_at = %s WHERE room_id = %s"
         params = (new_name, int(time.time()), room_id)
         rows_affected = self.db.execute_update(query, params)
         return rows_affected > 0
 
-    async def save_message(self, message: Message) -> None:
+    def save_message(self, message: Message) -> None:
         """Save an encrypted message to the database."""
         embedding = None # TODO: Add embedding generation
         query = """
@@ -176,7 +154,7 @@ class StorageService:
         update_params = (int(time.time()), message.room_id)
         self.db.execute_update(update_query, update_params)
 
-    async def get_messages(self, room_id: str) -> List[Message]:
+    def get_messages(self, room_id: str) -> List[Message]:
         """Get and decrypt all messages for a room from the database."""
         query = """
             SELECT message_id, room_id, user_id, role,
@@ -191,7 +169,7 @@ class StorageService:
         return [Message(**row) for row in results]
 
     # Review operations
-    async def save_review_meta(self, review_meta: ReviewMeta) -> None:
+    def save_review_meta(self, review_meta: ReviewMeta) -> None:
         """Save review metadata to the database."""
         query = """
             INSERT INTO reviews (review_id, room_id, topic, instruction, status, total_rounds, current_round, created_at)
@@ -209,7 +187,7 @@ class StorageService:
         )
         self.db.execute_update(query, params)
 
-    async def get_review_meta(self, review_id: str) -> Optional[ReviewMeta]:
+    def get_review_meta(self, review_id: str) -> Optional[ReviewMeta]:
         """Get review by ID from the database"""
         query = "SELECT * FROM reviews WHERE review_id = %s"
         params = (review_id,)
@@ -220,31 +198,41 @@ class StorageService:
 
         return ReviewMeta(**result[0])
 
-    async def get_reviews_by_room(self, room_id: str) -> List[ReviewMeta]:
+    def get_reviews_by_room(self, room_id: str) -> List[ReviewMeta]:
         """Get all reviews for a given room from the database."""
         query = "SELECT * FROM reviews WHERE room_id = %s ORDER BY created_at DESC"
         params = (room_id,)
         results = self.db.execute_query(query, params)
         return [ReviewMeta(**row) for row in results]
 
-    async def get_full_reviews_by_room(self, room_id: str) -> List[ReviewFull]:
+    def get_full_reviews_by_room(self, room_id: str) -> List[ReviewFull]:
         """Get all reviews for a given room, including the final_report."""
         query = "SELECT * FROM reviews WHERE room_id = %s ORDER BY created_at DESC"
         params = (room_id,)
         results = self.db.execute_query(query, params)
         return [ReviewFull(**row) for row in results]
 
-    async def update_review(self, review_id: str, review_data: Dict[str, Any]) -> None:
-        """Update review metadata in the database."""
-        # Dynamically build the SET part of the query
-        set_clause = ", ".join([f"{key} = %s" for key in review_data.keys()])
+    def update_review(self, review_id: str, review_data: Dict[str, Any]) -> None:
+        """Update review metadata in the database safely."""
+        # Whitelist of fields that are allowed to be updated.
+        ALLOWED_FIELDS = {'status', 'current_round', 'completed_at', 'final_report'}
+
+        # Filter the incoming data to only include allowed fields.
+        safe_data = {k: v for k, v in review_data.items() if k in ALLOWED_FIELDS}
+
+        if not safe_data:
+            logger.warning(f"Update review called for {review_id} with no valid fields: {review_data}")
+            return
+
+        # Dynamically build the SET part of the query from safe data
+        set_clause = ", ".join([f"{key} = %s" for key in safe_data.keys()])
         query = f"UPDATE reviews SET {set_clause} WHERE review_id = %s"
 
-        params = list(review_data.values()) + [review_id]
+        params = list(safe_data.values()) + [review_id]
 
         self.db.execute_update(query, tuple(params))
 
-    async def save_panel_report(
+    def save_panel_report(
         self, review_id: str, round_num: int, persona: str, report: PanelReport
     ) -> None:
         """Save panel report to the database."""
@@ -258,7 +246,7 @@ class StorageService:
         params = (review_id, round_num, persona, report_json)
         self.db.execute_update(query, params)
 
-    async def save_consolidated_report(
+    def save_consolidated_report(
         self, review_id: str, round_num: int, report: ConsolidatedReport
     ) -> None:
         """Save consolidated report to the database."""
@@ -272,7 +260,7 @@ class StorageService:
         params = (review_id, round_num, report_json)
         self.db.execute_update(query, params)
 
-    async def get_consolidated_report(
+    def get_consolidated_report(
         self, review_id: str, round_num: int
     ) -> Optional[ConsolidatedReport]:
         """Get consolidated report by ID and round number"""
@@ -283,7 +271,7 @@ class StorageService:
             return ConsolidatedReport.model_validate(result[0]["report_data"])
         return None
 
-    async def save_final_report(
+    def save_final_report(
         self, review_id: str, report_data: Dict[str, Any]
     ) -> None:
         """Save final report to the database."""
@@ -291,7 +279,7 @@ class StorageService:
         params = (json.dumps(report_data), int(time.time()), "completed", review_id)
         self.db.execute_update(query, params)
 
-    async def get_final_report(self, review_id: str) -> Optional[Dict[str, Any]]:
+    def get_final_report(self, review_id: str) -> Optional[Dict[str, Any]]:
         """Get final report from the database"""
         query = "SELECT final_report FROM reviews WHERE review_id = %s"
         params = (review_id,)
@@ -300,7 +288,7 @@ class StorageService:
             return result[0]["final_report"]
         return None
 
-    async def log_review_event(self, event_data: Dict[str, Any]) -> None:
+    def log_review_event(self, event_data: Dict[str, Any]) -> None:
         """Log review event to the database."""
         query = """
             INSERT INTO review_events (review_id, ts, type, round, actor, content)
@@ -316,7 +304,7 @@ class StorageService:
         )
         self.db.execute_update(query, params)
 
-    async def get_review_events(
+    def get_review_events(
         self, review_id: str, since: Optional[int] = None
     ) -> List[Dict[str, Any]]:
         """Get review events from the database."""
@@ -329,7 +317,7 @@ class StorageService:
 
         return self.db.execute_query(query, params)
 
-    async def save_review_metrics(self, metrics: ReviewMetrics) -> None:
+    def save_review_metrics(self, metrics: ReviewMetrics) -> None:
         """Save review metrics to the database."""
         query = """
             INSERT INTO review_metrics (review_id, total_duration_seconds, total_tokens_used, total_cost_usd, round_metrics, created_at)
@@ -345,7 +333,7 @@ class StorageService:
         )
         self.db.execute_update(query, params)
 
-    async def get_all_review_metrics(
+    def get_all_review_metrics(
         self, limit: int, since: Optional[int] = None
     ) -> List[ReviewMetrics]:
         """Get all review metrics, with optional filters."""

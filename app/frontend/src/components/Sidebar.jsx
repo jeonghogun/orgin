@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useCallback, memo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import axios from 'axios';
 import { Link, useNavigate, useParams } from 'react-router-dom';
@@ -47,31 +47,30 @@ const buildRoomHierarchy = (rooms) => {
   }
 };
 
-const RoomItem = ({ room, level, parentRoom = null }) => {
+const RoomItem = memo(({ room, level, parentRoom = null }) => {
   const { handleRoomSelect } = useAppContext();
   const { roomId: activeRoomId } = useParams();
 
   const isReviewRoom = room.type === ROOM_TYPES.REVIEW || level === 2;
   const indent = level * 12;
 
-  // An item is active if its ID is in the URL params.
-  // For review rooms, we check against the parent room ID.
   const isActive = isReviewRoom
     ? activeRoomId === parentRoom?.room_id
     : activeRoomId === room.room_id;
 
-  const getLinkDestination = () => {
+  const getLinkDestination = useCallback(() => {
     if (isReviewRoom && parentRoom) {
-      // Desktop: split view. Mobile: just the review.
       return window.innerWidth >= 1024
         ? `/rooms/${parentRoom.room_id}/reviews/${room.room_id}`
         : `/reviews/${room.room_id}`;
     }
     return `/rooms/${room.room_id}`;
-  };
+  }, [isReviewRoom, parentRoom, room.room_id]);
+
+  const onRoomSelect = useCallback(() => handleRoomSelect(room.room_id), [handleRoomSelect, room.room_id]);
 
   return (
-    <Link to={getLinkDestination()} onClick={() => handleRoomSelect(room.room_id)}>
+    <Link to={getLinkDestination()} onClick={onRoomSelect}>
       <div
         className={`flex items-center gap-3 px-4 py-2 cursor-pointer transition-colors duration-150 ${
           isActive ? 'bg-accent/10 border-l-2 border-accent' : 'hover:bg-white/5'
@@ -107,23 +106,27 @@ const RoomItem = ({ room, level, parentRoom = null }) => {
       )}
     </Link>
   );
-};
+});
 
-const Sidebar = () => {
+const Sidebar = memo(() => {
   const { sidebarOpen, setSidebarOpen, handleRoomSelect } = useAppContext();
   const navigate = useNavigate();
 
   const { data: rooms = [], error, isLoading } = useQuery({
     queryKey: ['rooms'],
     queryFn: fetchRooms,
-    initialData: [],
+    staleTime: 5 * 60 * 1000, // 5 minute stale time
     retry: 1,
   });
 
-  const handleNewChat = () => {
+  const hierarchicalRooms = useMemo(() => buildRoomHierarchy(rooms), [rooms]);
+
+  const handleNewChat = useCallback(() => {
     handleRoomSelect(null);
     navigate('/');
-  };
+  }, [handleRoomSelect, navigate]);
+
+  const onClose = useCallback(() => setSidebarOpen(false), [setSidebarOpen]);
 
   const renderContent = () => {
     if (isLoading) {
@@ -136,7 +139,6 @@ const Sidebar = () => {
     if (error) {
       return <div className="p-4 text-danger text-body">룸 목록을 불러올 수 없습니다.</div>;
     }
-    const hierarchicalRooms = buildRoomHierarchy(rooms);
     if (hierarchicalRooms.length === 0) {
       return <div className="p-4 text-muted text-body text-center">룸이 없습니다.</div>;
     }
@@ -148,8 +150,6 @@ const Sidebar = () => {
       </div>
     );
   };
-
-  const onClose = () => setSidebarOpen(false);
 
   return (
     <>
@@ -182,6 +182,6 @@ const Sidebar = () => {
       {sidebarOpen && <div className="fixed inset-0 bg-black/50 z-30 lg:hidden" onClick={onClose} />}
     </>
   );
-};
+});
 
 export default Sidebar;

@@ -23,3 +23,17 @@ LLM_TOKENS_TOTAL = Counter(
     "Total number of tokens used in LLM calls",
     ["provider", "kind"] # kind can be "prompt" or "completion"
 )
+
+# A histogram to track the latency of database queries.
+DB_QUERY_DURATION = Histogram(
+    "origin_db_query_duration_seconds",
+    "Duration of database queries in seconds",
+    ["query_type"] # e.g., "read", "write"
+)
+
+# A gauge to track process memory usage.
+from prometheus_client import Gauge
+MEMORY_USAGE = Gauge(
+    "origin_memory_usage_bytes",
+    "Memory usage of the application process in bytes"
+)

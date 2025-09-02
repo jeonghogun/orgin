@@ -88,11 +88,15 @@ const AppContent = () => {
   );
 };
 
+import ErrorBoundary from './components/common/ErrorBoundary';
+
 const App = () => {
   return (
-    <AppProvider>
-      <AppContent />
-    </AppProvider>
+    <ErrorBoundary>
+      <AppProvider>
+        <AppContent />
+      </AppProvider>
+    </ErrorBoundary>
   );
 };
 

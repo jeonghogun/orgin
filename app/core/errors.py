@@ -78,3 +78,63 @@ def get_retry_delay(retry_count: int, base_delay: float = 1.0) -> float:
     
     # 최대 60초 제한
     return min(exponential_delay + jitter, 60.0)
+
+
+# --- Standard Application Errors ---
+
+class AppError(Exception):
+    """Base application error class."""
+    def __init__(self, code: str, message: str, status_code: int = 500, details: Optional[Dict[str, Any]] = None):
+        self.code = code
+        self.message = message
+        self.status_code = status_code
+        self.details = details or {}
+        super().__init__(message)
+
+    def to_response(self) -> Dict[str, Any]:
+        """Returns a dictionary representation for API responses."""
+        return {
+            "error": {
+                "code": self.code,
+                "message": self.message,
+                "details": self.details,
+            }
+        }
+
+class NotFoundError(AppError):
+    """To be raised when a resource is not found."""
+    def __init__(self, resource: str, resource_id: str):
+        super().__init__(
+            code="NOT_FOUND",
+            message=f"{resource.capitalize()} with ID '{resource_id}' not found.",
+            status_code=404,
+            details={"resource": resource, "resource_id": resource_id}
+        )
+
+class InvalidRequestError(AppError):
+    """To be raised for validation or other bad request errors."""
+    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+        super().__init__(
+            code="INVALID_REQUEST",
+            message=message,
+            status_code=400,
+            details=details
+        )
+
+class UnauthorizedError(AppError):
+    """To be raised for authentication errors."""
+    def __init__(self, message: str = "Authentication required."):
+        super().__init__(
+            code="UNAUTHORIZED",
+            message=message,
+            status_code=401
+        )
+
+class ForbiddenError(AppError):
+    """To be raised for authorization errors."""
+    def __init__(self, message: str = "You do not have permission to perform this action."):
+        super().__init__(
+            code="FORBIDDEN",
+            message=message,
+            status_code=403
+        )

@@ -111,6 +111,19 @@ async def trace_id_middleware(request: Request, call_next):
     response.headers["X-Trace-ID"] = trace_id
     return response
 
+# Middleware to record memory usage
+import psutil
+from app.core.metrics import MEMORY_USAGE
+# Get the current process object for efficiency
+process = psutil.Process(os.getpid())
+
+@app.middleware("http")
+async def memory_usage_middleware(request: Request, call_next):
+    # Set the memory usage gauge on every request
+    MEMORY_USAGE.set(process.memory_info().rss)
+    response = await call_next(request)
+    return response
+
 # Add middleware
 app.add_middleware(
     CORSMiddleware,
@@ -131,6 +144,32 @@ async def rate_limit_exceeded_handler(
 
 
 app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)  # type: ignore[arg-type]
+
+# Generic AppError handler
+from app.core.errors import AppError
+async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
+    logger.error(f"AppError caught: {exc.code} - {exc.message}", extra={"details": exc.details, "url": str(request.url)})
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=exc.to_response(),
+    )
+app.add_exception_handler(AppError, app_error_handler)
+
+# Generic fallback handler for unexpected errors
+async def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    logger.error(f"Unhandled exception caught: {exc}", exc_info=True, extra={"url": str(request.url)})
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": {
+                "code": "INTERNAL_SERVER_ERROR",
+                "message": "An unexpected internal server error occurred.",
+                "details": {"error_type": type(exc).__name__}
+            }
+        }
+    )
+app.add_exception_handler(Exception, generic_exception_handler)
+
 
 # Router dependencies are now handled within each router module
 
