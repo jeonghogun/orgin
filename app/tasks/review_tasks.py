@@ -15,10 +15,11 @@ from app.celery_app import celery_app
 from app.config.settings import settings
 from app.services.llm_service import LLMService
 from app.services.storage_service import StorageService
-from app.models.schemas import ReviewMetrics, WebSocketMessage
+from app.models.schemas import Message, ReviewMetrics, WebSocketMessage
 from app.services.redis_pubsub import redis_pubsub_manager
 from app.services.llm_strategy import llm_strategy_service, PanelistConfig
 from app.core.metrics import LLM_CALLS_TOTAL, LLM_LATENCY_SECONDS, LLM_TOKENS_TOTAL
+from app.utils.helpers import generate_id, get_current_timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -66,31 +67,62 @@ async def run_panelist_turn_with_fallback(llm_service: LLMService, panelist_conf
         logger.error(f"Failed to get response from {panelist_config.provider}: {e}")
         return panelist_config, e
 
-async def _process_turn_results(review_id: str, round_num: int, results: List[Tuple[PanelistConfig, Union[Tuple[Any, Dict[str, Any]], BaseException]]], storage_service: StorageService, all_previous_metrics: List[List[Dict[str, Any]]]) -> Tuple[Dict[str, Any], List[Dict[str, Any]], List[PanelistConfig]]:
+async def _save_panelist_message(storage_service: StorageService, review_room_id: str, content: str, persona: str, round_num: int):
+    """Saves a panelist's output as a message in the review room."""
+    message = Message(
+        message_id=generate_id("msg"),
+        room_id=review_room_id,
+        role="assistant",
+        content=content,
+        user_id="assistant",  # System user for AI messages
+        timestamp=get_current_timestamp(),
+        metadata={"persona": persona, "round": round_num}
+    )
+    await storage_service.save_message(message)
+
+def _check_review_budget(review_id: str, all_metrics: List[List[Dict[str, Any]]]):
+    """Checks if the review has exceeded its token budget."""
+    if not settings.PER_REVIEW_TOKEN_BUDGET:
+        return
+
+    total_tokens = sum(m.get("total_tokens", 0) for r_metrics in all_metrics for m in r_metrics)
+    if total_tokens > settings.PER_REVIEW_TOKEN_BUDGET:
+        error_msg = f"Review {review_id} exceeded token budget of {settings.PER_REVIEW_TOKEN_BUDGET} with {total_tokens} tokens."
+        logger.error(error_msg)
+        raise BudgetExceededError(error_msg)
+
+async def _process_turn_results(
+    review_id: str,
+    review_room_id: str,
+    round_num: int,
+    results: List[Tuple[PanelistConfig, Union[Tuple[Any, Dict[str, Any]], BaseException]]],
+    storage_service: StorageService,
+    all_previous_metrics: List[List[Dict[str, Any]]]
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]], List[PanelistConfig]]:
+    """
+    Processes results from a single turn, saves messages, and collects metrics.
+    """
     turn_outputs, round_metrics, successful_panelists = {}, [], []
+
     for panelist_config, result in results:
         persona = panelist_config.persona
         if isinstance(result, BaseException):
-            logger.error(f"Final error for persona {persona} in round {round_num}: {result}")
+            logger.error(f"Panelist {persona} failed in round {round_num}: {result}")
             round_metrics.append({"persona": persona, "success": False, "error": str(result), "provider": panelist_config.provider})
         else:
             content, metrics = result
             turn_outputs[persona] = json.loads(content)
             round_metrics.append(metrics)
             successful_panelists.append(panelist_config)
-            await storage_service.log_review_event({"review_id": review_id, "ts": time.time(), "type": "panel_output", "round": round_num, "actor": persona, "content": content})
+            await _save_panelist_message(storage_service, review_room_id, content, persona, round_num)
 
-    # Check per-review budget
-    if settings.PER_REVIEW_TOKEN_BUDGET:
-        current_total_tokens = sum(m.get("total_tokens", 0) for r in all_previous_metrics for m in r)
-        current_total_tokens += sum(m.get("total_tokens", 0) for m in round_metrics)
-        if current_total_tokens > settings.PER_REVIEW_TOKEN_BUDGET:
-            raise BudgetExceededError(f"Review {review_id} exceeded token budget of {settings.PER_REVIEW_TOKEN_BUDGET} with {current_total_tokens} tokens.")
+    # Combine metrics and check budget
+    _check_review_budget(review_id, all_previous_metrics + [round_metrics])
 
     return turn_outputs, round_metrics, successful_panelists
 
 @celery_app.task(bind=True, autoretry_for=(Exception,), retry_kwargs={'max_retries': 3}, retry_backoff=True)
-def run_initial_panel_turn(self: Task, review_id: str, topic: str, instruction: str, panelists_override: Optional[List[str]], trace_id: str):
+def run_initial_panel_turn(self: Task, review_id: str, review_room_id: str, topic: str, instruction: str, panelists_override: Optional[List[str]], trace_id: str):
     from app.core.secrets import env_secrets_provider
     storage_service = StorageService(env_secrets_provider)
     try:
@@ -108,10 +140,10 @@ def run_initial_panel_turn(self: Task, review_id: str, topic: str, instruction: 
 
         tasks = [run_panelist_turn_with_fallback(llm_service, p_config, topic, instruction, trace_id) for p_config in panel_configs]
         results = async_to_sync(asyncio.gather)(*tasks)
-        turn_outputs, round_metrics, successful_panelists = async_to_sync(_process_turn_results)(review_id, 1, results, storage_service, [])
+        turn_outputs, round_metrics, successful_panelists = async_to_sync(_process_turn_results)(review_id, review_room_id, 1, results, storage_service, [])
 
         async_to_sync(redis_pubsub_manager.publish)(f"review_{review_id}", WebSocketMessage(type="status_update", review_id=review_id, payload={"status": "initial_turn_complete"}).model_dump_json())
-        run_rebuttal_turn.delay(review_id, turn_outputs, [round_metrics], [p.model_dump() for p in successful_panelists], trace_id)
+        run_rebuttal_turn.delay(review_id, review_room_id, turn_outputs, [round_metrics], [p.model_dump() for p in successful_panelists], trace_id)
     except BudgetExceededError as e:
         logger.error(f"Failed to start review {review_id}: {e}")
         async_to_sync(storage_service.update_review)(review_id, {"status": "failed", "final_report": {"error": str(e)}})
@@ -123,7 +155,7 @@ def run_initial_panel_turn(self: Task, review_id: str, topic: str, instruction: 
         raise
 
 @celery_app.task(bind=True, autoretry_for=(Exception,), retry_kwargs={'max_retries': 3}, retry_backoff=True)
-def run_rebuttal_turn(self: Task, review_id: str, turn_1_outputs: Dict[str, Any], all_metrics: List[List[Dict[str, Any]]], successful_panelists: List[Dict[str, Any]], trace_id: str):
+def run_rebuttal_turn(self: Task, review_id: str, review_room_id: str, turn_1_outputs: Dict[str, Any], all_metrics: List[List[Dict[str, Any]]], successful_panelists: List[Dict[str, Any]], trace_id: str):
     """Second turn: panelists respond to each other's initial arguments"""
     from app.core.secrets import env_secrets_provider
     storage_service = StorageService(env_secrets_provider)
@@ -136,11 +168,11 @@ def run_rebuttal_turn(self: Task, review_id: str, turn_1_outputs: Dict[str, Any]
         
         tasks = [run_panelist_turn_with_fallback(llm_service, p_config, f"Rebuttal Round - Previous arguments:\n{rebuttal_context}", "Provide a thoughtful rebuttal or counter-argument to the previous responses.", f"{trace_id}-r2") for p_config in panel_configs]
         results = async_to_sync(asyncio.gather)(*tasks)
-        turn_outputs, round_metrics, successful_panelists = async_to_sync(_process_turn_results)(review_id, 2, results, storage_service, all_metrics)
+        turn_outputs, round_metrics, successful_panelists = async_to_sync(_process_turn_results)(review_id, review_room_id, 2, results, storage_service, all_metrics)
         
         all_metrics.append(round_metrics)
         async_to_sync(redis_pubsub_manager.publish)(f"review_{review_id}", WebSocketMessage(type="status_update", review_id=review_id, payload={"status": "rebuttal_turn_complete"}).model_dump_json())
-        run_synthesis_turn.delay(review_id, turn_1_outputs, turn_outputs, all_metrics, [p.model_dump() for p in successful_panelists], trace_id)
+        run_synthesis_turn.delay(review_id, review_room_id, turn_1_outputs, turn_outputs, all_metrics, [p.model_dump() for p in successful_panelists], trace_id)
     except BudgetExceededError as e:
         logger.error(f"Failed rebuttal turn for review {review_id}: {e}")
         async_to_sync(storage_service.update_review)(review_id, {"status": "failed", "final_report": {"error": str(e)}})
@@ -152,7 +184,7 @@ def run_rebuttal_turn(self: Task, review_id: str, turn_1_outputs: Dict[str, Any]
         raise
 
 @celery_app.task(bind=True, autoretry_for=(Exception,), retry_kwargs={'max_retries': 3}, retry_backoff=True)
-def run_synthesis_turn(self: Task, review_id: str, turn_1_outputs: Dict[str, Any], turn_2_outputs: Dict[str, Any], all_metrics: List[List[Dict[str, Any]]], successful_panelists: List[Dict[str, Any]], trace_id: str):
+def run_synthesis_turn(self: Task, review_id: str, review_room_id: str, turn_1_outputs: Dict[str, Any], turn_2_outputs: Dict[str, Any], all_metrics: List[List[Dict[str, Any]]], successful_panelists: List[Dict[str, Any]], trace_id: str):
     """Third turn: panelists synthesize all previous arguments into final positions"""
     from app.core.secrets import env_secrets_provider
     storage_service = StorageService(env_secrets_provider)
@@ -166,7 +198,7 @@ def run_synthesis_turn(self: Task, review_id: str, turn_1_outputs: Dict[str, Any
         
         tasks = [run_panelist_turn_with_fallback(llm_service, p_config, f"Synthesis Round - All previous arguments:\n{synthesis_context}", "Synthesize all arguments into your final position and recommendations.", f"{trace_id}-r3") for p_config in panel_configs]
         results = async_to_sync(asyncio.gather)(*tasks)
-        turn_outputs, round_metrics, successful_panelists = async_to_sync(_process_turn_results)(review_id, 3, results, storage_service, all_metrics)
+        turn_outputs, round_metrics, successful_panelists = async_to_sync(_process_turn_results)(review_id, review_room_id, 3, results, storage_service, all_metrics)
         
         all_metrics.append(round_metrics)
         async_to_sync(redis_pubsub_manager.publish)(f"review_{review_id}", WebSocketMessage(type="status_update", review_id=review_id, payload={"status": "synthesis_turn_complete"}).model_dump_json())

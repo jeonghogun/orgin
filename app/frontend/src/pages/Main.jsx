@@ -60,7 +60,7 @@ const Main = ({ roomId }) => {
       </div>
 
       {/* 메시지 목록 - 스크롤 가능, 입력창 위 공간 확보 */}
-      <div className="flex-1 overflow-y-auto px-4 pb-4 min-h-0">
+      <div className="flex-grow overflow-y-auto px-4 pb-4 min-h-0">
         {roomId ? (
           <>
             <MessageList roomId={roomId} />

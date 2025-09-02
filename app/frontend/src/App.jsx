@@ -19,7 +19,8 @@ const AppContent = () => {
     handleToggleReview,
     handleBackToSub,
     handleBackToMain,
-    selectedRoomId
+    selectedRoomId,
+    error,
   } = useAppContext();
 
   // Keyboard shortcut for sidebar
@@ -55,6 +56,12 @@ const AppContent = () => {
 
   return (
     <div className="h-screen bg-bg text-text font-sans">
+      {error && (
+        <div className="absolute top-5 right-5 bg-danger text-white px-6 py-3 rounded-lg shadow-lg z-50 animate-fade-in">
+          <p className="font-semibold">에러 발생</p>
+          <p className="text-sm">{error}</p>
+        </div>
+      )}
       <div className="grid h-full" style={{ gridTemplateColumns: sidebarOpen ? '280px 1fr' : '0 1fr' }}>
         <Sidebar />
         <div className="flex flex-col h-full">
