@@ -64,41 +64,21 @@ def postgresql_factory():
 @pytest.fixture(scope="session")
 def test_db():
     """
-    Use existing Docker database for tests in Docker environment.
+    Use existing Docker database for tests in this environment.
+    NOTE: Forcing this path as the environment is container-based but lacks /.dockerenv
+    and does not have postgresql-server-dev packages installed for testing.postgresql.
     """
-    import os
+    # This environment is container-based, so we always use the existing DB service.
+    class MockDB:
+        def url(self):
+            # The DATABASE_URL from .env.example will be used here.
+            # We assume a DB service is running and accessible at this URL.
+            return settings.DATABASE_URL
+        def stop(self):
+            # Nothing to stop since we're using an external DB.
+            pass
     
-    # Check if we're running in Docker
-    if os.path.exists('/.dockerenv'):
-        # Use existing Docker database
-        class MockDB:
-            def url(self):
-                return settings.DATABASE_URL
-            def stop(self):
-                pass
-        
-        yield MockDB()
-    else:
-        # Use temporary database for local tests
-        from alembic.config import Config
-        from alembic import command
-        
-        postgresql_factory_instance = testing.postgresql.PostgresqlFactory(cache_initialized_db=True)
-        postgresql = postgresql_factory_instance()
-
-        # Temporarily override the database URL for Alembic
-        original_db_url = settings.DATABASE_URL
-        settings.DATABASE_URL = postgresql.url()
-
-        # Run migrations
-        alembic_cfg = Config("alembic.ini")
-        command.upgrade(alembic_cfg, "heads")
-
-        yield postgresql
-
-        # Teardown: restore original settings and stop the database
-        settings.DATABASE_URL = original_db_url
-        postgresql.stop()
+    yield MockDB()
 
 
 @pytest.fixture(scope="session", autouse=True)

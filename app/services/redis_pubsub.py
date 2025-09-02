@@ -60,5 +60,22 @@ class RedisPubSubManager:
             self.is_running = False
             logger.info("Redis Pub/Sub listener stopped.")
 
+    def publish_sync(self, channel: str, message: str):
+        """Publish a message to a Redis channel synchronously for Celery workers."""
+        import redis as sync_redis
+        sync_client = None
+        try:
+            # Create a new synchronous client for this operation.
+            # This is not the most efficient way, but it's simple and avoids
+            # managing a separate long-lived synchronous client.
+            sync_client = sync_redis.from_url(settings.REDIS_URL, encoding="utf-8", decode_responses=True)
+            sync_client.publish(channel, message)
+            logger.info(f"Published synchronously to {channel}: {message[:100]}")
+        except Exception as e:
+            logger.error(f"Failed to publish synchronously to {channel}: {e}", exc_info=True)
+        finally:
+            if sync_client:
+                sync_client.close()
+
 # Singleton instance
 redis_pubsub_manager = RedisPubSubManager()

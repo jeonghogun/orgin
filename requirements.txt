@@ -16,7 +16,7 @@ celery
 asgiref
 gunicorn
 alembic
-PyYAML
+PyYAML>=6.0.1
 prometheus-fastapi-instrumentator
 google-generativeai
 gevent
@@ -26,6 +26,7 @@ python-multipart
 # APM and Monitoring
 newrelic
 ddtrace
+psutil
 
 # Security
 cryptography

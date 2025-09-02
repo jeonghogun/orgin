@@ -140,5 +140,49 @@ class LLMRetryManager:
         }
 
 
+    def execute_with_retry_sync(
+        self,
+        func: Callable,
+        provider: str,
+        *args,
+        **kwargs
+    ) -> Any:
+        """재시도 로직으로 함수를 동기적으로 실행"""
+
+        circuit_breaker = self.get_circuit_breaker(provider)
+
+        for attempt in range(self.retry_config.max_retries + 1):
+            try:
+                if not circuit_breaker.can_execute():
+                    raise LLMError(
+                        error_code="PROVIDER_UNAVAILABLE",
+                        provider=provider,
+                        retryable=False,
+                        error_message=f"Circuit breaker is OPEN for {provider}"
+                    )
+
+                result = func(*args, **kwargs) # No await
+
+                circuit_breaker.record_success()
+                return result
+
+            except LLMError as e:
+                if not should_retry_error(e) or attempt >= self.retry_config.max_retries:
+                    circuit_breaker.record_failure()
+                    raise e
+
+                delay = get_retry_delay(attempt, self.retry_config.base_delay)
+                time.sleep(delay) # Use time.sleep
+
+            except Exception as e:
+                circuit_breaker.record_failure()
+                raise LLMError(
+                    error_code="UNKNOWN_ERROR",
+                    provider=provider,
+                    retryable=False,
+                    original_error=e,
+                    error_message=f"Unknown error: {str(e)}"
+                )
+
 # 전역 재시도 관리자 인스턴스
 retry_manager = LLMRetryManager()

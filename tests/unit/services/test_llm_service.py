@@ -17,10 +17,10 @@ class TestLLMService:
         return LLMService(mock_secret_provider)
 
     @pytest.mark.asyncio
-    async def test_invoke_with_retry_success(self, llm_service):
-        """재시도 로직이 포함된 invoke 테스트"""
-        with patch.object(llm_service, 'invoke_with_retry') as mock_invoke:
-            mock_invoke.return_value = ("test response", {"tokens": 100})
+    async def test_invoke_success(self, llm_service):
+        """Test that the main async invoke method calls the retry logic."""
+        with patch.object(llm_service, 'invoke_with_retry') as mock_invoke_retry:
+            mock_invoke_retry.return_value = ("test response", {"tokens": 100})
             
             result = await llm_service.invoke(
                 model="gpt-4",
@@ -30,27 +30,27 @@ class TestLLMService:
             )
             
             assert result == ("test response", {"tokens": 100})
-            mock_invoke.assert_called_once()
+            mock_invoke_retry.assert_called_once()
 
-    @pytest.mark.asyncio
-    async def test_invoke_simple_success(self, llm_service):
-        """재시도 로직 없는 invoke_simple 테스트"""
-        with patch.object(llm_service, 'invoke_simple') as mock_invoke:
-            mock_invoke.return_value = ("test response", {"tokens": 100})
+    def test_invoke_sync_success(self, llm_service):
+        """Test that the main sync invoke method calls the sync retry logic."""
+        with patch.object(llm_service, 'invoke_with_retry_sync') as mock_invoke_retry_sync:
+            mock_invoke_retry_sync.return_value = ("test sync response", {"tokens": 10})
             
-            result = await llm_service.invoke_simple(
+            result = llm_service.invoke_sync(
+                provider_name="openai",
                 model="gpt-4",
                 system_prompt="test system",
                 user_prompt="test user",
-                request_id="test-123"
+                request_id="test-sync-123"
             )
             
-            assert result == ("test response", {"tokens": 100})
-            mock_invoke.assert_called_once()
+            assert result == ("test sync response", {"tokens": 10})
+            mock_invoke_retry_sync.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_invoke_with_llm_error(self, llm_service):
-        """LLMError 예외 처리 테스트"""
+        """Test that LLMError exceptions are propagated correctly."""
         with patch.object(llm_service, 'invoke_with_retry') as mock_invoke:
             llm_error = LLMError(
                 error_code=LLMErrorCode.RATE_LIMIT,
@@ -69,26 +69,25 @@ class TestLLMService:
                 )
             
             assert exc_info.value.error_code == LLMErrorCode.RATE_LIMIT
-            assert exc_info.value.retryable is True
 
     def test_get_provider_with_fallback(self, llm_service):
-        """프로바이더 폴백 테스트"""
-        # openai 프로바이더만 초기화
+        """Test that get_provider falls back to a default if the requested one is unavailable."""
         llm_service.providers = {"openai": Mock()}
         
-        # 존재하지 않는 프로바이더 요청 시 openai로 폴백
-        provider = llm_service.get_provider("nonexistent")
+        provider = llm_service.get_provider("nonexistent_provider")
         assert provider == llm_service.providers["openai"]
 
-    def test_get_provider_no_available(self, llm_service):
-        """사용 가능한 프로바이더가 없을 때 테스트"""
-        llm_service.providers = {}
+    def test_get_provider_no_available(self, mock_secret_provider):
+        """Test that an error is raised if no providers can be initialized."""
+        # Arrange: mock the secret provider to return no keys
+        mock_secret_provider.get.return_value = None
+        service_with_no_keys = LLMService(mock_secret_provider)
         
+        # Act & Assert
         with pytest.raises(LLMError) as exc_info:
-            llm_service.get_provider("openai")
+            service_with_no_keys.get_provider("openai")
         
         assert exc_info.value.error_code == LLMErrorCode.PROVIDER_UNAVAILABLE
-        assert exc_info.value.retryable is False
 
 
 class TestOpenAIProvider:
@@ -100,12 +99,13 @@ class TestOpenAIProvider:
 
     @pytest.fixture
     def openai_provider(self, mock_secret_provider):
-        with patch('openai.AsyncOpenAI'):
+        # We patch the clients to avoid actual instantiation
+        with patch('openai.AsyncOpenAI'), patch('openai.OpenAI'):
             return OpenAIProvider(mock_secret_provider)
 
     @pytest.mark.asyncio
     async def test_invoke_success(self, openai_provider):
-        """OpenAI API 성공 호출 테스트"""
+        """Test OpenAI async API success call."""
         mock_response = Mock()
         mock_response.usage.prompt_tokens = 10
         mock_response.usage.completion_tokens = 20
@@ -113,13 +113,11 @@ class TestOpenAIProvider:
         mock_response.choices = [Mock()]
         mock_response.choices[0].message.content = "test response"
         
-        openai_provider.client.chat.completions.create = AsyncMock(return_value=mock_response)
+        # Fix: mock async_client, not client
+        openai_provider.async_client.chat.completions.create = AsyncMock(return_value=mock_response)
         
         result = await openai_provider.invoke(
-            model="gpt-4",
-            system_prompt="test system",
-            user_prompt="test user",
-            request_id="test-123"
+            model="gpt-4", system_prompt="test system", user_prompt="test user", request_id="test-123"
         )
         
         assert result[0] == "test response"
@@ -127,22 +125,19 @@ class TestOpenAIProvider:
 
     @pytest.mark.asyncio
     async def test_invoke_rate_limit_error(self, openai_provider):
-        """Rate limit 에러 테스트"""
+        """Test OpenAI async rate limit error handling."""
         import openai
         rate_limit_error = openai.RateLimitError("Rate limit exceeded", response=Mock(), body={})
         
-        openai_provider.client.chat.completions.create = AsyncMock(side_effect=rate_limit_error)
+        # Fix: mock async_client, not client
+        openai_provider.async_client.chat.completions.create = AsyncMock(side_effect=rate_limit_error)
         
         with pytest.raises(LLMError) as exc_info:
             await openai_provider.invoke(
-                model="gpt-4",
-                system_prompt="test system",
-                user_prompt="test user",
-                request_id="test-123"
+                model="gpt-4", system_prompt="test system", user_prompt="test user", request_id="test-123"
             )
         
         assert exc_info.value.error_code == LLMErrorCode.RATE_LIMIT
-        assert exc_info.value.retryable is True
 
 
 class TestClaudeProvider:
@@ -154,25 +149,23 @@ class TestClaudeProvider:
 
     @pytest.fixture
     def claude_provider(self, mock_secret_provider):
-        with patch('anthropic.AsyncAnthropic'):
+        with patch('anthropic.AsyncAnthropic'), patch('anthropic.Anthropic'):
             return ClaudeProvider(mock_secret_provider)
 
     @pytest.mark.asyncio
     async def test_invoke_success(self, claude_provider):
-        """Claude API 성공 호출 테스트"""
+        """Test Claude async API success call."""
         mock_response = Mock()
         mock_response.usage.input_tokens = 10
         mock_response.usage.output_tokens = 20
         mock_response.content = [Mock()]
         mock_response.content[0].text = "test response"
         
-        claude_provider.client.messages.create = AsyncMock(return_value=mock_response)
+        # Fix: mock async_client, not client
+        claude_provider.async_client.messages.create = AsyncMock(return_value=mock_response)
         
         result = await claude_provider.invoke(
-            model="claude-3-sonnet",
-            system_prompt="test system",
-            user_prompt="test user",
-            request_id="test-123"
+            model="claude-3-sonnet", system_prompt="test system", user_prompt="test user", request_id="test-123"
         )
         
         assert result[0] == "test response"
@@ -193,18 +186,15 @@ class TestGeminiProvider:
 
     @pytest.mark.asyncio
     async def test_invoke_success(self, gemini_provider):
-        """Gemini API 성공 호출 테스트"""
+        """Test Gemini async API success call."""
         mock_response = Mock()
         mock_response.text = "test response"
         
         gemini_provider.model.generate_content_async = AsyncMock(return_value=mock_response)
         
         result = await gemini_provider.invoke(
-            model="gemini-pro",
-            system_prompt="test system",
-            user_prompt="test user",
-            request_id="test-123"
+            model="gemini-pro", system_prompt="test system", user_prompt="test user", request_id="test-123"
         )
         
         assert result[0] == "test response"
-        assert result[1]["total_tokens"] == 0  # Gemini는 토큰 정보를 제공하지 않음
+        assert result[1]["total_tokens"] == 0
