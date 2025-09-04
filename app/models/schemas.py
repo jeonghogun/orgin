@@ -2,6 +2,7 @@
 Data Models and Schemas
 """
 
+import time
 from datetime import datetime
 from typing import List, Optional, Literal, Dict, Any
 from pydantic import BaseModel, ConfigDict, Field
@@ -200,8 +201,8 @@ class MetricsResponse(BaseModel):
     data: List[ReviewMetrics]
 
 
-class PanelistConfig(BaseModel):
-    """Configuration for a panelist in the review system"""
+class ApiPanelistConfig(BaseModel):
+    """Configuration for a panelist in the review system, provided via API"""
     
     name: str
     provider: str  # openai, gemini, claude

@@ -4,7 +4,7 @@ Review-related API endpoints
 
 import logging
 import uuid
-import uuid
+import json
 from typing import Dict, List, Optional, Any
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import JSONResponse
