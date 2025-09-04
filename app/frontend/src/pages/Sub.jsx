@@ -42,19 +42,23 @@ const Sub = ({ roomId, onToggleReview }) => {
       </div>
 
       {/* 메시지 목록 - 독립적인 스크롤 영역 */}
-      <div className="flex-1 overflow-y-auto px-4 pb-4 min-h-0">
-        <MessageList roomId={roomId} />
+      <div className="flex-1 overflow-y-auto px-4 pb-20 min-h-0">
+        <div className="max-w-3xl mx-auto">
+          <MessageList roomId={roomId} />
+        </div>
       </div>
 
       {/* 채팅 입력창 - 화면 전체 하단에 고정 */}
       <div 
-        className="fixed bottom-0 border-t border-border bg-panel p-4 z-50 transition-all duration-150"
+        className="fixed bottom-0 border-t border-border bg-panel p-4 z-20 transition-all duration-150"
         style={{ 
           left: sidebarOpen ? '280px' : '0px', 
           right: '0px' 
         }}
       >
-        <ChatInput roomId={roomId} />
+        <div className="max-w-3xl mx-auto">
+          <ChatInput roomId={roomId} />
+        </div>
       </div>
     </div>
   );
