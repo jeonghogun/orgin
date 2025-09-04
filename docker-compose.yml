@@ -4,11 +4,13 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data/
     environment:
-      - POSTGRES_USER=user
-      - POSTGRES_PASSWORD=password
-      - POSTGRES_DB=origin_db
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
     ports:
       - "5432:5432"
+    env_file:
+      - .env
 
   redis:
     image: redis:7-alpine
@@ -22,9 +24,9 @@ services:
     environment:
       - DATABASES_HOST=db
       - DATABASES_PORT=5432
-      - DATABASES_USER=user
-      - DATABASES_PASSWORD=password
-      - DATABASES_DBNAME=origin_db
+      - DATABASES_USER=${POSTGRES_USER}
+      - DATABASES_PASSWORD=${POSTGRES_PASSWORD}
+      - DATABASES_DBNAME=${POSTGRES_DB}
       - POOL_MODE=session
       - LISTEN_ADDR=0.0.0.0
       - LISTEN_PORT=6432
@@ -32,6 +34,8 @@ services:
       - SERVER_RESET_QUERY=DISCARD ALL
     depends_on:
       - db
+    env_file:
+      - .env
 
   nginx:
     image: nginx:1.25-alpine
@@ -53,7 +57,7 @@ services:
     ports:
       - "8000:8000" # Expose for direct access if needed, but primary access is via nginx
     environment:
-      - DATABASE_URL=postgresql://user:password@pgbouncer:6432/origin_db
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@pgbouncer:6432/${POSTGRES_DB}
     env_file:
       - .env
     depends_on:
@@ -66,7 +70,7 @@ services:
     volumes:
       - .:/app
     environment:
-      - DATABASE_URL=postgresql://user:password@pgbouncer:6432/origin_db
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@pgbouncer:6432/${POSTGRES_DB}
     env_file:
       - .env
     depends_on:
@@ -79,7 +83,7 @@ services:
     volumes:
       - .:/app
     environment:
-      - DATABASE_URL=postgresql://user:password@pgbouncer:6432/origin_db
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@pgbouncer:6432/${POSTGRES_DB}
     env_file:
       - .env
     depends_on:
@@ -92,7 +96,7 @@ services:
     volumes:
       - .:/app
     environment:
-      - DATABASE_URL=postgresql://user:password@pgbouncer:6432/origin_db
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@pgbouncer:6432/${POSTGRES_DB}
     env_file:
       - .env
     depends_on:

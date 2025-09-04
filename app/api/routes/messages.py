@@ -75,49 +75,63 @@ async def _check_and_suggest_review(
     memory_service: MemoryService,
     llm_service: LLMService,
 ) -> Optional[str]:
-    """Checks if conditions are met to suggest a review and returns a suggestion message if so."""
+    """
+    Checks if conditions are met to suggest a review.
+    If so, sets a pending action and returns a suggestion message.
+    """
     try:
         room = storage_service.get_room(room_id)
         if not room or room.type != RoomType.SUB or room.message_count < 10:
             return None
 
-        # Check if a suggestion was made recently
-        suggestion_key = f'review_suggested_at:{room_id}'
-        recent_suggestions = await memory_service.get_user_facts(user_id, kind='suggestion_state', key=suggestion_key)
-        if recent_suggestions:
-            last_suggestion_time = recent_suggestions[0]['value_json'].get('timestamp', 0)
-            if time.time() - last_suggestion_time < 3600:  # 1 hour cooldown
-                return None
+        pending_action_key = f"pending_action:{room_id}"
+        # Check if a suggestion was made recently or is already pending
+        if await memory_service.get_user_facts(user_id, kind='conversation_state', key=pending_action_key):
+            return None # Don't suggest if another action is pending
 
-        # Use LLM to check for conversation coherency
+        suggestion_cooldown_key = f'review_suggested_at:{room_id}'
+        if await memory_service.get_user_facts(user_id, kind='suggestion_state', key=suggestion_cooldown_key):
+             return None # Cooldown is active
+
         messages = storage_service.get_messages(room_id)
         last_10_messages = "\n".join([f"{m.role}: {m.content}" for m in messages[-10:]])
         
         prompt = f"""
-        다음 대화는 하나의 주제에 대해 집중적이고 깊이 있게 진행되고 있습니까?
-        새로운 '검토룸'을 생성하여 이 주제에 대해 AI 패널 토론을 시작할 만큼 가치가 있습니까?
-        'yes' 또는 'no'로만 대답하세요.
+        Analyze the following conversation and determine if it has reached a point where a multi-agent AI debate would be a valuable next step. The conversation should be coherent and focused on a single, debatable topic.
+        Respond with a JSON object with two keys: "suggest_review" (boolean) and "topic" (a brief, one-sentence summary of the topic).
         
-        대화 내용:
+        Conversation:
         {last_10_messages}
         """
         
         coherency_response, _ = await llm_service.get_provider().invoke(
             user_prompt=prompt,
-            system_prompt="You are a helpful assistant that analyzes conversations.",
-            model="gpt-3.5-turbo", # Use a fast model for this check
+            system_prompt="You are a helpful assistant that analyzes conversations for opportunities to start an AI debate.",
+            model="gpt-4o-mini",
+            response_format="json"
         )
 
-        if "yes" in coherency_response.lower():
-            # Mark that a suggestion has been made
+        result = json.loads(coherency_response)
+
+        if result.get("suggest_review"):
+            topic = result.get("topic", f"'{room.name}'에 대한 검토")
+            # Set the pending action for the user to confirm
+            await memory_service.upsert_user_fact(
+                user_id,
+                kind='conversation_state',
+                key=pending_action_key,
+                value={'action': 'review_creation_confirmation', 'topic': topic},
+                confidence=1.0
+            )
+            # Set a cooldown to prevent spamming suggestions
             await memory_service.upsert_user_fact(
                 user_id,
                 kind='suggestion_state',
-                key=suggestion_key,
+                key=suggestion_cooldown_key,
                 value={'timestamp': time.time()},
                 confidence=1.0
             )
-            return "이 주제에 대해 깊이 있는 논의가 진행된 것 같네요. 검토룸을 만들어 AI 토론을 시작해볼까요?"
+            return f"'{topic}'에 대한 깊이 있는 논의가 진행된 것 같네요. 이 주제로 검토룸을 만들어 AI 토론을 시작해볼까요?"
 
     except Exception as e:
         logger.error(f"Error checking for review suggestion: {e}")
@@ -195,25 +209,93 @@ async def send_message(
 
             intent_from_client = body.get("intent")
             
-            if pending_action_facts:
-                pending_action = pending_action_facts[0]['value_json'].get('action')
-                if pending_action == 'promote_memory_confirmation':
-                    if not current_room or not current_room.parent_id:
-                        ai_content = "오류: 현재 룸의 상위 룸을 찾을 수 없습니다."
-                        await memory_service.delete_user_fact(user_id, 'conversation_state', pending_action_key)
-                    else:
-                        main_room_id = current_room.parent_id
-                        summary = await memory_service.promote_memories(
-                            sub_room_id=room_id,
-                            main_room_id=main_room_id,
-                            criteria_text=content,
-                            user_id=user_id
-                        )
-                        ai_content = summary
-                        await memory_service.delete_user_fact(user_id, 'conversation_state', pending_action_key)
+async def _create_review_and_start(storage_service: StorageService, review_service: ReviewService, room_id: str, user_id: str, topic: str, trace_id: str) -> str:
+    """Helper function to create a review room and start the process."""
+    new_review_room = storage_service.create_room(
+        room_id=generate_id(),
+        name=f"검토: {topic}",
+        owner_id=user_id,
+        room_type=RoomType.REVIEW,
+        parent_id=room_id,
+    )
+    instruction = "이 주제에 대해 3 라운드에 걸쳐 심도 있게 토론해주세요."
+    review_meta = ReviewMeta(
+        review_id=new_review_room.room_id,
+        room_id=new_review_room.room_id,
+        topic=topic,
+        instruction=instruction,
+        total_rounds=3,
+        created_at=get_current_timestamp(),
+    )
+    storage_service.save_review_meta(review_meta)
+    await review_service.start_review_process(
+        review_id=new_review_room.room_id,
+        review_room_id=new_review_room.room_id,
+        topic=topic,
+        instruction=instruction,
+        panelists=None,
+        trace_id=trace_id,
+    )
+    return f"알겠습니다. '{topic}'에 대한 검토를 시작하겠습니다. '{new_review_room.name}' 룸에서 토론을 확인하세요."
 
-                    intent = "memory_promotion_confirmation"
+...
+
+            if pending_action_facts:
+                pending_action_data = pending_action_facts[0]['value_json']
+                pending_action = pending_action_data.get('action')
+
+                if pending_action == 'promote_memory_confirmation':
+                    # Step 1: Find candidates and ask for confirmation
+                    summary_result = await memory_service.find_and_summarize_promotion_candidates(
+                        sub_room_id=room_id, user_id=user_id, criteria_text=content
+                    )
+                    ai_content = summary_result["summary"]
+                    if summary_result["count"] > 0:
+                        # Update the pending action to wait for the final 'yes'
+                        await memory_service.upsert_user_fact(
+                            user_id,
+                            kind='conversation_state',
+                            key=pending_action_key,
+                            value={'action': 'execute_memory_promotion', 'criteria_text': content},
+                            confidence=1.0
+                        )
+                    else:
+                        await memory_service.delete_user_fact(user_id, 'conversation_state', pending_action_key)
+                    intent = "memory_promotion_summary"
                     entities = {"user_response": content}
+
+                elif pending_action == 'execute_memory_promotion':
+                    # Step 2: User has confirmed, now execute the promotion
+                    user_response = content.lower()
+                    if "yes" in user_response or "예" in user_response or "응" in user_response:
+                        if not current_room or not current_room.parent_id:
+                             ai_content = "오류: 현재 룸의 상위 룸을 찾을 수 없습니다."
+                        else:
+                            main_room_id = current_room.parent_id
+                            criteria_text = pending_action_data.get('criteria_text')
+                            ai_content = await memory_service.promote_memories(
+                                sub_room_id=room_id,
+                                main_room_id=main_room_id,
+                                criteria_text=criteria_text,
+                                user_id=user_id
+                            )
+                    else:
+                        ai_content = "알겠습니다. 메모리 올리기를 취소합니다."
+                    await memory_service.delete_user_fact(user_id, 'conversation_state', pending_action_key)
+                    intent = "memory_promotion_execution"
+                    entities = {"user_confirmation": content}
+
+                elif pending_action == 'review_creation_confirmation':
+                    user_response = content.lower()
+                    if "yes" in user_response or "예" in user_response or "응" in user_response:
+                        topic = pending_action_data.get('topic', '새로운 검토')
+                        ai_content = await _create_review_and_start(storage_service, review_service, room_id, user_id, topic, message.message_id)
+                    else:
+                        ai_content = "알겠습니다. 검토를 시작하지 않겠습니다."
+                    await memory_service.delete_user_fact(user_id, 'conversation_state', pending_action_key)
+                    intent = "review_creation_response"
+                    entities = {"user_confirmation": content}
+
                 else:
                     intent = intent_from_client or "general"
                     entities = {}
@@ -272,35 +354,10 @@ async def send_message(
                 if not current_room or current_room.type != RoomType.SUB:
                     ai_content = "검토 기능은 서브룸에서만 시작할 수 있습니다."
                 else:
-                    user_id = user_info["user_id"]
                     topic = content.replace("검토해보자", "").replace("리뷰해줘", "").strip()
                     if not topic:
                         topic = f"'{current_room.name}'에 대한 검토"
-                    new_review_room = storage_service.create_room(
-                        room_id=generate_id(),
-                        name=f"검토: {topic}",
-                        owner_id=user_id,
-                        room_type=RoomType.REVIEW,
-                        parent_id=room_id,
-                    )
-                    instruction = "이 주제에 대해 3 라운드에 걸쳐 심도 있게 토론해주세요."
-                    review_meta = ReviewMeta(
-                        review_id=new_review_room.room_id,
-                        room_id=new_review_room.room_id,
-                        topic=topic,
-                        instruction=instruction,
-                        total_rounds=3,
-                        created_at=get_current_timestamp(),
-                    )
-                    storage_service.save_review_meta(review_meta)
-                    await review_service.start_review_process(
-                        review_id=new_review_room.room_id,
-                        topic=topic,
-                        instruction=instruction,
-                        panelists=None,
-                        trace_id=message.message_id,
-                    )
-                    ai_content = f"알겠습니다. '{topic}'에 대한 검토를 시작하겠습니다. '{new_review_room.name}' 룸에서 토론을 확인하세요."
+                    ai_content = await _create_review_and_start(storage_service, review_service, room_id, user_id, topic, message.message_id)
             elif intent == "start_memory_promotion":
                 await memory_service.upsert_user_fact(
                     user_id, 

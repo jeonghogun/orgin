@@ -7,7 +7,7 @@ import json
 from datetime import datetime, timedelta
 
 from app.services.database_service import DatabaseService, get_database_service
-from app.models.schemas import PanelistConfig # Assuming this is the right schema
+from app.models.schemas import ApiPanelistConfig as PanelistConfig # Assuming this is the right schema
 
 logger = logging.getLogger(__name__)
 

@@ -78,3 +78,76 @@ def test_time_decay(memory_service):
 
     assert decayed[0]['score'] == pytest.approx(1.0)
     assert decayed[1]['score'] == pytest.approx(0.406, abs=0.01)
+
+
+@pytest.mark.anyio
+async def test_get_relevant_memories_hybrid(memory_service, monkeypatch):
+    """Test the main hybrid retrieval method, mocking the candidate generation."""
+    # Mock the internal methods that perform DB queries
+    mock_bm25 = AsyncMock(return_value=[
+        {'message_id': 'bm25_1', 'content': 'BM25 hit 1', 'score': 0.8, 'timestamp': 100}
+    ])
+    mock_vector = AsyncMock(return_value=[
+        {'message_id': 'vec_1', 'content': 'Vector hit 1', 'score': 0.9, 'timestamp': 200}
+    ])
+    monkeypatch.setattr(memory_service, '_bm25_candidates', mock_bm25)
+    monkeypatch.setattr(memory_service, '_vector_candidates', mock_vector)
+
+    # Mock settings
+    monkeypatch.setattr(settings, 'TIME_DECAY_ENABLED', False)
+    monkeypatch.setattr(settings, 'RERANK_ENABLED', False)
+
+    results = await memory_service.get_relevant_memories_hybrid("test", ["room1"], "user1")
+
+    # Assert that the internal methods were called
+    mock_bm25.assert_awaited_once()
+    mock_vector.assert_awaited_once()
+
+    # Assert that we got results back
+    assert len(results) == 2
+    assert results[0].message_id == 'vec_1' # Higher score after merge
+    assert results[1].message_id == 'bm25_1'
+
+
+@pytest.mark.anyio
+async def test_get_user_profile_found(memory_service, mock_db_service):
+    """Test getting a user profile that exists."""
+    mock_db_service.execute_query.return_value = [{
+        "user_id": "test_user",
+        "role": "user",
+        "name": "Test User",
+        "preferences": "{}",
+        "conversation_style": "neutral",
+        "interests": [],
+        "created_at": 123,
+        "updated_at": 123
+    }]
+
+    profile = await memory_service.get_user_profile("test_user")
+
+    mock_db_service.execute_query.assert_called_once()
+    assert profile is not None
+    assert profile.user_id == "test_user"
+    assert profile.name == "Test User"
+    mock_db_service.execute_update.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_get_user_profile_not_found_creates_new(memory_service, mock_db_service):
+    """Test that a new user profile is created if not found."""
+    # First call to find profile returns nothing
+    mock_db_service.execute_query.side_effect = [
+        [], # First call for get
+        [{   # Second call inside get_user_profile after creation
+            "user_id": "new_user", "role": "user", "name": "New User",
+            "preferences": "{}", "conversation_style": "neutral", "interests": [],
+            "created_at": 123, "updated_at": 123
+        }]
+    ]
+
+    profile = await memory_service.get_user_profile("new_user")
+
+    assert mock_db_service.execute_query.call_count == 2
+    mock_db_service.execute_update.assert_called_once() # Asserts that the INSERT was called
+    assert profile is not None
+    assert profile.user_id == "new_user"

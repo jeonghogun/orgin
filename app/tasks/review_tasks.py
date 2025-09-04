@@ -12,7 +12,7 @@ from app.celery_app import celery_app
 from app.config.settings import settings
 from app.models.schemas import Message, WebSocketMessage
 from app.services.redis_pubsub import redis_pubsub_manager
-from app.services.llm_strategy import llm_strategy_service, PanelistConfig
+from app.services.llm_strategy import llm_strategy_service, ProviderPanelistConfig
 from app.utils.helpers import generate_id, get_current_timestamp
 from app.tasks.base_task import BaseTask
 from app.services.llm_service import LLMService
@@ -26,10 +26,10 @@ class BudgetExceededError(Exception):
 
 def run_panelist_turn(
     llm_service: LLMService,
-    panelist_config: PanelistConfig,
+    panelist_config: ProviderPanelistConfig,
     prompt: str,
     request_id: str
-) -> Tuple[PanelistConfig, Union[Tuple[Any, Dict[str, Any]], BaseException]]:
+) -> Tuple[ProviderPanelistConfig, Union[Tuple[Any, Dict[str, Any]], BaseException]]:
     """Runs a single panelist turn synchronously, with retry logic."""
     try:
         result = llm_service.invoke_sync(
@@ -72,9 +72,9 @@ def _process_turn_results(
     review_id: str,
     review_room_id: str,
     round_num: int,
-    results: List[Tuple[PanelistConfig, Union[Tuple[Any, Dict[str, Any]], BaseException]]],
+    results: List[Tuple[ProviderPanelistConfig, Union[Tuple[Any, Dict[str, Any]], BaseException]]],
     all_previous_metrics: List[List[Dict[str, Any]]]
-) -> Tuple[Dict[str, Any], List[Dict[str, Any]], List[PanelistConfig]]:
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]], List[ProviderPanelistConfig]]:
     """Processes results from a single turn, saves messages, and collects metrics."""
     turn_outputs, round_metrics, successful_panelists = {}, [], []
     for panelist_config, result in results:
@@ -134,7 +134,7 @@ def run_initial_panel_turn(self: BaseTask, review_id: str, review_room_id: str, 
 @celery_app.task(bind=True, base=BaseTask, autoretry_for=(Exception,), retry_kwargs={'max_retries': 3}, retry_backoff=True)
 def run_rebuttal_turn(self: BaseTask, review_id: str, review_room_id: str, turn_1_outputs: Dict[str, Any], all_metrics: List[List[Dict[str, Any]]], successful_panelists: List[Dict[str, Any]], trace_id: str):
     try:
-        panel_configs = [PanelistConfig(**p) for p in successful_panelists]
+        panel_configs = [ProviderPanelistConfig(**p) for p in successful_panelists]
         rebuttal_context = "\n".join([f"Summary from {persona}: {output.get('summary', '')}" for persona, output in turn_1_outputs.items()])
         prompt = f"Rebuttal Round. Here are the summaries of the initial arguments:\n{rebuttal_context}\n\nPlease provide a thoughtful rebuttal or build upon the other arguments."
         
@@ -157,7 +157,7 @@ def run_rebuttal_turn(self: BaseTask, review_id: str, review_room_id: str, turn_
 @celery_app.task(bind=True, base=BaseTask, autoretry_for=(Exception,), retry_kwargs={'max_retries': 3}, retry_backoff=True)
 def run_synthesis_turn(self: BaseTask, review_id: str, review_room_id: str, turn_1_outputs: Dict[str, Any], turn_2_outputs: Dict[str, Any], all_metrics: List[List[Dict[str, Any]]], successful_panelists: List[Dict[str, Any]], trace_id: str):
     try:
-        panel_configs = [PanelistConfig(**p) for p in successful_panelists]
+        panel_configs = [ProviderPanelistConfig(**p) for p in successful_panelists]
         synthesis_context = "Initial Arguments:\n" + "\n".join([f"Summary from {p}: {o.get('summary', '')}" for p, o in turn_1_outputs.items()])
         synthesis_context += "\n\nRebuttal Arguments:\n" + "\n".join([f"Summary from {p}: {o.get('summary', '')}" for p, o in turn_2_outputs.items()])
         prompt = f"Synthesis Round. Based on all previous arguments, please synthesize them into your final, comprehensive position and provide actionable recommendations.\n\n{synthesis_context}"

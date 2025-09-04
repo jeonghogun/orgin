@@ -28,44 +28,61 @@ class MemoryService:
             raise ValueError("DB_ENCRYPTION_KEY not found in secret provider.")
 
     async def get_relevant_memories_hybrid(self, query: str, room_ids: List[str], user_id: str, limit: int = settings.HYBRID_RETURN_TOPN) -> List[Message]:
-        bm25_candidates_task = self._bm25_candidates(query, room_ids, user_id)
-        vector_candidates_task = self._vector_candidates(query, room_ids, user_id)
+        # Pass the encryption key to the candidate retrieval methods
+        bm25_candidates_task = self._bm25_candidates(query, room_ids, user_id, self.db_encryption_key)
+        vector_candidates_task = self._vector_candidates(query, room_ids, user_id, self.db_encryption_key)
+
         bm25_results, vector_results = await asyncio.gather(bm25_candidates_task, vector_candidates_task)
+
         merged_results = self._merge_and_score(bm25_results, vector_results)
+
         if settings.TIME_DECAY_ENABLED:
             merged_results = self._apply_time_decay(merged_results)
+
         merged_results.sort(key=lambda x: x['score'], reverse=True)
+
         if settings.RERANK_ENABLED:
             merged_results = await self._optional_rerank(query, merged_results)
+
+        # The decryption is now done in the SQL query, so no post-processing loop is needed
         final_results_data = merged_results[:limit]
-        for result in final_results_data:
-            result['content'] = self._decrypt_content(result['content'])
         return [Message(**msg) for msg in final_results_data]
 
-    def _decrypt_content(self, encrypted_content: bytes) -> str:
-        if not encrypted_content: return ""
-        query = "SELECT pgp_sym_decrypt(%s, %s) as decrypted"
-        params = (encrypted_content, self.db_encryption_key)
-        result = self.db.execute_query(query, params)
-        return result[0]['decrypted'] if result else ""
-
-    async def _bm25_candidates(self, query: str, room_ids: List[str], user_id: str) -> List[Dict[str, Any]]:
+    async def _bm25_candidates(self, query: str, room_ids: List[str], user_id: str, encryption_key: str) -> List[Dict[str, Any]]:
         sql = """
-            SELECT message_id, room_id, user_id, role, content, timestamp, ts_rank_cd(ts, plainto_tsquery('simple', %s)) as score
-            FROM messages WHERE room_id = ANY(%s) AND user_id = %s AND ts @@ plainto_tsquery('simple', %s)
-            ORDER BY score DESC LIMIT %s;
+            SELECT
+                message_id,
+                room_id,
+                user_id,
+                role,
+                pgp_sym_decrypt(content, %s) as content,
+                timestamp,
+                ts_rank_cd(ts, plainto_tsquery('simple', %s)) as score
+            FROM messages
+            WHERE room_id = ANY(%s) AND user_id = %s AND ts @@ plainto_tsquery('simple', %s)
+            ORDER BY score DESC
+            LIMIT %s;
         """
-        params = (query, room_ids, user_id, query, settings.HYBRID_TOPK_BM25)
+        params = (encryption_key, query, room_ids, user_id, query, settings.HYBRID_TOPK_BM25)
         return self.db.execute_query(sql, params)
 
-    async def _vector_candidates(self, query: str, room_ids: List[str], user_id: str) -> List[Dict[str, Any]]:
+    async def _vector_candidates(self, query: str, room_ids: List[str], user_id: str, encryption_key: str) -> List[Dict[str, Any]]:
         query_embedding, _ = await self.llm_service.generate_embedding(query)
         sql = """
-            SELECT message_id, room_id, user_id, role, content, timestamp, 1 - (embedding <=> %s::vector) as score
-            FROM messages WHERE room_id = ANY(%s) AND user_id = %s AND embedding IS NOT NULL
-            ORDER BY embedding <=> %s::vector LIMIT %s;
+            SELECT
+                message_id,
+                room_id,
+                user_id,
+                role,
+                pgp_sym_decrypt(content, %s) as content,
+                timestamp,
+                1 - (embedding <=> %s::vector) as score
+            FROM messages
+            WHERE room_id = ANY(%s) AND user_id = %s AND embedding IS NOT NULL
+            ORDER BY embedding <=> %s::vector
+            LIMIT %s;
         """
-        params = (query_embedding, room_ids, user_id, query_embedding, settings.HYBRID_TOPK_VEC)
+        params = (encryption_key, query_embedding, room_ids, user_id, query_embedding, settings.HYBRID_TOPK_VEC)
         return self.db.execute_query(sql, params)
 
     def _normalize_scores(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -282,14 +299,8 @@ class MemoryService:
             logger.error(f"Failed to update profile for user '{user_id}': {e}", exc_info=True)
             return None
 
-    async def promote_memories(self, sub_room_id: str, main_room_id: str, criteria_text: str, user_id: str) -> str:
-        """
-        Finds messages in a sub-room based on criteria and copies them to the main room.
-        Returns a summary of the action taken.
-        """
-        logger.info(f"Promoting memories from {sub_room_id} to {main_room_id} with criteria: '{criteria_text}'")
-
-        # 1. Use an LLM to parse the criteria text into a structured format.
+    async def _get_promotion_candidates(self, sub_room_id: str, user_id: str, criteria_text: str) -> Tuple[List[Message], str]:
+        """Helper to find messages for promotion based on criteria."""
         prompt = f"""
         사용자의 요청을 분석하여 메시지 선택 기준을 JSON 형식으로 추출하세요.
         요청: "{criteria_text}"
@@ -301,7 +312,7 @@ class MemoryService:
 
         다음 JSON 형식으로만 응답하세요:
         {{
-            "type": "all | topic | date_range",
+            "type": "all | topic",
             "value": "추출된 주제 (topic인 경우, 없으면 null)"
         }}
         """
@@ -321,30 +332,49 @@ class MemoryService:
             criteria_type = "all"
             criteria_value = None
 
-        # 2. Fetch messages based on parsed criteria.
         messages_to_promote = []
         if criteria_type == "topic" and criteria_value:
-            logger.info(f"Promoting by topic: {criteria_value}")
-            # Use existing hybrid search to find relevant messages
+            logger.info(f"Finding memories to promote by topic: {criteria_value}")
             messages_to_promote = await self.get_relevant_memories_hybrid(
-                query=criteria_value, room_ids=[sub_room_id], user_id=user_id, limit=50 # Promote up to 50 relevant messages
+                query=criteria_value, room_ids=[sub_room_id], user_id=user_id, limit=50
             )
-        else: # Default to 'all'
-            logger.info("Promoting all messages.")
-            messages_to_promote = await self.db.get_messages_for_promotion(sub_room_id)
+        else:
+            logger.info("Finding all memories to promote.")
+            # Note: get_messages_for_promotion is not async, so we wrap it
+            messages_to_promote = await asyncio.to_thread(self.db.get_messages_for_promotion, sub_room_id)
+
+        return messages_to_promote, criteria_value or "전체 대화"
+
+    async def find_and_summarize_promotion_candidates(self, sub_room_id: str, user_id: str, criteria_text: str) -> Dict[str, Any]:
+        """
+        Finds messages for promotion and returns a summary for user confirmation.
+        """
+        messages, topic = await self._get_promotion_candidates(sub_room_id, user_id, criteria_text)
+
+        if not messages:
+            return {"summary": "올릴 만한 대화 내용을 찾지 못했습니다.", "count": 0}
+
+        count = len(messages)
+        summary = f"'{topic}' 주제와 관련된 {count}개의 대화 내용을 찾았습니다. 상위 룸으로 올릴까요?"
+
+        return {"summary": summary, "count": count, "criteria_text": criteria_text}
+
+    async def promote_memories(self, sub_room_id: str, main_room_id: str, user_id: str, criteria_text: str) -> str:
+        """
+        Finds messages in a sub-room based on criteria and copies them to the main room.
+        This is the final execution step after user confirmation.
+        """
+        logger.info(f"Promoting memories from {sub_room_id} to {main_room_id} with criteria: '{criteria_text}'")
+
+        messages_to_promote, topic = await self._get_promotion_candidates(sub_room_id, user_id, criteria_text)
 
         if not messages_to_promote:
             return "올릴 만한 대화 내용을 찾지 못했습니다."
 
-        # 3. Copy messages to the main room.
         copied_count = await self.db.copy_messages_to_room(messages_to_promote, main_room_id, user_id)
-
         logger.info(f"Copied {copied_count} messages to {main_room_id}.")
 
-        if criteria_type == "topic":
-            return f"'{criteria_value}' 주제와 관련된 {copied_count}개의 메시지를 상위 룸으로 올렸습니다."
-        else:
-            return f"총 {copied_count}개의 메시지를 상위 룸으로 올렸습니다."
+        return f"'{topic}' 주제와 관련된 {copied_count}개의 메시지를 상위 룸으로 올렸습니다."
 
 
     # The archival methods are placeholders for now and will be implemented next.

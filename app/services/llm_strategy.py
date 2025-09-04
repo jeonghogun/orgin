@@ -10,17 +10,18 @@ logger = logging.getLogger(__name__)
 
 CONFIG_PATH = "config/providers.yml"
 
-class PanelistConfig(BaseModel):
-    """Pydantic model for a single panelist's configuration."""
+class ProviderPanelistConfig(BaseModel):
+    """Pydantic model for a single panelist's configuration from providers.yml."""
     provider: str
     persona: str
     model: str
+    system_prompt: Optional[str] = None
     timeout_s: int = Field(60, gt=0)
     max_retries: int = Field(2, ge=0)
 
 class StrategyConfig(BaseModel):
     """Pydantic model for the entire provider strategy configuration."""
-    panelists: List[PanelistConfig]
+    panelists: List[ProviderPanelistConfig]
 
 
 class LLMStrategyService:
@@ -48,7 +49,7 @@ class LLMStrategyService:
             logger.error(f"Error loading provider config file at {config_path}: {e}")
             raise
 
-    def get_default_panelists(self) -> List[PanelistConfig]:
+    def get_default_panelists(self) -> List[ProviderPanelistConfig]:
         """Returns the default list of panelist configurations."""
         if not self._config:
             return []

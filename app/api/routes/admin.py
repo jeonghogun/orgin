@@ -9,7 +9,7 @@ from app.api.dependencies import require_role, get_admin_service, get_audit_serv
 from app.services.admin_service import AdminService
 from app.services.audit_service import AuditService
 from app.tasks.persona_tasks import generate_user_persona
-from app.models.schemas import PanelistConfig # Assuming this is the right schema for provider config updates
+from app.models.schemas import ApiPanelistConfig as PanelistConfig # Assuming this is the right schema for provider config updates
 
 logger = logging.getLogger(__name__)
 
