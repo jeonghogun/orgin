@@ -189,13 +189,28 @@ class StorageService:
 
     def get_review_meta(self, review_id: str) -> Optional[ReviewMeta]:
         """Get review by ID from the database"""
-        query = "SELECT * FROM reviews WHERE review_id = %s"
+        # Select only the columns that exist in the ReviewMeta model to avoid schema drift issues.
+        query = """
+            SELECT
+                review_id,
+                room_id,
+                topic,
+                instruction,
+                status,
+                total_rounds,
+                current_round,
+                created_at,
+                completed_at
+            FROM reviews
+            WHERE review_id = %s
+        """
         params = (review_id,)
         result = self.db.execute_query(query, params)
 
         if not result:
             return None
 
+        # The DB doesn't have 'started_at' or 'failed_panels'. Pydantic will use defaults.
         return ReviewMeta(**result[0])
 
     def get_reviews_by_room(self, room_id: str) -> List[ReviewMeta]:

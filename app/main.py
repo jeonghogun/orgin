@@ -185,21 +185,14 @@ app.include_router(metrics.router, prefix="/api")
 app.include_router(websockets.router)
 app.include_router(admin.router, prefix="/api")
 
-# Mount static files LAST (so it doesn't override API routes)
-# Mount uploads directory first
+# Mount uploads directory. Nginx will not serve this, so FastAPI must.
 uploads_dir = "uploads"
-if os.path.exists(uploads_dir):
-    app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")
-else:
-    logger.warning(f"Uploads directory {uploads_dir} does not exist - upload serving disabled")
+if not os.path.exists(uploads_dir):
+    os.makedirs(uploads_dir)
+app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")
 
-# Static files mounting - check if directory exists
-import os
-static_dir = "/app/static"
-if os.path.exists(static_dir):
-    app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
-else:
-    logger.warning(f"Static directory {static_dir} does not exist - static file serving disabled")
+# Frontend static files are now served by Nginx.
+# The StaticFiles mount for the root path has been removed.
 
 
 # Health check endpoint

@@ -352,15 +352,74 @@ async def send_message(
 
         except Exception as e:
             logger.error(f"Error generating AI response: {e}", exc_info=True)
-            return create_success_response(
-                data={"message": message.model_dump()},
-                message="Message sent, but AI response failed",
-            )
+            raise HTTPException(status_code=500, detail="AI 응답을 생성하는 중에 오류가 발생했습니다.")
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error sending message: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to send message: {str(e)}")
+
+
+from fastapi.responses import StreamingResponse
+
+@router.post("/{room_id}/messages/stream")
+async def send_message_stream(
+    room_id: str,
+    request: Request,
+    user_info: Dict[str, str] = AUTH_DEPENDENCY,
+    storage_service: StorageService = Depends(get_storage_service),
+    rag_service: RAGService = Depends(get_rag_service),
+):
+    """Sends a message to a room and streams the AI's response back."""
+    body = await request.json()
+    content = body.get("content", "").strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="Message content cannot be empty.")
+
+    user_id = user_info.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=400, detail="Invalid user information.")
+
+    # 1. Save the user's message
+    user_message = Message(
+        message_id=generate_id(),
+        room_id=room_id,
+        user_id=user_id,
+        content=content,
+        timestamp=get_current_timestamp(),
+        role="user",
+    )
+    storage_service.save_message(user_message)
+
+    # 2. Define the async generator for the streaming response
+    async def stream_generator():
+        full_response = ""
+        try:
+            # This will be replaced with the actual streaming LLM call
+            async for chunk in rag_service.stream_rag_response(room_id, user_id, content):
+                full_response += chunk
+                yield f"data: {json.dumps({'delta': chunk})}\n\n"
+                await asyncio.sleep(0.02) # Small delay to simulate streaming
+
+            # After streaming is complete, save the full AI message
+            ai_message = Message(
+                message_id=generate_id(),
+                room_id=room_id,
+                user_id="ai",
+                content=full_response,
+                timestamp=get_current_timestamp(),
+                role="assistant",
+            )
+            storage_service.save_message(ai_message)
+
+            yield f"data: {json.dumps({'done': True, 'message_id': ai_message.message_id})}\n\n"
+
+        except Exception as e:
+            logger.error(f"Error during stream generation for room {room_id}: {e}", exc_info=True)
+            error_payload = {"error": "An error occurred during the stream."}
+            yield f"data: {json.dumps(error_payload)}\n\n"
+
+    return StreamingResponse(stream_generator(), media_type="text/event-stream")
 
 
 @router.post("/{room_id}/upload", response_model=Message)
