@@ -39,7 +39,7 @@ async def websocket_room_endpoint(websocket: WebSocket, room_id: str):
     user_id = None
     try:
         user_id = await require_auth_ws(websocket)
-        room = await storage_service.get_room(room_id)
+        room = storage_service.get_room(room_id)
         if not room or room.owner_id != user_id:
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             logger.warning(f"Auth failed for WS to room {room_id}: User {user_id} does not own room.")
@@ -65,7 +65,7 @@ async def websocket_review_endpoint(websocket: WebSocket, review_id: str):
     user_id = None
     try:
         user_id = await require_auth_ws(websocket)
-        review = await storage_service.get_review_meta(review_id)
+        review = storage_service.get_review_meta(review_id)
         if not review:
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             logger.warning(f"Auth failed for WS to review {review_id}: Review not found.")

@@ -58,7 +58,7 @@ async def get_messages(
             logger.error(f"Invalid user_info: {user_info}")
             raise HTTPException(status_code=400, detail="Invalid user information")
 
-        messages = await storage_service.get_messages(room_id)
+        messages = storage_service.get_messages(room_id)
         return messages
     except HTTPException:
         raise
@@ -76,7 +76,7 @@ async def _check_and_suggest_review(
 ) -> Optional[str]:
     """Checks if conditions are met to suggest a review and returns a suggestion message if so."""
     try:
-        room = await storage_service.get_room(room_id)
+        room = storage_service.get_room(room_id)
         if not room or room.type != RoomType.SUB or room.message_count < 10:
             return None
 
@@ -89,7 +89,7 @@ async def _check_and_suggest_review(
                 return None
 
         # Use LLM to check for conversation coherency
-        messages = await storage_service.get_messages(room_id)
+        messages = storage_service.get_messages(room_id)
         last_10_messages = "\n".join([f"{m.role}: {m.content}" for m in messages[-10:]])
         
         prompt = f"""
@@ -157,7 +157,7 @@ async def send_message(
             timestamp=get_current_timestamp(),
         )
 
-        await storage_service.save_message(message)
+        storage_service.save_message(message)
         # Broadcast the user's message
         await manager.broadcast(json.dumps({
             "type": "new_message",
@@ -167,11 +167,11 @@ async def send_message(
         try:
             current_room = await storage_service.get_room(room_id)
             if current_room and current_room.type == RoomType.REVIEW:
-                review_meta = await storage_service.get_review_meta(room_id)
+                review_meta = storage_service.get_review_meta(room_id)
                 if not review_meta or review_meta.status != 'completed':
                     ai_content = "AI 토론이 아직 진행 중입니다. 완료된 후에 관측자와 대화할 수 있습니다."
                 else:
-                    final_report = await storage_service.get_final_report(room_id)
+                    final_report = storage_service.get_final_report(room_id)
                     if not final_report:
                         ai_content = "최종 보고서를 찾을 수 없습니다."
                     else:
@@ -181,7 +181,7 @@ async def send_message(
                     message_id=generate_id(), room_id=room_id, user_id="ai",
                     content=ai_content, timestamp=get_current_timestamp(), role="ai"
                 )
-                await storage_service.save_message(ai_message)
+                storage_service.save_message(ai_message)
                 await manager.broadcast(json.dumps({
                     "type": "new_message",
                     "payload": ai_message.model_dump()
@@ -275,7 +275,7 @@ async def send_message(
                     topic = content.replace("검토해보자", "").replace("리뷰해줘", "").strip()
                     if not topic:
                         topic = f"'{current_room.name}'에 대한 검토"
-                    new_review_room = await storage_service.create_room(
+                    new_review_room = storage_service.create_room(
                         room_id=generate_id(),
                         name=f"검토: {topic}",
                         owner_id=user_id,
@@ -291,7 +291,7 @@ async def send_message(
                         total_rounds=3,
                         created_at=get_current_timestamp(),
                     )
-                    await storage_service.save_review_meta(review_meta)
+                    storage_service.save_review_meta(review_meta)
                     await review_service.start_review_process(
                         review_id=new_review_room.room_id,
                         topic=topic,
@@ -327,7 +327,7 @@ async def send_message(
                 timestamp=get_current_timestamp(),
                 role="ai",
             )
-            await storage_service.save_message(ai_message)
+            storage_service.save_message(ai_message)
             await manager.broadcast(json.dumps({
                 "type": "new_message",
                 "payload": ai_message.model_dump()
@@ -375,7 +375,7 @@ async def upload_file(
     if not user_id:
         raise HTTPException(status_code=400, detail="Invalid user information")
 
-    room = await storage_service.get_room(room_id)
+    room = storage_service.get_room(room_id)
     if not room or room.owner_id != user_id:
         raise HTTPException(status_code=404, detail="Room not found or access denied.")
 
@@ -403,7 +403,7 @@ async def upload_file(
             timestamp=get_current_timestamp(),
             role="user",
         )
-        await storage_service.save_message(new_message)
+        storage_service.save_message(new_message)
 
         return new_message
 
