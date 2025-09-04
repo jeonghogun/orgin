@@ -195,12 +195,46 @@ else:
 
 # Static files mounting - check if directory exists
 import os
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, HTMLResponse
+
 static_dir = "/app/static"
 if os.path.exists(static_dir):
-    app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
+    # Custom SPA handler that serves index.html for non-existent files
+    class SPAStaticFiles(StaticFiles):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+        
+        def lookup_path(self, path: str):
+            # Try to find the file first
+            full_path, stat_result = super().lookup_path(path)
+            if full_path is not None:
+                return full_path, stat_result
+            
+            # If file doesn't exist and it's not an API/WS path, serve index.html
+            if not path.startswith(("api/", "ws/", "uploads/")):
+                index_path = os.path.join(self.directory, "index.html")
+                if os.path.exists(index_path):
+                    return index_path, os.stat(index_path)
+            
+            return None, None
+    
+    app.mount("/", SPAStaticFiles(directory=static_dir, html=True), name="static")
 else:
     logger.warning(f"Static directory {static_dir} does not exist - static file serving disabled")
 
+
+# Explicit SPA fallback for deep links (placed after API routes)
+@app.get("/{full_path:path}", include_in_schema=False)
+async def spa_fallback(full_path: str):
+    # Bypass for backend and assets
+    if full_path.startswith(("api/", "ws/", "uploads/", "metrics", "health")):
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
+    index_path = os.path.join(static_dir, "index.html")
+    if os.path.exists(index_path):
+        # Serve index.html explicitly as text/html
+        return HTMLResponse(open(index_path, "rb").read())
+    return JSONResponse({"detail": "Not Found"}, status_code=404)
 
 # Health check endpoint
 @app.get("/health")

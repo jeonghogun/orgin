@@ -58,7 +58,7 @@ async def get_messages(
             logger.error(f"Invalid user_info: {user_info}")
             raise HTTPException(status_code=400, detail="Invalid user information")
 
-        messages = await storage_service.get_messages(room_id)
+        messages = storage_service.get_messages(room_id)
         return messages
     except HTTPException:
         raise

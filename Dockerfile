@@ -33,6 +33,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
 COPY scripts ./scripts
 COPY pyproject.toml .
+COPY alembic ./alembic
+COPY alembic.ini .
+COPY .env .env
 
 # Copy the built frontend assets from the builder stage
 COPY --from=frontend-builder /app/frontend/dist /app/static

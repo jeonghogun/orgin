@@ -72,6 +72,9 @@ class Settings(BaseSettings):
     ENABLE_ALERTS: bool = True
     ALERT_WEBHOOK_URL: Optional[str] = None
 
+    # WebSocket Settings
+    WS_CLIENT_ID_OPTIONAL: bool = True
+
     # Firebase Configuration
     FIREBASE_SERVICE_ACCOUNT_PATH: Optional[str] = None
     FIREBASE_PROJECT_ID: Optional[str] = None
