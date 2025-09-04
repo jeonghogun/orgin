@@ -196,45 +196,34 @@ else:
 # Static files mounting - check if directory exists
 import os
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse
+from fastapi import HTTPException
+from starlette.types import Scope
 
-static_dir = "/app/static"
+static_dir = "app/static"
 if os.path.exists(static_dir):
-    # Custom SPA handler that serves index.html for non-existent files
+    # This custom StaticFiles class is used to serve the single-page application.
+    # It ensures that any path that doesn't correspond to a file on disk
+    # will serve the `index.html` file, allowing the client-side router to handle the path.
     class SPAStaticFiles(StaticFiles):
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, **kwargs)
-        
-        def lookup_path(self, path: str):
-            # Try to find the file first
-            full_path, stat_result = super().lookup_path(path)
-            if full_path is not None:
-                return full_path, stat_result
-            
-            # If file doesn't exist and it's not an API/WS path, serve index.html
-            if not path.startswith(("api/", "ws/", "uploads/")):
-                index_path = os.path.join(self.directory, "index.html")
-                if os.path.exists(index_path):
-                    return index_path, os.stat(index_path)
-            
-            return None, None
-    
+        async def get_response(self, path: str, scope: Scope) -> Response:
+            try:
+                # Try to get the file from the static directory
+                return await super().get_response(path, scope)
+            except HTTPException as ex:
+                # If the file is not found, serve index.html
+                if ex.status_code == 404:
+                    index_path = os.path.join(self.directory, "index.html")
+                    if os.path.exists(index_path):
+                        return await super().get_response("index.html", scope)
+                # Re-raise other exceptions
+                raise ex
+
     app.mount("/", SPAStaticFiles(directory=static_dir, html=True), name="static")
 else:
-    logger.warning(f"Static directory {static_dir} does not exist - static file serving disabled")
-
-
-# Explicit SPA fallback for deep links (placed after API routes)
-@app.get("/{full_path:path}", include_in_schema=False)
-async def spa_fallback(full_path: str):
-    # Bypass for backend and assets
-    if full_path.startswith(("api/", "ws/", "uploads/", "metrics", "health")):
-        return JSONResponse({"detail": "Not Found"}, status_code=404)
-    index_path = os.path.join(static_dir, "index.html")
-    if os.path.exists(index_path):
-        # Serve index.html explicitly as text/html
-        return HTMLResponse(open(index_path, "rb").read())
-    return JSONResponse({"detail": "Not Found"}, status_code=404)
+    logger.warning(
+        f"Static directory {static_dir} does not exist - static file serving disabled"
+    )
 
 # Health check endpoint
 @app.get("/health")

@@ -138,14 +138,22 @@ class StorageService:
 
     def save_message(self, message: Message) -> None:
         """Save an encrypted message to the database."""
-        embedding = None # TODO: Add embedding generation
+        # The 'embedding' column is intentionally omitted.
+        # Since it's nullable, the database will automatically set it to NULL.
+        # This avoids potential issues with the DB driver and custom types like 'vector'.
         query = """
-            INSERT INTO messages (message_id, room_id, user_id, role, content, content_searchable, timestamp, embedding)
-            VALUES (%s, %s, %s, %s, pgp_sym_encrypt(%s, %s), %s, %s, %s)
+            INSERT INTO messages (message_id, room_id, user_id, role, content, content_searchable, timestamp)
+            VALUES (%s, %s, %s, %s, pgp_sym_encrypt(%s, %s), %s, %s)
         """
         params = (
-            message.message_id, message.room_id, message.user_id, message.role,
-            message.content, self.db_encryption_key, message.content, message.timestamp, embedding
+            message.message_id,
+            message.room_id,
+            message.user_id,
+            message.role,
+            message.content,
+            self.db_encryption_key,
+            message.content,
+            message.timestamp,
         )
         self.db.execute_update(query, params)
 
