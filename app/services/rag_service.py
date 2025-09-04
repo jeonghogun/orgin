@@ -13,6 +13,7 @@ from app.services.memory_service import MemoryService
 from app.services.storage_service import StorageService
 from app.models.schemas import Message
 from app.models.memory_schemas import ConversationContext, UserProfile, ContextUpdate
+from app.utils.helpers import generate_id
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,33 @@ class RAGService:
         except Exception as e:
             logger.error(f"Failed to generate RAG response: {e}", exc_info=True)
             return "죄송합니다. RAG 기반 응답을 생성할 수 없습니다."
+
+    async def stream_rag_response(self, room_id: str, user_id: str, user_message: str) -> AsyncGenerator[str, None]:
+        request_id = generate_id() # Generate a unique ID for this request
+        try:
+            # For streaming, we'll use a simplified intent/entity process
+            intent = "general"
+            entities = {}
+
+            rag_context = await self._collect_context(room_id, user_id, user_message, intent, entities)
+            await self._enhance_with_external_data(rag_context)
+            rag_prompt = self._build_rag_prompt(rag_context)
+
+            # Use the new streaming method from LLMService
+            provider_name = "openai" # or determine dynamically
+            model = "gpt-3.5-turbo"
+
+            full_response = ""
+            async for chunk in self.llm_service.stream_invoke(provider_name, model, "You are a helpful AI assistant.", rag_prompt, request_id):
+                full_response += chunk
+                yield chunk
+
+            # After the stream is complete, update the context
+            await self._update_context_after_rag_response(room_id, user_id, user_message, full_response, rag_context)
+
+        except Exception as e:
+            logger.error(f"Failed to generate streaming RAG response: {e}", exc_info=True)
+            yield "죄송합니다. 스트리밍 응답을 생성하는 중 오류가 발생했습니다."
 
     async def _collect_context(self, room_id: str, user_id: str, user_message: str, intent: str, entities: Dict[str, str]) -> RAGContext:
         current_room = await self.storage_service.get_room(room_id)

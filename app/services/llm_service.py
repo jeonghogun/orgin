@@ -26,6 +26,8 @@ from app.services.retry_policy import retry_manager
 logger = logging.getLogger(__name__)
 
 
+from typing import AsyncGenerator
+
 class LLMProvider(ABC):
     @abstractmethod
     async def invoke(self, model: str, system_prompt: str, user_prompt: str, request_id: str, response_format: str = "text") -> Tuple[str, Dict[str, Any]]:
@@ -34,6 +36,10 @@ class LLMProvider(ABC):
     @abstractmethod
     def invoke_sync(self, model: str, system_prompt: str, user_prompt: str, request_id: str, response_format: str = "text") -> Tuple[str, Dict[str, Any]]:
         pass
+
+    @abstractmethod
+    async def stream_invoke(self, model: str, system_prompt: str, user_prompt: str, request_id: str) -> AsyncGenerator[str, None]:
+        yield
 
 
 class OpenAIProvider(LLMProvider):
@@ -81,6 +87,24 @@ class OpenAIProvider(LLMProvider):
             logger.error("OpenAI API call failed (sync)", extra={"req_id": request_id, "provider": "openai", "model": model, "error_code": llm_error.error_code.value, "error_message": llm_error.error_message, "latency_ms": latency_ms, "retryable": llm_error.retryable, **llm_error.to_dict()})
             raise llm_error
 
+    async def stream_invoke(self, model: str, system_prompt: str, user_prompt: str, request_id: str) -> AsyncGenerator[str, None]:
+        start_time = time.time()
+        try:
+            messages: List[ChatCompletionMessageParam] = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
+            stream = await self.async_client.chat.completions.create(
+                model=model, messages=messages, temperature=0.7, max_tokens=4000, stream=True
+            )
+            async for chunk in stream:
+                content = chunk.choices[0].delta.content or ""
+                yield content
+            latency_ms = (time.time() - start_time) * 1000
+            logger.info("OpenAI API stream completed successfully", extra={"req_id": request_id, "provider": "openai", "model": model, "latency_ms": latency_ms})
+        except Exception as e:
+            llm_error = map_openai_error(e, "openai")
+            latency_ms = (time.time() - start_time) * 1000
+            logger.error("OpenAI API stream failed", extra={"req_id": request_id, "provider": "openai", "model": model, "error_code": llm_error.error_code.value, "error_message": llm_error.error_message, "latency_ms": latency_ms, "retryable": llm_error.retryable, **llm_error.to_dict()})
+            raise llm_error
+
 
 class GeminiProvider(LLMProvider):
     def __init__(self, secret_provider: SecretProvider):
@@ -90,6 +114,12 @@ class GeminiProvider(LLMProvider):
             raise ValueError("Gemini API key not found.")
         genai.configure(api_key=api_key)
         self.model = genai.GenerativeModel('gemini-pro')
+
+    async def stream_invoke(self, model: str, system_prompt: str, user_prompt: str, request_id: str) -> AsyncGenerator[str, None]:
+        # Placeholder implementation
+        logger.warning("Streaming not implemented for Gemini, falling back to non-streaming.")
+        content, _ = await self.invoke(model, system_prompt, user_prompt, request_id)
+        yield content
 
     async def invoke(self, model: str, system_prompt: str, user_prompt: str, request_id: str, response_format: str = "text") -> Tuple[str, Dict[str, Any]]:
         start_time = time.time()
@@ -132,6 +162,12 @@ class ClaudeProvider(LLMProvider):
             raise ValueError("Anthropic API key not found.")
         self.async_client = AsyncAnthropic(api_key=api_key)
         self.sync_client = Anthropic(api_key=api_key)
+
+    async def stream_invoke(self, model: str, system_prompt: str, user_prompt: str, request_id: str) -> AsyncGenerator[str, None]:
+        # Placeholder implementation
+        logger.warning("Streaming not implemented for Claude, falling back to non-streaming.")
+        content, _ = await self.invoke(model, system_prompt, user_prompt, request_id)
+        yield content
 
     async def invoke(self, model: str, system_prompt: str, user_prompt: str, request_id: str, response_format: str = "text") -> Tuple[str, Dict[str, Any]]:
         start_time = time.time()
@@ -214,6 +250,13 @@ class LLMService:
         async def _invoke():
             return await provider.invoke(model, system_prompt, user_prompt, request_id, response_format)
         return await retry_manager.execute_with_retry(_invoke, provider_name)
+
+    async def stream_invoke(self, provider_name: str, model: str, system_prompt: str, user_prompt: str, request_id: str) -> AsyncGenerator[str, None]:
+        provider = self.get_provider(provider_name)
+        # Note: Retry logic is not applied to streaming calls by default, as it's more complex.
+        # A robust implementation might buffer the stream and retry on specific errors.
+        async for chunk in provider.stream_invoke(model, system_prompt, user_prompt, request_id):
+            yield chunk
 
     async def generate_embedding(self, text: str) -> Tuple[List[float], Dict[str, Any]]:
         provider = self.get_provider("openai")
