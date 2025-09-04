@@ -53,7 +53,7 @@ async def create_review_and_start_process(
             return JSONResponse(content=json.loads(cached_response), status_code=200)
 
     # Verify sub-room exists and belongs to user
-    sub_room = await storage_service.get_room(sub_room_id)
+    sub_room = storage_service.get_room(sub_room_id)
     if not sub_room or sub_room.owner_id != user_info.get("user_id"):
         raise HTTPException(status_code=404, detail="Sub-room not found or access denied.")
     if sub_room.type != "sub":
@@ -71,7 +71,7 @@ async def create_review_and_start_process(
             created_at=get_current_timestamp(),
             updated_at=get_current_timestamp(),
         )
-        await storage_service.save_room(review_room)
+        storage_service.save_room(review_room)
         logger.info(f"Created review room {review_room_id} for sub-room {sub_room_id}")
 
         # 2. Create the review metadata, linking it to the new room
@@ -85,7 +85,7 @@ async def create_review_and_start_process(
             total_rounds=3,
             created_at=get_current_timestamp(),
         )
-        await storage_service.save_review_meta(review_meta)
+        storage_service.save_review_meta(review_meta)
         logger.info(f"Created review metadata {review_id} for room {review_room_id}")
 
         # 3. Start the asynchronous review process
@@ -119,11 +119,11 @@ async def get_reviews_by_room(
 ) -> List[ReviewMeta]:
     """Get all reviews for a specific room"""
     # Verify room exists and belongs to user
-    room = await storage_service.get_room(room_id)
+    room = storage_service.get_room(room_id)
     if not room or room.owner_id != user_info.get("user_id"):
         raise HTTPException(status_code=404, detail="Room not found or access denied.")
     
-    reviews = await storage_service.get_reviews_by_room(room_id)
+    reviews = storage_service.get_reviews_by_room(room_id)
     return reviews
 
 
@@ -134,7 +134,7 @@ async def get_review(
     storage_service: StorageService = Depends(get_storage_service),  # pyright: ignore[reportCallInDefaultInitializer]
 ) -> ReviewMeta:
     """Get review information"""
-    review = await storage_service.get_review_meta(review_id)
+    review = storage_service.get_review_meta(review_id)
     if not review:
         raise HTTPException(status_code=404, detail="Review not found")
     return review
@@ -148,7 +148,7 @@ async def get_review_events(
     storage_service: StorageService = Depends(get_storage_service),  # pyright: ignore[reportCallInDefaultInitializer]
 ):
     """Get review progress events."""
-    events_data = await storage_service.get_review_events(review_id, since)
+    events_data = storage_service.get_review_events(review_id, since)
     return [ReviewEvent(**event) for event in events_data]
 
 
@@ -159,7 +159,7 @@ async def get_review_report(
     storage_service: StorageService = Depends(get_storage_service),  # pyright: ignore[reportCallInDefaultInitializer]
 ) -> Dict[str, Any]:
     """Get the final consolidated review report."""
-    report = await storage_service.get_final_report(review_id)
+    report = storage_service.get_final_report(review_id)
     if not report:
         raise HTTPException(
             status_code=404, detail="Report not found. It may still be generating."

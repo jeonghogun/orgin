@@ -4,7 +4,7 @@ RAG (Retrieval-Augmented Generation) Service
 import logging
 import json
 import asyncio
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, AsyncGenerator
 from dataclasses import dataclass, field
 
 from app.services.external_api_service import ExternalSearchService
@@ -76,7 +76,7 @@ class RAGService:
             yield "죄송합니다. 스트리밍 응답을 생성하는 중 오류가 발생했습니다."
 
     async def _collect_context(self, room_id: str, user_id: str, user_message: str, intent: str, entities: Dict[str, str]) -> RAGContext:
-        current_room = await self.storage_service.get_room(room_id)
+        current_room = self.storage_service.get_room(room_id)
         if not current_room:
             raise ValueError(f"Room with id {room_id} not found.")
 

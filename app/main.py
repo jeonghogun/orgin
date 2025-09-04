@@ -187,8 +187,7 @@ app.include_router(admin.router, prefix="/api")
 
 # Mount uploads directory. Nginx will not serve this, so FastAPI must.
 uploads_dir = "uploads"
-if not os.path.exists(uploads_dir):
-    os.makedirs(uploads_dir)
+os.makedirs(uploads_dir, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")
 
 # Frontend static files are now served by Nginx.

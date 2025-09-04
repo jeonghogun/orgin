@@ -2,6 +2,7 @@
 Message-related API endpoints
 """
 
+import asyncio
 import logging
 import time
 import uuid
@@ -165,7 +166,7 @@ async def send_message(
         }), room_id)
 
         try:
-            current_room = await storage_service.get_room(room_id)
+            current_room = storage_service.get_room(room_id)
             if current_room and current_room.type == RoomType.REVIEW:
                 review_meta = storage_service.get_review_meta(room_id)
                 if not review_meta or review_meta.status != 'completed':

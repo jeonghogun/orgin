@@ -29,7 +29,7 @@ async def get_metrics(
 ) -> MetricsResponse:
     """Get aggregated review metrics."""
     try:
-        all_metrics: List[ReviewMetrics] = await storage_service.get_all_review_metrics(
+        all_metrics: List[ReviewMetrics] = storage_service.get_all_review_metrics(
             limit=limit, since=since
         )
 
@@ -98,7 +98,7 @@ async def get_metrics_summary(
 ) -> MetricsSummary:
     """Get metrics summary only."""
     try:
-        all_metrics: List[ReviewMetrics] = await storage_service.get_all_review_metrics(
+        all_metrics: List[ReviewMetrics] = storage_service.get_all_review_metrics(
             limit=100, since=None
         )
 
