@@ -1,0 +1,55 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  
+  body {
+    @apply bg-bg text-text font-sans;
+  }
+}
+
+@layer components {
+  .focus-ring {
+    @apply focus:outline-none focus:ring-2 focus:ring-accent/70 focus:ring-offset-2 focus:ring-offset-bg;
+  }
+  
+  .btn-primary {
+    @apply bg-accent hover:bg-accent-weak text-white font-medium px-4 py-2 rounded-button transition-colors duration-150 focus-ring;
+  }
+  
+  .btn-secondary {
+    @apply bg-panel hover:bg-panel-elev text-text font-medium px-4 py-2 rounded-button border border-border transition-colors duration-150 focus-ring;
+  }
+  
+  .input-field {
+    @apply bg-panel border border-border text-text placeholder-muted rounded-input px-4 py-3 focus-ring transition-colors duration-150;
+  }
+  
+  .card {
+    @apply bg-panel border border-border rounded-card shadow-card;
+  }
+}
+
+@layer utilities {
+  .animate-flash {
+    animation: flash 1.5s ease-out;
+  }
+
+  @keyframes flash {
+    0% {
+      background-color: theme('colors.accent / 0.2');
+      border-color: theme('colors.accent / 0.5');
+    }
+    100% {
+      background-color: transparent;
+      border-color: theme('colors.border');
+    }
+  }
+}

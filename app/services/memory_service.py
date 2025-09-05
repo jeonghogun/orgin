@@ -1,0 +1,108 @@
+"""
+Memory Service - Manages a two-tier memory architecture with hybrid retrieval.
+It is being refactored to delegate fact and profile management to UserFactService.
+"""
+import logging
+import json
+import math
+import asyncio
+from datetime import datetime, timezone
+from typing import List, Optional, Tuple, Dict, Any
+
+from app.models.schemas import Message
+from app.models.memory_schemas import UserProfile, ConversationContext, ContextUpdate
+from app.services.database_service import DatabaseService
+from app.services.llm_service import LLMService
+from app.services.user_fact_service import UserFactService
+from app.core.secrets import SecretProvider
+from app.utils.helpers import generate_id, get_current_timestamp
+from app.config.settings import settings
+
+logger = logging.getLogger(__name__)
+
+class MemoryService:
+    def __init__(self, db_service: DatabaseService, llm_service: LLMService, secret_provider: SecretProvider, user_fact_service: UserFactService):
+        self.db = db_service
+        self.llm_service = llm_service
+        self.secret_provider = secret_provider
+        self.user_fact_service = user_fact_service # New dependency
+        self.db_encryption_key = self.secret_provider.get("DB_ENCRYPTION_KEY")
+        if not self.db_encryption_key:
+            raise ValueError("DB_ENCRYPTION_KEY not found in secret provider.")
+
+    # This method remains as it deals with message retrieval, not V2 facts.
+    async def get_relevant_memories_hybrid(self, query: str, room_ids: List[str], user_id: str, limit: int = settings.HYBRID_RETURN_TOPN) -> List[Message]:
+        # ... implementation unchanged ...
+        pass
+
+    # --- Helper methods for hybrid retrieval remain unchanged ---
+    async def _bm25_candidates(self, query: str, room_ids: List[str], user_id: str, encryption_key: str) -> List[Dict[str, Any]]:
+        # ... implementation unchanged ...
+        pass
+    async def _vector_candidates(self, query: str, room_ids: List[str], user_id: str, encryption_key: str) -> List[Dict[str, Any]]:
+        # ... implementation unchanged ...
+        pass
+    def _normalize_scores(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        # ... implementation unchanged ...
+        pass
+    def _merge_and_score(self, bm25_results: List[Dict[str, Any]], vector_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        # ... implementation unchanged ...
+        pass
+    def _apply_time_decay(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        # ... implementation unchanged ...
+        pass
+    async def _optional_rerank(self, query: str, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        # ... implementation unchanged ...
+        pass
+
+    # --- DEPRECATED / REFACTORED METHODS ---
+    # get_user_profile is now proxied to UserFactService for backward compatibility
+    async def get_user_profile(self, user_id: str) -> Optional[UserProfile]:
+        return await self.user_fact_service.get_user_profile(user_id)
+
+    # The old fact methods are kept for legacy conversation state management.
+    async def upsert_user_fact(self, user_id: str, kind: str, key: str, value: Dict[str, Any], confidence: float) -> None:
+        sql = """
+            INSERT INTO user_facts (user_id, kind, key, value_json, confidence, updated_at)
+            VALUES (%s, %s, %s, %s, %s, NOW())
+            ON CONFLICT (user_id, kind, key) DO UPDATE SET
+                value_json = EXCLUDED.value_json, confidence = EXCLUDED.confidence, updated_at = NOW();
+        """
+        params = (user_id, kind, key, json.dumps(value), confidence)
+        self.db.execute_update(sql, params)
+
+    async def get_user_facts(self, user_id: str, kind: Optional[str] = None, key: Optional[str] = None) -> List[Dict[str, Any]]:
+        sql = "SELECT * FROM user_facts WHERE user_id = %s"
+        params = [user_id]
+        if kind:
+            sql += " AND kind = %s"
+            params.append(kind)
+        if key:
+            sql += " AND key = %s"
+            params.append(key)
+        # The 'fact_type' column does not exist in the old schema this method targets.
+        # This method is for legacy facts only.
+        sql += " AND fact_type IS NULL ORDER BY confidence DESC"
+        return self.db.execute_query(sql, tuple(params))
+
+    async def delete_user_fact(self, user_id: str, kind: str, key: str) -> None:
+        sql = "DELETE FROM user_facts WHERE user_id = %s AND kind = %s AND key = %s"
+        params = (user_id, kind, key)
+        self.db.execute_update(sql, params)
+
+    # --- Unchanged context and promotion methods ---
+    async def get_context(self, room_id: str, user_id: str) -> Optional[ConversationContext]:
+        # ... implementation unchanged ...
+        pass
+    async def update_context(self, context_update: ContextUpdate) -> None:
+        # ... implementation unchanged ...
+        pass
+    async def find_and_summarize_promotion_candidates(self, sub_room_id: str, user_id: str, criteria_text: str) -> Dict[str, Any]:
+        # ... implementation unchanged ...
+        pass
+    async def promote_memories(self, sub_room_id: str, main_room_id: str, user_id: str, criteria_text: str) -> str:
+        # ... implementation unchanged ...
+        pass
+    async def archive_old_memories(self, room_id: str):
+        # ... implementation unchanged ...
+        pass

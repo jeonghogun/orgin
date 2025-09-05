@@ -1,0 +1,39 @@
+fastapi
+uvicorn[standard]
+ulid-py
+openai
+python-dotenv
+python-ulid
+pydantic-settings
+tenacity
+slowapi
+firebase-admin
+google-cloud-firestore
+psycopg2-binary
+pgvector
+redis
+celery
+asgiref
+gunicorn
+alembic
+PyYAML>=6.0.1
+prometheus-fastapi-instrumentator
+google-generativeai
+gevent
+anthropic
+python-multipart
+
+# APM and Monitoring
+newrelic
+ddtrace
+psutil
+
+# Security
+cryptography
+
+# HTTP Client
+aiohttp
+
+# Fact System V2 Dependencies
+prometheus-client
+uuid6

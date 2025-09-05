@@ -1,0 +1,35 @@
+name: e2e
+on: [pull_request]
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: origin
+          POSTGRES_PASSWORD: origin
+          POSTGRES_DB: origin
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd="pg_isready -U origin -d origin"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+      redis:
+        image: redis:7
+        ports: ['6379:6379']
+    env:
+      DATABASE_URL: postgresql://origin:origin@localhost:5432/origin
+      REDIS_URL: redis://localhost:6379/0
+      TEST_FORCE_MOCK_LLM: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - name: Install deps
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+      - name: Alembic upgrade
+        run: alembic upgrade head
+      - name: Run E2E
+        run: pytest -q tests/e2e/test_persona_review_export.py -s

@@ -1,0 +1,7 @@
+-r requirements.txt
+pytest
+pytest-asyncio
+trio
+trio-asyncio
+testing.postgresql
+gevent
