@@ -22,7 +22,9 @@ def mock_db_service_for_concurrency():
     return mock
 
 @pytest.mark.asyncio
-async def test_save_fact_concurrency_no_duplicates(mock_db_service_for_concurrency, mock_audit_service, mock_secret_provider):
+async def test_save_fact_concurrency_no_duplicates(
+    mock_db_service_for_concurrency, mock_audit_service, mock_secret_provider
+):
     """
     Simulates two facts arriving at roughly the same time.
     The service should be robust enough to only insert one of them
