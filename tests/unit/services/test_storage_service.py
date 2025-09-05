@@ -112,7 +112,7 @@ class TestStorageServiceWithDB:
         review_id = "review-db"
         mock_db_service.execute_query.return_value = [{
             "review_id": review_id, "room_id": "room-db", "topic": "DB Topic", "instruction": "DB Instruction",
-            "status": "in_progress", "total_rounds": 3, "current_round": 1, "created_at": 123
+            "status": "in_progress", "total_rounds": 3, "current_round": 1, "created_at": 123, "completed_at": None
         }]
         
         review_meta = storage_service.get_review_meta(review_id)
@@ -120,9 +120,27 @@ class TestStorageServiceWithDB:
         assert review_meta is not None
         assert isinstance(review_meta, ReviewMeta)
         assert review_meta.review_id == review_id
-        mock_db_service.execute_query.assert_called_once_with(
-            "SELECT * FROM reviews WHERE review_id = %s", (review_id,)
-        )
+
+        expected_query = """
+            SELECT
+                review_id,
+                room_id,
+                topic,
+                instruction,
+                status,
+                total_rounds,
+                current_round,
+                created_at,
+                completed_at
+            FROM reviews
+            WHERE review_id = %s
+        """
+        mock_db_service.execute_query.assert_called_once()
+        called_query = mock_db_service.execute_query.call_args.args[0]
+        called_params = mock_db_service.execute_query.call_args.args[1]
+
+        assert " ".join(called_query.split()) == " ".join(expected_query.split())
+        assert called_params == (review_id,)
 
     def test_log_review_event(self, storage_service, mock_db_service):
         """Test logging a review event."""

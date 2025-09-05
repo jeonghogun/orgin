@@ -43,14 +43,45 @@ class MemoryService:
         # ... implementation unchanged ...
         pass
     def _normalize_scores(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        # ... implementation unchanged ...
-        pass
+        if not results:
+            return []
+        scores = [r['score'] for r in results]
+        min_score, max_score = min(scores), max(scores)
+        range_score = max_score - min_score
+        if range_score == 0:
+            return results
+        for r in results:
+            r['score'] = (r['score'] - min_score) / range_score
+        return results
+
     def _merge_and_score(self, bm25_results: List[Dict[str, Any]], vector_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        # ... implementation unchanged ...
-        pass
+        merged = {}
+
+        # Normalize scores before merging
+        norm_bm25 = self._normalize_scores(bm25_results)
+        norm_vector = self._normalize_scores(vector_results)
+
+        for r in norm_bm25:
+            merged[r['message_id']] = r
+            merged[r['message_id']]['score'] *= settings.HYBRID_BM25_WEIGHT
+
+        for r in norm_vector:
+            if r['message_id'] in merged:
+                merged[r['message_id']]['score'] += r['score'] * settings.HYBRID_VEC_WEIGHT
+            else:
+                merged[r['message_id']] = r
+                merged[r['message_id']]['score'] *= settings.HYBRID_VEC_WEIGHT
+
+        return sorted(list(merged.values()), key=lambda x: x['score'], reverse=True)
+
     def _apply_time_decay(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        # ... implementation unchanged ...
-        pass
+        now_ts = datetime.now(timezone.utc).timestamp()
+        for r in results:
+            age_seconds = now_ts - r['timestamp']
+            age_days = age_seconds / (60 * 60 * 24)
+            decay_factor = math.exp(-settings.TIME_DECAY_LAMBDA * age_days)
+            r['score'] *= decay_factor
+        return results
     async def _optional_rerank(self, query: str, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         # ... implementation unchanged ...
         pass

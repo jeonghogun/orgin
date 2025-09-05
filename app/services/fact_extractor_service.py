@@ -30,6 +30,9 @@ class FactExtractorService:
 
         if fact_type == FactType.MBTI:
             value = value.upper()
+            # MBTI-A, MBTI-T와 같은 변형을 처리하기 위해 4자로 제한
+            if len(value) > 4:
+                value = value[:4]
 
         return value
 

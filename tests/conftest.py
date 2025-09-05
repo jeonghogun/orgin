@@ -72,8 +72,13 @@ def test_db():
     class MockDB:
         def url(self):
             # The DATABASE_URL from .env.example will be used here.
-            # We assume a DB service is running and accessible at this URL.
-            return settings.DATABASE_URL
+            # Replace 'pgbouncer' hostname with 'localhost' for test runner environment.
+            from urllib.parse import urlparse, urlunparse
+            db_url = str(settings.DATABASE_URL)
+            parsed = urlparse(db_url)
+            new_netloc = f"localhost:{parsed.port or 5432}"
+            return urlunparse(parsed._replace(netloc=new_netloc))
+
         def stop(self):
             # Nothing to stop since we're using an external DB.
             pass
@@ -107,7 +112,7 @@ def db_session(test_db):
     Provides a clean database state for each test function.
     It clears all tables before each test.
     """
-    conn = psycopg2.connect(test_db.url())
+    conn = psycopg2.connect(str(test_db.url()))
     cursor = conn.cursor()
 
     tables = [
@@ -141,6 +146,13 @@ def client(db_session):
     """
     with TestClient(app) as c:
         yield c
+
+
+@pytest.fixture
+def mock_audit_service():
+    """Fixture for a mocked AuditService."""
+    from unittest.mock import MagicMock
+    return MagicMock()
 
 
 @pytest.fixture
