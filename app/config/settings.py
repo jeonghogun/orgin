@@ -69,14 +69,18 @@ class Settings(BaseSettings):
     LLM_EXPONENTIAL_BASE: float = 2.0
     LLM_JITTER_FACTOR: float = 0.25
 
+    # --- Conversation Feature Flag ---
+    ENABLE_CONVERSATION: bool = True
+
     # --- Hybrid Retrieval Configuration ---
-    HYBRID_BM25_WEIGHT: float = 0.55
-    HYBRID_VEC_WEIGHT: float = 0.45
+    RAG_BM25_WEIGHT: float = 0.55
+    RAG_VEC_WEIGHT: float = 0.45
+    RAG_TIME_DECAY: float = 0.03
     HYBRID_TOPK_BM25: int = 50
     HYBRID_TOPK_VEC: int = 50
     HYBRID_RETURN_TOPN: int = 20
-    TIME_DECAY_ENABLED: bool = True
-    TIME_DECAY_LAMBDA: float = 0.03
+    TIME_DECAY_ENABLED: bool = True # This seems redundant now, but we'll keep for compatibility
+    TIME_DECAY_LAMBDA: float = 0.03 # This seems redundant now
 
     # --- Re-ranker Configuration ---
     RERANK_ENABLED: bool = False
@@ -134,6 +138,8 @@ class Settings(BaseSettings):
 
     # --- Cost Guardrails ---
     PER_REVIEW_TOKEN_BUDGET: Optional[int] = None  # e.g., 20000
+    DAILY_TOKEN_BUDGET: Optional[int] = 200000
+    DAILY_COST_BUDGET: float = 50.0
     DAILY_ORG_TOKEN_BUDGET: Optional[int] = None  # e.g., 100000
     ALERT_LATENCY_SECONDS_THRESHOLD: int = 300  # Alert if a single review takes more than 5 minutes
     ALERT_FAILURE_RATE_THRESHOLD: float = 0.2  # Alert if overall failure rate exceeds 20%

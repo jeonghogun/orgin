@@ -200,7 +200,29 @@ async def require_auth(request: Request) -> Dict[str, str]:
     except Exception as e:
         raise HTTPException(status_code=401, detail=f"Invalid token: {e}")
 
+from app.services.conversation_service import get_conversation_service
+
 AUTH_DEPENDENCY = Depends(require_auth)
+
+def check_budget(user_info: Dict[str, Any] = AUTH_DEPENDENCY):
+    """
+    A dependency that checks if the user has exceeded their daily token budget.
+    """
+    if not settings.DAILY_TOKEN_BUDGET:
+        return # If no budget is set, do nothing.
+
+    user_id = user_info.get("user_id")
+    if not user_id or user_id == "anonymous":
+        return # Don't check budget for anonymous users
+
+    convo_service = get_conversation_service()
+    current_usage = convo_service.get_today_usage(user_id)
+
+    if current_usage >= settings.DAILY_TOKEN_BUDGET:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Daily token budget of {settings.DAILY_TOKEN_BUDGET} exceeded. Please try again tomorrow."
+        )
 
 async def require_auth_ws(websocket: WebSocket) -> str:
     """

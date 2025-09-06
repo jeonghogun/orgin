@@ -22,6 +22,10 @@ google-generativeai
 gevent
 anthropic
 python-multipart
+sse-starlette
+pypdf2
+rank-bm25
+tiktoken
 
 # APM and Monitoring
 newrelic
