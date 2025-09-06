@@ -61,7 +61,7 @@ async def create_review_and_start_process(
 
     try:
         # 1. Create the review room
-        review_room_id = generate_id("review")
+        review_room_id = generate_id()
         review_room = Room(
             room_id=review_room_id,
             name=f"검토: {review_request.topic}",
@@ -71,11 +71,17 @@ async def create_review_and_start_process(
             created_at=get_current_timestamp(),
             updated_at=get_current_timestamp(),
         )
-        storage_service.save_room(review_room)
+        storage_service.create_room(
+            room_id=review_room_id,
+            name=f"검토: {review_request.topic}",
+            owner_id=user_info["user_id"],
+            room_type="review",
+            parent_id=sub_room_id,
+        )
         logger.info(f"Created review room {review_room_id} for sub-room {sub_room_id}")
 
         # 2. Create the review metadata, linking it to the new room
-        review_id = generate_id("review-meta")
+        review_id = generate_id()
         review_meta = ReviewMeta(
             review_id=review_id,
             room_id=review_room_id,  # Link to the new review room

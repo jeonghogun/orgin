@@ -26,7 +26,7 @@ DISTRACTOR_MEMORY_EMBEDDING = [0.0, 1.0] + [0.0] * (DIMENSIONS - 2)
 
 @pytest.mark.asyncio
 @patch("app.services.rag_service.RAGService._build_rag_prompt")
-@patch.object(MemoryService, 'get_relevant_memories', new_callable=AsyncMock)
+@patch.object(MemoryService, 'get_relevant_memories_hybrid', new_callable=AsyncMock)
 @patch("app.api.dependencies.get_llm_service")
 async def test_semantic_memory_inheritance(
     mock_get_llm,

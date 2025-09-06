@@ -25,7 +25,7 @@ class TestRoomsAPI:
     def test_get_room_storage_error(self, authenticated_client: TestClient, monkeypatch):
         """Test room retrieval with a simulated storage error."""
         # We can simulate a DB error by patching the underlying service method
-        async def mock_get_room_error(*args, **kwargs):
+        def mock_get_room_error(*args, **kwargs):
             raise Exception("Simulated DB is down")
 
         monkeypatch.setattr(

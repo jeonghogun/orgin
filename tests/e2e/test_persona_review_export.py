@@ -12,9 +12,15 @@ from app.services.llm_service import LLMService, LLMProvider
 from tests.conftest import USER_ID, mock_llm_invoke
 from app.tasks.persona_tasks import generate_user_persona
 
+@pytest.fixture
+def mock_secret_provider():
+    from unittest.mock import MagicMock
+    provider = MagicMock()
+    provider.get.return_value = "test_key"
+    return provider
 
 @pytest.mark.anyio
-async def test_persona_review_export_e2e(authenticated_client: TestClient, db_session):
+async def test_persona_review_export_e2e(authenticated_client: TestClient, db_session, mock_secret_provider):
     """
     Tests the full user journey from seeding data to exporting the final report.
     """

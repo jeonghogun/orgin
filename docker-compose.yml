@@ -12,6 +12,19 @@ services:
     env_file:
       - .env
 
+  test-db:
+    image: pgvector/pgvector:pg16
+    volumes:
+      - test_postgres_data:/var/lib/postgresql/data/
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=test_origin_db
+    ports:
+      - "5433:5432"
+    env_file:
+      - .env
+
   redis:
     image: redis:7-alpine
     ports:
@@ -105,3 +118,4 @@ services:
 
 volumes:
   postgres_data:
+  test_postgres_data:

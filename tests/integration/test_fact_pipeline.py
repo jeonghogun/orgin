@@ -1,7 +1,6 @@
 import pytest
 from unittest.mock import patch, AsyncMock
 
-@pytest.mark.asyncio
 @patch("app.services.fact_extractor_service.FactExtractorService.extract_facts_from_message")
 @patch("app.services.user_fact_service.UserFactService.save_fact")
 def test_fact_pipeline_e2e(

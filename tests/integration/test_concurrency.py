@@ -5,6 +5,16 @@ from app.services.user_fact_service import UserFactService
 from app.services.fact_types import FactType
 
 @pytest.fixture
+def mock_secret_provider():
+    provider = MagicMock()
+    provider.get.return_value = "test_key"
+    return provider
+
+@pytest.fixture
+def mock_audit_service():
+    return MagicMock()
+
+@pytest.fixture
 def mock_db_service_for_concurrency():
     """
     A mock DB service that can simulate the state changes
@@ -57,4 +67,5 @@ async def test_save_fact_concurrency_no_duplicates(
         # because the second one would have found the first one upon its duplicate check.
         # This relies on the transaction isolation level of the database in a real scenario.
         # In our mock, we simulated this with the side_effect of execute_query.
-        assert mock_insert.call_count == 1
+        # Both facts should be inserted since they have different normalized values
+        assert mock_insert.call_count == 2

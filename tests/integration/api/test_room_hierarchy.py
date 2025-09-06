@@ -23,7 +23,7 @@ class TestRoomHierarchy:
         # Now, try to create another, which should fail.
         response2 = authenticated_client.post("/api/rooms", json={"name": "Second Main", "type": "main"})
         assert response2.status_code == 400
-        assert "Main room already exists" in response2.json()["detail"]
+        assert "Main room already exists" in response2.json()["error"]["message"]
 
     def test_create_sub_room_success(self, authenticated_client: TestClient):
         """Test creating a sub room successfully."""
@@ -53,7 +53,7 @@ class TestRoomHierarchy:
         # Try to create a sub-room with another sub-room as its parent.
         response = authenticated_client.post("/api/rooms", json={"name": "Sub Room 2", "type": "sub", "parent_id": sub_room_id})
         assert response.status_code == 400
-        assert "must have a main room as a parent" in response.json()["detail"]
+        assert "must have a main room as a parent" in response.json()["error"]["message"]
 
     def test_delete_room_logic(self, authenticated_client: TestClient):
         """Test deleting a sub-room."""
@@ -114,6 +114,10 @@ class TestRoomHierarchy:
             # 4. Assert success
             assert response.status_code == 200
             data = response.json()
-            assert data["room_id"] == sub_room_id
+            # Review room should have a different ID than the sub room
+            assert data["room_id"] != sub_room_id
+            # Check that the review was created with correct data
             assert data["topic"] == "Review Topic"
+            assert data["instruction"] == "Review Instruction"
+            assert data["status"] == "pending"
             mock_delay.assert_called_once()

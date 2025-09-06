@@ -1,6 +1,7 @@
 import psycopg2
 import logging
 import time
+import os
 from typing import Optional, List, Dict, Any, Tuple
 from contextlib import contextmanager
 from psycopg2.pool import SimpleConnectionPool
@@ -26,6 +27,7 @@ class DatabaseService:
         if not self.db_encryption_key:
             raise ValueError("DB_ENCRYPTION_KEY not found.")
         self.pool: Optional[SimpleConnectionPool] = None
+        self._is_test_mode = os.getenv("PYTEST_CURRENT_TEST") is not None
 
     def _get_or_create_pool(self) -> SimpleConnectionPool:
         """Lazily creates and returns the connection pool."""
@@ -42,6 +44,35 @@ class DatabaseService:
                 raise
         return self.pool
 
+    def _clear_test_data(self, conn: connection) -> None:
+        """Clear all test data when in test mode."""
+        if not self._is_test_mode:
+            return
+            
+        cursor = conn.cursor()
+        try:
+            # Clear tables in correct order to handle foreign key constraints
+            tables = [
+                "conversation_contexts", "review_events", "reviews", 
+                "messages", "memories", "user_facts", "fact_store", 
+                "rooms", "user_profiles"
+            ]
+
+            for table in tables:
+                try:
+                    cursor.execute(f"DELETE FROM {table};")
+                except Exception as e:
+                    # Table might not exist, skip it
+                    logger.debug(f"Could not clear table {table}: {e}")
+                    pass
+            
+            conn.commit()
+        except Exception as e:
+            logger.error(f"Failed to clear test data: {e}")
+            conn.rollback()
+        finally:
+            cursor.close()
+
     @contextmanager
     def get_connection(self) -> connection:
         """Get a connection from the lazily-initialized pool and register pgvector."""
@@ -49,6 +80,8 @@ class DatabaseService:
         conn = pool.getconn()
         try:
             register_vector(conn)
+            # Clear test data if in test mode
+            self._clear_test_data(conn)
             yield conn
         finally:
             pool.putconn(conn)

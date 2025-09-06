@@ -56,16 +56,18 @@ def upgrade() -> None:
     op.create_index(op.f('ix_user_facts_user_id_fact_type_latest'), 'user_facts', ['user_id', 'fact_type', 'latest'], unique=False)
     op.create_index(op.f('ix_user_facts_user_id_fact_type_normalized_value'), 'user_facts', ['user_id', 'fact_type', 'normalized_value'], unique=False)
 
-    # Add foreign key constraint
-    op.create_foreign_key(
-        'fk_user_facts_source_message_id',
-        'user_facts', 'messages',
-        ['source_message_id'], ['message_id']
-    )
+    # Skip foreign key constraint due to data type mismatch
+    # TODO: Fix data type compatibility between source_message_id (uuid) and message_id (varchar)
+    # op.create_foreign_key(
+    #     'fk_user_facts_source_message_id',
+    #     'user_facts', 'messages',
+    #     ['source_message_id'], ['message_id']
+    # )
 
 
 def downgrade() -> None:
-    op.drop_constraint('fk_user_facts_source_message_id', 'user_facts', type_='foreignkey')
+    # Skip dropping foreign key constraint since it was not created
+    # op.drop_constraint('fk_user_facts_source_message_id', 'user_facts', type_='foreignkey')
     op.drop_index(op.f('ix_user_facts_user_id_fact_type_normalized_value'), table_name='user_facts')
     op.drop_index(op.f('ix_user_facts_user_id_fact_type_latest'), table_name='user_facts')
 

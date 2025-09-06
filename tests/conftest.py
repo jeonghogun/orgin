@@ -64,20 +64,12 @@ def postgresql_factory():
 @pytest.fixture(scope="session")
 def test_db():
     """
-    Use existing Docker database for tests in this environment.
-    NOTE: Forcing this path as the environment is container-based but lacks /.dockerenv
-    and does not have postgresql-server-dev packages installed for testing.postgresql.
+    Use Docker PostgreSQL database for tests.
     """
-    # This environment is container-based, so we always use the existing DB service.
     class MockDB:
         def url(self):
-            # The DATABASE_URL from .env.example will be used here.
-            # Replace 'pgbouncer' hostname with 'localhost' for test runner environment.
-            from urllib.parse import urlparse, urlunparse
-            db_url = str(settings.DATABASE_URL)
-            parsed = urlparse(db_url)
-            new_netloc = f"localhost:{parsed.port or 5432}"
-            return urlunparse(parsed._replace(netloc=new_netloc))
+            # Use separate test database for complete isolation
+            return "postgresql://user:password@localhost:5433/test_origin_db"
 
         def stop(self):
             # Nothing to stop since we're using an external DB.
@@ -94,38 +86,64 @@ def setup_test_environment(test_db):
     original_db_url = settings.DATABASE_URL
     original_testing = settings.TESTING
     original_key = settings.DB_ENCRYPTION_KEY
+    original_redis_url = settings.REDIS_URL
+    original_celery_broker = settings.CELERY_BROKER_URL
+    original_celery_backend = settings.CELERY_RESULT_BACKEND
 
     settings.DATABASE_URL = test_db.url()
     settings.TESTING = True
     settings.DB_ENCRYPTION_KEY = "test-encryption-key-32-bytes-long" # Must be long enough
+    settings.REDIS_URL = "redis://localhost:6379/0"
+    settings.CELERY_BROKER_URL = "redis://localhost:6379/0"
+    settings.CELERY_RESULT_BACKEND = "redis://localhost:6379/0"
 
     yield
 
     settings.DATABASE_URL = original_db_url
     settings.TESTING = original_testing
     settings.DB_ENCRYPTION_KEY = original_key
+    settings.REDIS_URL = original_redis_url
+    settings.CELERY_BROKER_URL = original_celery_broker
+    settings.CELERY_RESULT_BACKEND = original_celery_backend
+
+
+def _reset_test_database():
+    """
+    Safely reset test database to clean state.
+    Only runs in test environment to avoid affecting production.
+    """
+    import subprocess
+    import os
+    
+    # Only run in test environment
+    if not os.getenv("PYTEST_CURRENT_TEST"):
+        return
+    
+    try:
+        # Run the reset script
+        result = subprocess.run(
+            ["./scripts/reset_test_db.sh"],
+            capture_output=True,
+            text=True,
+            cwd=os.getcwd()
+        )
+        if result.returncode != 0:
+            print(f"Warning: Database reset failed: {result.stderr}")
+    except Exception as e:
+        print(f"Warning: Could not reset database: {e}")
 
 
 @pytest.fixture(scope="function")
 def db_session(test_db):
     """
     Provides a clean database state for each test function.
-    It clears all tables before each test.
+    Automatically resets database before each test for complete isolation.
     """
+    # Reset database before each test
+    _reset_test_database()
+    
     conn = psycopg2.connect(str(test_db.url()))
-    cursor = conn.cursor()
-
-    tables = [
-        "review_metrics", "conversation_contexts", "user_profiles", "review_events",
-        "reviews", "messages", "memories", "rooms"
-    ]
-
-    for table in tables:
-        cursor.execute(f"TRUNCATE TABLE {table} RESTART IDENTITY CASCADE;")
-    conn.commit()
-
     yield conn
-
     conn.close()
 
 
