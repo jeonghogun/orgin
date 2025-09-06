@@ -22,6 +22,8 @@ from app.api.dependencies import (
     get_fact_extractor_service,
     get_user_fact_service,
     get_cache_service,
+    get_intent_classifier_service,
+    get_background_task_service,
     require_auth,
 )
 from app.services.storage_service import StorageService
@@ -34,6 +36,8 @@ from app.services.llm_service import LLMService
 from app.services.fact_extractor_service import FactExtractorService
 from app.services.user_fact_service import UserFactService
 from app.services.cache_service import CacheService
+from app.services.intent_classifier_service import IntentClassifierService, FactQueryType
+from app.services.background_task_service import BackgroundTaskService
 from app.services.fact_types import FactType
 from app.utils.helpers import (
     generate_id,
@@ -74,11 +78,13 @@ async def _handle_fact_extraction(
                 fact_type_enum = FactType(fact['type'])
                 normalized_value = fact_extractor_service.normalize_value(fact_type_enum, fact['value'])
                 sensitivity = fact_extractor_service.get_sensitivity(fact_type_enum)
+                logger.info(f"=== SAVING FACT === User: {message.user_id}, Type: {fact['type']}, Value: {fact['value']}")
                 await user_fact_service.save_fact(
                     user_id=message.user_id, fact=fact, normalized_value=normalized_value,
                     source_message_id=str(message.message_id), sensitivity=sensitivity.value,
                     room_id=message.room_id
                 )
+                logger.info(f"=== FACT SAVED SUCCESSFULLY === User: {message.user_id}, Type: {fact['type']}")
             except ValueError:
                 logger.warning(f"Skipping fact with unknown type: {fact.get('type')}")
                 continue
@@ -86,8 +92,29 @@ async def _handle_fact_extraction(
     except Exception as e:
         logger.error(f"Error during background fact extraction for message {message.message_id}: {e}", exc_info=True)
 
-def _detect_fact_query(content: str) -> Optional[FactType]:
-    """A simple keyword-based intent detector for fact retrieval queries."""
+async def _detect_fact_query_improved(content: str, intent_classifier: IntentClassifierService) -> Optional[FactType]:
+    """LLM 기반 사실 질문 감지 (fallback으로 키워드 기반)"""
+    try:
+        # LLM 기반 분류 시도
+        fact_type = await intent_classifier.get_fact_query_type(content)
+        if fact_type and fact_type != FactQueryType.NONE:
+            # FactQueryType을 FactType으로 변환
+            type_mapping = {
+                FactQueryType.USER_NAME: FactType.USER_NAME,
+                FactQueryType.JOB: FactType.JOB,
+                FactQueryType.HOBBY: FactType.HOBBY,
+                FactQueryType.MBTI: FactType.MBTI,
+                FactQueryType.GOAL: FactType.GOAL
+            }
+            return type_mapping.get(fact_type)
+    except Exception as e:
+        logger.warning(f"LLM fact query detection failed: {e}, falling back to keywords")
+    
+    # Fallback: 키워드 기반 감지
+    return _detect_fact_query_keywords(content)
+
+def _detect_fact_query_keywords(content: str) -> Optional[FactType]:
+    """키워드 기반 사실 질문 감지 (fallback)"""
     content = content.lower().strip().replace("?", "").replace(".", "")
     query_map: Dict[FactType, List[str]] = {
         FactType.USER_NAME: ["내 이름", "이름이 뭐", "제 이름"],
@@ -169,10 +196,12 @@ async def send_message(
     cache_service: CacheService = Depends(get_cache_service),
 ):
     """Send a message to a room"""
+    logger.info(f"=== MESSAGE ENDPOINT CALLED === Room: {room_id}")
     try:
         body = await request.json()
         content = body.get("content", "").strip()
         user_id = user_info["user_id"]
+        logger.info(f"=== MESSAGE CONTENT === User: {user_id}, Content: {content}")
 
         if not content: raise HTTPException(status_code=400, detail="Message content is required")
         if not user_info or "user_id" not in user_info:
@@ -187,7 +216,29 @@ async def send_message(
         await manager.broadcast(json.dumps({"type": "new_message", "payload": message.model_dump()}), room_id)
 
         # --- V2 Fact Extraction & Retrieval Logic ---
-        queried_fact_type = _detect_fact_query(content)
+        # Extract facts immediately for better context awareness
+        logger.info(f"=== FACT EXTRACTION START === Message: {message.message_id}, Content: {content}")
+        try:
+            await _handle_fact_extraction(user_fact_service, fact_extractor_service, message)
+            logger.info(f"=== FACT EXTRACTION SUCCESS === Message: {message.message_id}")
+        except Exception as e:
+            logger.error(f"=== FACT EXTRACTION FAILED === Message: {message.message_id}, Error: {e}", exc_info=True)
+            # Fallback: 백그라운드에서 실행
+            try:
+                background_task_service = get_background_task_service()
+                task_id = f"fact_extraction_{message.message_id}"
+                background_task_service.create_background_task(
+                    task_id,
+                    _handle_fact_extraction,
+                    user_fact_service, fact_extractor_service, message
+                )
+                logger.info(f"=== BACKGROUND TASK STARTED === Task: {task_id}")
+            except Exception as bg_error:
+                logger.error(f"=== BACKGROUND TASK FAILED === Error: {bg_error}", exc_info=True)
+        
+        # LLM 기반 사실 질문 감지
+        intent_classifier = get_intent_classifier_service()
+        queried_fact_type = await _detect_fact_query_improved(content, intent_classifier)
         if queried_fact_type:
             logger.info(f"Fact query for user {user_id}, type: {queried_fact_type.value}")
             facts_to_format = []
@@ -306,13 +357,150 @@ async def send_message(
 @router.post("/{room_id}/messages/stream")
 async def send_message_stream(
     room_id: str,
-    current_user: dict = Depends(require_auth)
+    request: Request,
+    user_info: Dict[str, str] = AUTH_DEPENDENCY,
+    storage_service: StorageService = Depends(get_storage_service),
+    rag_service: RAGService = Depends(get_rag_service),
+    memory_service: MemoryService = Depends(get_memory_service),
+    llm_service: LLMService = Depends(get_llm_service),
+    fact_extractor_service: FactExtractorService = Depends(get_fact_extractor_service),
+    user_fact_service: UserFactService = Depends(get_user_fact_service),
+    cache_service: CacheService = Depends(get_cache_service),
 ):
     """
-    Stream a message to a room (placeholder implementation).
+    Stream a message to a room - redirects to regular message endpoint for now.
     """
-    # TODO: Implement streaming functionality
-    raise HTTPException(status_code=501, detail="Streaming not yet implemented")
+    logger.info(f"=== STREAM ENDPOINT CALLED === Room: {room_id}")
+    # For now, redirect to the regular message endpoint
+    # TODO: Implement actual streaming functionality
+    body = await request.json()
+    content = body.get("content", "").strip()
+    user_id = user_info["user_id"]
+    logger.info(f"=== STREAM MESSAGE CONTENT === User: {user_id}, Content: {content}")
+
+    if not content:
+        raise HTTPException(status_code=400, detail="Message content is required")
+    if not user_info or "user_id" not in user_info:
+        raise HTTPException(status_code=400, detail="Invalid user information")
+
+    message = Message(
+        message_id=generate_id(), room_id=room_id, user_id=user_id,
+        content=content, timestamp=get_current_timestamp(),
+    )
+    storage_service.save_message(message)
+    await manager.broadcast(json.dumps({"type": "new_message", "payload": message.model_dump()}), room_id)
+
+    # --- V2 Fact Extraction & Retrieval Logic ---
+    # Extract facts immediately for better context awareness
+    logger.info(f"=== STREAM FACT EXTRACTION START === Message: {message.message_id}, Content: {content}")
+    try:
+        await _handle_fact_extraction(user_fact_service, fact_extractor_service, message)
+        logger.info(f"=== STREAM FACT EXTRACTION SUCCESS === Message: {message.message_id}")
+    except Exception as e:
+        logger.error(f"=== STREAM FACT EXTRACTION FAILED === Message: {message.message_id}, Error: {e}", exc_info=True)
+        # Fallback: 백그라운드에서 실행
+        try:
+            background_task_service = get_background_task_service()
+            task_id = f"fact_extraction_{message.message_id}"
+            background_task_service.create_background_task(
+                task_id,
+                _handle_fact_extraction,
+                user_fact_service, fact_extractor_service, message
+            )
+            logger.info(f"=== STREAM BACKGROUND TASK STARTED === Task: {task_id}")
+        except Exception as bg_error:
+            logger.error(f"=== STREAM BACKGROUND TASK FAILED === Error: {bg_error}", exc_info=True)
+    
+    # LLM 기반 사실 질문 감지
+    intent_classifier = get_intent_classifier_service()
+    queried_fact_type = await _detect_fact_query_improved(content, intent_classifier)
+    if queried_fact_type:
+        logger.info(f"=== STREAM FACT QUERY DETECTED === Type: {queried_fact_type.value}")
+        facts_to_format = []
+        cache_key = f"fact_query:{user_id}:{queried_fact_type.value}"
+        cached_facts = await cache_service.get(cache_key)
+        
+        if cached_facts:
+            facts_to_format = cached_facts
+            logger.info(f"=== USING CACHED FACTS === {facts_to_format}")
+        else:
+            facts = await user_fact_service.list_facts(user_id, queried_fact_type)
+            logger.info(f"=== RAW FACTS FROM DB === {facts}")
+            facts_to_format = [{"type": f["type"], "value": f["value"], "confidence": f["confidence"]} for f in facts]
+            logger.info(f"=== FORMATTED FACTS === {facts_to_format}")
+            await cache_service.set(cache_key, facts_to_format, ttl=300)
+        
+        if facts_to_format:
+            # LLM을 사용해서 자연스러운 응답 생성
+            fact_value = facts_to_format[0]['value']
+            fact_type_name = queried_fact_type.value
+            
+            # LLM에게 자연스러운 응답 생성 요청
+            try:
+                llm_service = get_llm_service()
+                provider = llm_service.get_provider()
+                
+                prompt = f"""
+사용자가 "{fact_type_name}"에 대해 물어봤습니다. 
+알고 있는 정보: {fact_value}
+
+이 정보를 바탕으로 자연스럽고 친근하게 답변해주세요. 
+- 너무 기계적이지 않게
+- 친구처럼 편하게
+- 한국어로
+- 1-2문장으로 간단하게
+
+예시:
+- "호건이구나! 기억하고 있어 😊"
+- "아, {fact_value}이었지! 맞지?"
+- "그래, {fact_value}라고 했었어!"
+"""
+
+                response_content, _ = await provider.invoke(
+                    model="gpt-4o-mini",
+                    system_prompt="당신은 친근한 AI 어시스턴트입니다. 자연스럽고 편안하게 대화하세요.",
+                    user_prompt=prompt,
+                    request_id=f"natural_response_{generate_id()}",
+                )
+                ai_content = response_content.strip()
+            except Exception as e:
+                logger.error(f"Failed to generate natural response: {e}")
+                # Fallback: 간단한 응답
+                if queried_fact_type == FactType.USER_NAME:
+                    ai_content = f"호건이구나! 기억하고 있어 😊"
+                else:
+                    ai_content = f"아, {fact_value}이었지!"
+        else:
+            ai_content = f"죄송하지만 {queried_fact_type.value}에 대한 정보를 찾을 수 없습니다."
+        
+        ai_message = Message(
+            message_id=generate_id(), room_id=room_id, user_id="ai",
+            content=ai_content, timestamp=get_current_timestamp(), role="ai"
+        )
+        storage_service.save_message(ai_message)
+        await manager.broadcast(json.dumps({"type": "new_message", "payload": ai_message.model_dump()}), room_id)
+        
+        return create_success_response(
+            data={"message": message.model_dump(), "ai_response": ai_message.model_dump()},
+            message="Message sent successfully",
+        )
+
+    # Generate AI response
+    ai_content = await rag_service.generate_rag_response(
+        room_id, user_id, content, None, [], message.message_id,
+    )
+
+    ai_message = Message(
+        message_id=generate_id(), room_id=room_id, user_id="ai",
+        content=ai_content, timestamp=get_current_timestamp(), role="ai"
+    )
+    storage_service.save_message(ai_message)
+    await manager.broadcast(json.dumps({"type": "new_message", "payload": ai_message.model_dump()}), room_id)
+
+    return create_success_response(
+        data={"message": message.model_dump(), "ai_response": ai_message.model_dump()},
+        message="Message sent successfully",
+    )
 
 
 @router.post("/{room_id}/upload", response_model=Message)

@@ -21,6 +21,8 @@ from app.services.admin_service import AdminService
 from app.services.user_fact_service import UserFactService
 from app.services.fact_extractor_service import FactExtractorService
 from app.services.cache_service import CacheService
+from app.services.intent_classifier_service import IntentClassifierService
+from app.services.background_task_service import BackgroundTaskService
 from app.core.secrets import SecretProvider, env_secrets_provider
 import redis
 
@@ -41,6 +43,8 @@ _search_service: Optional[ExternalSearchService] = None
 _context_llm_service: Optional["ContextLLMService"] = None
 _user_fact_service: Optional[UserFactService] = None
 _fact_extractor_service: Optional[FactExtractorService] = None
+_intent_classifier_service: Optional[IntentClassifierService] = None
+_background_task_service: Optional[BackgroundTaskService] = None
 
 
 def get_secret_provider() -> SecretProvider:
@@ -113,6 +117,7 @@ def get_rag_service() -> RAGService:
             llm_service=get_llm_service(),
             memory_service=get_memory_service(),
             storage_service=get_storage_service(),
+            intent_classifier=get_intent_classifier_service()
         )
     return _rag_service
 
@@ -158,6 +163,24 @@ def get_cache_service() -> CacheService:
     if _cache_service is None:
         _cache_service = CacheService(redis_client=get_redis_client())
     return _cache_service
+
+
+def get_intent_classifier_service() -> IntentClassifierService:
+    """Dependency to get the current intent classifier service."""
+    global _intent_classifier_service
+    if _intent_classifier_service is None:
+        _intent_classifier_service = IntentClassifierService(get_llm_service())
+
+    return _intent_classifier_service
+
+
+def get_background_task_service() -> BackgroundTaskService:
+    """Dependency to get the current background task service."""
+    global _background_task_service
+    if _background_task_service is None:
+        _background_task_service = BackgroundTaskService()
+
+    return _background_task_service
 
 
 # --- Auth Dependency ---

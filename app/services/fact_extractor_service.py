@@ -52,13 +52,15 @@ class FactExtractorService:
         Uses an LLM to extract potential facts from a user's message.
         """
         prompt = f"""
-        Analyze the following user message and extract any facts that reveal information about the user.
-        The user's message is: "{message_content}"
+        다음 사용자 메시지를 분석하여 사용자에 대한 정보를 추출하세요.
+        사용자 메시지: "{message_content}"
 
-        Extract facts for the following types if they are present: {', '.join([ft.value for ft in FactType])}.
-        Respond with a JSON object containing a single key "facts", which is a list of fact objects.
-        Each fact object should have three keys: "type", "value", and "confidence" (a float between 0.0 and 1.0).
-        If no facts are found, return an empty list.
+        다음 유형의 사실이 있다면 추출하세요: {', '.join([ft.value for ft in FactType])}.
+        JSON 객체로 응답하되, "facts" 키 하나만 포함하세요. 이 키의 값은 사실 객체들의 배열이어야 합니다.
+        각 사실 객체는 "type", "value", "confidence" (0.0-1.0 사이의 실수) 세 개의 키를 가져야 합니다.
+        사실이 없다면 빈 배열을 반환하세요.
+        
+        특히 "내 이름은 XXX야" 같은 패턴에서 사용자 이름을 추출하세요.
         """
         try:
             provider = self.llm_service.get_provider()

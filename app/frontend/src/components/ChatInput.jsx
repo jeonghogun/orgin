@@ -4,47 +4,24 @@ import axios from 'axios';
 import { SSE } from 'sse.js';
 import { useAppContext } from '../context/AppContext';
 
-// This function is now a pure API call that returns a Promise
-// It takes callbacks to report progress back to the component.
-const streamMessageApi = ({ roomId, content, onChunk, onIdReceived }) => {
-  return new Promise((resolve, reject) => {
-    const source = new SSE(`/api/rooms/${roomId}/messages/stream`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      payload: JSON.stringify({ content }),
-    });
-
-    source.addEventListener('message', (e) => {
-      if (e.data === '[DONE]') {
-        source.close();
-        resolve(); // Resolve the promise when the stream is done
-        return;
+// Use stream endpoint with proper JSON response handling
+const streamMessageApi = async ({ roomId, content, onChunk, onIdReceived }) => {
+  try {
+    const response = await axios.post(`/api/rooms/${roomId}/messages/stream`, { content });
+    const data = response.data;
+    
+    if (data.success && data.data) {
+      // Handle the AI response
+      const aiResponse = data.data.ai_response;
+      if (aiResponse && aiResponse.content) {
+        // Send the full content as a single chunk
+        onChunk(aiResponse.content);
+        onIdReceived(aiResponse.message_id);
       }
-      try {
-        const data = JSON.parse(e.data);
-        if (data.delta) {
-          onChunk(data.delta);
-        }
-        if (data.done) {
-          onIdReceived(data.message_id);
-        }
-        if (data.error) {
-          source.close();
-          reject(new Error(data.error));
-        }
-      } catch (err) {
-        source.close();
-        reject(new Error('스트리밍 데이터를 파싱하는 중 오류가 발생했습니다.'));
-      }
-    });
-
-    source.addEventListener('error', (e) => {
-      source.close();
-      reject(new Error('연결 오류가 발생했습니다. 다시 시도해주세요.'));
-    });
-
-    source.stream();
-  });
+    }
+  } catch (error) {
+    throw new Error('메시지 전송 중 오류가 발생했습니다: ' + (error.response?.data?.detail || error.message));
+  }
 };
 
 const uploadFileApi = async ({ roomId, file }) => {
@@ -89,52 +66,12 @@ const ChatInput = ({ roomId, roomData, disabled = false, onCreateSubRoom, onCrea
     e.preventDefault();
     if (!message.trim() || !roomId || streamMutation.isPending || disabled) return;
 
-    // --- Manual Optimistic Update ---
-    // 1. Create temporary IDs for the optimistic messages
-    const tempUserId = `temp-user-${Date.now()}`;
-    const tempAssistantId = `temp-assistant-${Date.now()}`;
-
-    // 2. Add the user message and assistant placeholder to the cache
-    queryClient.setQueryData(['messages', roomId], (old) => [
-      ...(old || []),
-      {
-        message_id: tempUserId,
-        role: 'user',
-        content: message,
-        timestamp: Math.floor(Date.now() / 1000),
-      },
-      {
-        message_id: tempAssistantId,
-        role: 'assistant',
-        content: '',
-        timestamp: Math.floor(Date.now() / 1000),
-        isStreaming: true,
-      },
-    ]);
-    // --- End of Optimistic Update ---
-
+    // Simple approach: just send the message and let the server handle everything
     streamMutation.mutate({
       roomId,
       content: message,
-      // 3. Define callbacks to update the streaming message in the cache
-      onChunk: (delta) => {
-        queryClient.setQueryData(['messages', roomId], (old) =>
-          old.map((msg) =>
-            msg.message_id === tempAssistantId
-              ? { ...msg, content: msg.content + delta }
-              : msg
-          )
-        );
-      },
-      onIdReceived: (finalId) => {
-        queryClient.setQueryData(['messages', roomId], (old) =>
-          old.map((msg) =>
-            msg.message_id === tempAssistantId
-              ? { ...msg, isStreaming: false, message_id: finalId }
-              : msg
-          )
-        );
-      },
+      onChunk: () => {}, // No-op since we're not streaming
+      onIdReceived: () => {}, // No-op since we're not streaming
     });
 
     setMessage('');

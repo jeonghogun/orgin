@@ -11,6 +11,7 @@ from app.services.external_api_service import ExternalSearchService
 from app.services.llm_service import LLMService
 from app.services.memory_service import MemoryService
 from app.services.storage_service import StorageService
+from app.services.intent_classifier_service import IntentClassifierService
 from app.models.schemas import Message
 from app.models.memory_schemas import ConversationContext, UserProfile, ContextUpdate
 from app.utils.helpers import generate_id
@@ -30,11 +31,12 @@ class RAGContext:
     user_facts: List[Dict[str, Any]] = field(default_factory=list)
 
 class RAGService:
-    def __init__(self, search_service: ExternalSearchService, llm_service: LLMService, memory_service: MemoryService, storage_service: StorageService):
+    def __init__(self, search_service: ExternalSearchService, llm_service: LLMService, memory_service: MemoryService, storage_service: StorageService, intent_classifier: IntentClassifierService):
         self.search_service = search_service
         self.llm_service = llm_service
         self.memory_service = memory_service
         self.storage_service = storage_service
+        self.intent_classifier = intent_classifier
 
     async def generate_rag_response(self, room_id: str, user_id: str, user_message: str, intent: str, entities: Dict[str, str], request_id: str) -> str:
         try:
@@ -109,25 +111,43 @@ class RAGService:
         )
 
     def _build_rag_prompt(self, rag_context: RAGContext) -> str:
-        prompt_parts = ["You are an AI assistant. Use the following context to provide a helpful and accurate response."]
+        prompt_parts = [
+            "당신은 도움이 되는 AI 어시스턴트입니다. 다음 맥락을 사용하여 도움이 되고 정확한 응답을 제공하세요.",
+            "중요한 지침:",
+            "1. 사용자의 이름을 알고 있다면 반드시 그 이름을 사용하세요.",
+            "2. 검색 결과가 있다면 그것을 활용하여 최신 정보를 제공하세요.",
+            "3. 이전 대화 맥락을 고려하여 자연스러운 대화를 이어가세요.",
+            "4. '검색해서 알려줘' 같은 요청이 있다면 이전 질문의 맥락을 기억하고 검색하세요.",
+            "5. 한국어로 응답하세요.",
+            "6. 모르는 정보는 '모르겠다'고 하지 말고 검색 결과를 활용하세요."
+        ]
+        
         if rag_context.user_profile:
             profile_info = []
-            if rag_context.user_profile.name: profile_info.append(f"User's name: {rag_context.user_profile.name}")
-            if rag_context.user_profile.interests: profile_info.append(f"Interests: {', '.join(rag_context.user_profile.interests)}")
-            if profile_info: prompt_parts.append("--- User Profile ---\n" + "\n".join(profile_info))
+            if rag_context.user_profile.name: 
+                profile_info.append(f"사용자 이름: {rag_context.user_profile.name}")
+            if rag_context.user_profile.interests: 
+                profile_info.append(f"관심사: {', '.join(rag_context.user_profile.interests)}")
+            if profile_info: 
+                prompt_parts.append("--- 사용자 프로필 ---\n" + "\n".join(profile_info))
+                
         if rag_context.user_facts:
             facts_str = "\n".join([f"- {fact['key']}: {fact['value_json']}" for fact in rag_context.user_facts])
-            prompt_parts.append("--- Known Facts ---\n" + facts_str)
+            prompt_parts.append("--- 알려진 사실들 ---\n" + facts_str)
+            
         if rag_context.conversation_context and rag_context.conversation_context.summary:
-            prompt_parts.append(f"--- Conversation Summary ---\n{rag_context.conversation_context.summary}")
+            prompt_parts.append(f"--- 대화 요약 ---\n{rag_context.conversation_context.summary}")
+            
         if rag_context.relevant_memories:
             memories_str = "\n".join([f"- {mem.content}" for mem in rag_context.relevant_memories])
-            prompt_parts.append("--- Relevant Past Conversations ---\n" + memories_str)
+            prompt_parts.append("--- 관련된 과거 대화 ---\n" + memories_str)
+            
         if rag_context.search_results:
             search_str = "\n".join([f"- {res['title']}: {res['snippet']}" for res in rag_context.search_results])
-            prompt_parts.append("--- Web Search Results ---\n" + search_str)
-        prompt_parts.append(f"\n--- User's Question ---\n{rag_context.user_query}")
-        prompt_parts.append("\nResponse:")
+            prompt_parts.append("--- 웹 검색 결과 ---\n" + search_str)
+            
+        prompt_parts.append(f"\n--- 사용자 질문 ---\n{rag_context.user_query}")
+        prompt_parts.append("\n응답:")
         return "\n\n".join(prompt_parts)
 
     async def _generate_llm_response(self, rag_prompt: str, request_id: str) -> str:
@@ -148,8 +168,19 @@ class RAGService:
         await self.memory_service.update_context(context_update)
 
     async def _enhance_with_external_data(self, rag_context: RAGContext):
-        # Placeholder for brevity
-        pass
+        """Enhance context with external search data using intent classification"""
+        try:
+            # LLM 기반 검색 필요성 판단
+            needs_search = await self.intent_classifier.is_search_needed(rag_context.user_query)
+            
+            if needs_search:
+                logger.info(f"Search request detected by intent classifier: {rag_context.user_query}")
+                search_results = await self.search_service.web_search(rag_context.user_query, num=3)
+                rag_context.search_results = search_results
+                logger.info(f"Found {len(search_results)} search results")
+        except Exception as e:
+            logger.error(f"Failed to enhance with external data: {e}")
+            # Continue without search results
 
     async def generate_observer_qa_response(self, question: str, report_content: Dict[str, Any]) -> str:
         """

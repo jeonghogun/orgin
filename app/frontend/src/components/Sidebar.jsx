@@ -256,15 +256,7 @@ const Sidebar = memo(() => {
     return hierarchicalRooms.find(room => room.type === ROOM_TYPES.MAIN);
   }, [hierarchicalRooms]);
 
-  // 메인룸이 없으면 자동 생성
-  useEffect(() => {
-    if (!isLoading && !error && !mainRoom && hierarchicalRooms.length === 0) {
-      createRoomMutation.mutate({ 
-        name: '메인룸', 
-        type: ROOM_TYPES.MAIN 
-      });
-    }
-  }, [isLoading, error, mainRoom, hierarchicalRooms.length, createRoomMutation]);
+  // 메인룸 자동 생성 로직 완전 제거 (My Main Room이 이미 있음)
 
   const handleCreateSubRoom = useCallback((parentId) => {
     const roomName = prompt('새 세부룸의 이름을 입력하세요:', '새 세부룸');

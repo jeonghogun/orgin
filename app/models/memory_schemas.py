@@ -28,6 +28,7 @@ class UserProfile(BaseModel):
     preferences: Dict[str, Any] = Field(
         default_factory=dict, description="사용자 선호도"
     )
+    auto_fact_extraction_enabled: bool = Field(default=True, description="자동 사실 추출 활성화")
     conversation_style: str = Field(default="casual", description="대화 스타일")
     interests: List[str] = Field(default_factory=list, description="관심사")
     created_at: int = Field(..., description="생성 시간")

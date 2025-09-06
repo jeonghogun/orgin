@@ -128,7 +128,27 @@ class UserFactService:
         await self._insert_fact(user_id, fact, normalized_value, source_message_id, sensitivity, is_latest=True)
 
     async def list_facts(self, user_id: str, fact_type: Optional[FactType] = None, latest_only: bool = False) -> List[Dict[str, Any]]:
-        query = "SELECT *, value_json as content FROM user_facts WHERE user_id = %s"
+        formatted_results = []
+        
+        # USER_NAME인 경우 user_profiles 테이블에서 조회
+        if fact_type == FactType.USER_NAME:
+            logger.info(f"=== CHECKING USER_PROFILES FOR NAME === User: {user_id}")
+            profile = await self.get_user_profile(user_id)
+            if profile and profile.name:
+                formatted_results.append({
+                    "type": "user_name",
+                    "value": profile.name,
+                    "confidence": 1.0,
+                    "created_at": profile.created_at,
+                    "updated_at": profile.updated_at
+                })
+                logger.info(f"=== FOUND NAME IN PROFILE === {profile.name}")
+            else:
+                logger.info(f"=== NO NAME FOUND IN PROFILE ===")
+            return formatted_results
+        
+        # 다른 사실들은 user_facts 테이블에서 조회
+        query = "SELECT * FROM user_facts WHERE user_id = %s"
         params = [user_id]
         if fact_type:
             query += " AND fact_type = %s"
@@ -136,12 +156,40 @@ class UserFactService:
         if latest_only:
             query += " AND latest = TRUE"
         query += " ORDER BY fact_type, updated_at DESC"
+        
+        logger.info(f"=== LIST_FACTS QUERY === {query}")
+        logger.info(f"=== LIST_FACTS PARAMS === {params}")
+        
         results = self.db.execute_query(query, tuple(params))
+        logger.info(f"=== LIST_FACTS RESULTS === {results}")
+        
+        # 결과를 올바른 형식으로 변환
         for fact in results:
-            if fact.get('content'):
-                try: fact['content'] = json.loads(fact['content'])
-                except (json.JSONDecodeError, TypeError): pass
-        return results
+            # value_json에서 실제 값을 추출
+            value_json = fact.get("value_json")
+            if value_json:
+                try:
+                    if isinstance(value_json, str):
+                        value_data = json.loads(value_json)
+                    else:
+                        value_data = value_json
+                    actual_value = value_data.get("value", "") if isinstance(value_data, dict) else str(value_data)
+                except (json.JSONDecodeError, TypeError):
+                    actual_value = str(value_json)
+            else:
+                actual_value = ""
+            
+            formatted_fact = {
+                "type": fact.get("fact_type"),
+                "value": actual_value,
+                "confidence": fact.get("confidence", 1.0),
+                "created_at": fact.get("created_at"),
+                "updated_at": fact.get("updated_at")
+            }
+            formatted_results.append(formatted_fact)
+        
+        logger.info(f"=== LIST_FACTS FORMATTED === {formatted_results}")
+        return formatted_results
 
     async def get_facts_pending_review(self, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
         query = "SELECT * FROM user_facts WHERE pending_review = TRUE ORDER BY updated_at DESC LIMIT %s OFFSET %s"
