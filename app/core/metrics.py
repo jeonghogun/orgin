@@ -37,3 +37,17 @@ MEMORY_USAGE = Gauge(
     "origin_memory_usage_bytes",
     "Memory usage of the application process in bytes"
 )
+
+# --- Conversation Feature Metrics ---
+
+# A gauge for active SSE sessions
+SSE_SESSIONS_ACTIVE = Gauge(
+    "origin_sse_sessions_active",
+    "Number of active SSE sessions"
+)
+
+# A counter for total conversation costs
+CONVO_COST_USD_TOTAL = Counter(
+    "origin_convo_cost_usd_total",
+    "Total estimated cost of conversations in USD"
+)

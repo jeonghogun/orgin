@@ -28,6 +28,7 @@ from app.utils.helpers import get_current_timestamp
 
 # Import routers
 from app.api.routes import rooms, messages, search, memory, reviews, rag, metrics, websockets, admin, health
+from app.api.routes import conversations, uploads, exports
 
 from app.utils.trace_id import trace_id_var
 
@@ -184,6 +185,9 @@ app.include_router(rag.router, prefix="/api/rag")
 app.include_router(metrics.router, prefix="/api")
 app.include_router(websockets.router)
 app.include_router(admin.router, prefix="/api")
+app.include_router(conversations.router, prefix="/api/convo")
+app.include_router(uploads.router, prefix="/api")
+app.include_router(exports.router, prefix="/api") # New router for exports
 
 # Mount uploads directory. Nginx will not serve this, so FastAPI must.
 uploads_dir = "uploads"
