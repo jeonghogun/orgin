@@ -14,6 +14,9 @@ const ChatView = ({ threadId }) => {
   const { model, temperature, maxTokens } = useGenerationSettings();
   const queryClient = useQueryClient();
   const eventSourceRef = useRef(null);
+  const reconnectTimeoutRef = useRef(null);
+  const reconnectAttemptsRef = useRef(0);
+  const maxReconnectAttempts = 5;
 
   const { isLoading, error } = useQuery({
     queryKey: ['messages', threadId],
@@ -59,15 +62,128 @@ const ChatView = ({ threadId }) => {
       es.onopen = () => {
         addMessage(threadId, { id: messageId, role: 'assistant', content: '', status: 'draft', model: variables.model, created_at: Math.floor(Date.now() / 1000) });
       };
-      es.addEventListener('delta', (e) => appendStreamChunk(threadId, messageId, JSON.parse(e.data).content));
+      es.addEventListener('delta', (e) => {
+        try {
+          if (!e.data || e.data.trim() === '') {
+            console.warn('Empty SSE data received');
+            return;
+          }
+          const data = JSON.parse(e.data);
+          const content = data.content || data.text || data || '';
+          if (content) {
+            appendStreamChunk(threadId, messageId, content);
+          }
+        } catch (error) {
+          console.error('Error parsing streaming data:', error, 'Raw data:', e.data);
+          // Don't show modal, just log the error
+        }
+      });
       es.addEventListener('done', (e) => {
         es.close();
         eventSourceRef.current = null;
         queryClient.invalidateQueries({ queryKey: ['messages', threadId] });
       });
       es.addEventListener('error', (e) => {
+        console.error('SSE connection error:', e);
         es.close();
         eventSourceRef.current = null;
+        
+        // Attempt to reconnect with exponential backoff
+        if (reconnectAttemptsRef.current < maxReconnectAttempts) {
+          const delay = Math.pow(2, reconnectAttemptsRef.current) * 1000; // 1s, 2s, 4s, 8s, 16s
+          console.log(`Attempting to reconnect in ${delay}ms (attempt ${reconnectAttemptsRef.current + 1}/${maxReconnectAttempts})`);
+          
+          reconnectTimeoutRef.current = setTimeout(() => {
+            reconnectAttemptsRef.current++;
+            // Reconnect by creating a new EventSource
+            const newEs = new EventSource(`/api/convo/messages/${messageId}/stream`);
+            eventSourceRef.current = newEs;
+            
+            newEs.onopen = () => {
+              console.log('SSE reconnected successfully');
+              reconnectAttemptsRef.current = 0; // Reset on successful connection
+            };
+            
+            newEs.addEventListener('delta', (e) => {
+              try {
+                if (!e.data || e.data.trim() === '') {
+                  console.warn('Empty SSE data received');
+                  return;
+                }
+                const data = JSON.parse(e.data);
+                const content = data.content || data.text || data || '';
+                if (content) {
+                  appendStreamChunk(threadId, messageId, content);
+                }
+              } catch (error) {
+                console.error('Error parsing streaming data:', error, 'Raw data:', e.data);
+                // Don't show modal, just log the error
+              }
+            });
+            newEs.addEventListener('done', (e) => {
+              newEs.close();
+              eventSourceRef.current = null;
+              queryClient.invalidateQueries({ queryKey: ['messages', threadId] });
+            });
+            newEs.addEventListener('error', (e) => {
+              console.error('SSE reconnection error:', e);
+              newEs.close();
+              eventSourceRef.current = null;
+              
+              // Continue with exponential backoff
+              if (reconnectAttemptsRef.current < maxReconnectAttempts) {
+                const delay = Math.pow(2, reconnectAttemptsRef.current) * 1000;
+                console.log(`Retrying reconnection in ${delay}ms (attempt ${reconnectAttemptsRef.current + 1}/${maxReconnectAttempts})`);
+                
+                reconnectTimeoutRef.current = setTimeout(() => {
+                  reconnectAttemptsRef.current++;
+                  // Recursive retry
+                  const retryEs = new EventSource(`/api/convo/messages/${messageId}/stream`);
+                  eventSourceRef.current = retryEs;
+                  
+                  retryEs.onopen = () => {
+                    console.log('SSE reconnected successfully');
+                    reconnectAttemptsRef.current = 0;
+                  };
+                  
+                  retryEs.addEventListener('delta', (e) => {
+                    try {
+                      if (!e.data || e.data.trim() === '') {
+                        console.warn('Empty SSE data received');
+                        return;
+                      }
+                      const data = JSON.parse(e.data);
+                      const content = data.content || data.text || data || '';
+                      if (content) {
+                        appendStreamChunk(threadId, messageId, content);
+                      }
+                    } catch (error) {
+                      console.error('Error parsing streaming data:', error, 'Raw data:', e.data);
+                      // Don't show modal, just log the error
+                    }
+                  });
+                  retryEs.addEventListener('done', (e) => {
+                    retryEs.close();
+                    eventSourceRef.current = null;
+                    queryClient.invalidateQueries({ queryKey: ['messages', threadId] });
+                  });
+                  retryEs.addEventListener('error', (e) => {
+                    console.error('SSE final reconnection error:', e);
+                    retryEs.close();
+                    eventSourceRef.current = null;
+                    if (reconnectAttemptsRef.current >= maxReconnectAttempts) {
+                      console.error('Max reconnection attempts reached. Giving up.');
+                    }
+                  });
+                }, delay);
+              } else {
+                console.error('Max reconnection attempts reached. Giving up.');
+              }
+            });
+          }, delay);
+        } else {
+          console.error('Max reconnection attempts reached. Giving up.');
+        }
       });
     },
   });
@@ -75,6 +191,7 @@ const ChatView = ({ threadId }) => {
   useEffect(() => {
     return () => {
       if (eventSourceRef.current) eventSourceRef.current.close();
+      if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
     };
   }, []);
 

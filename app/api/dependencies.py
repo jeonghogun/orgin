@@ -112,13 +112,7 @@ def get_memory_service() -> MemoryService:
 def get_rag_service() -> RAGService:
     global _rag_service
     if _rag_service is None:
-        _rag_service = RAGService(
-            search_service=get_search_service(),
-            llm_service=get_llm_service(),
-            memory_service=get_memory_service(),
-            storage_service=get_storage_service(),
-            intent_classifier=get_intent_classifier_service()
-        )
+        _rag_service = RAGService()
     return _rag_service
 
 def get_intent_service() -> IntentService:

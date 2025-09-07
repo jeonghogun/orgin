@@ -41,9 +41,9 @@ async def create_message(thread_id: str, request_data: CreateMessageRequest, use
     user_id = user_info.get("user_id", "anonymous")
     # Associate attachments with the user message
     meta = {"attachments": [att["id"] for att in request_data.attachments]} if request_data.attachments else None
-    convo_service.create_message(thread_id=thread_id, role="user", content=request_data.content, status="complete", meta=meta)
+    convo_service.create_message(thread_id=thread_id, role="user", content=request_data.content, status="complete", meta=meta, user_id=user_id)
 
-    assistant_message = convo_service.create_message(thread_id=thread_id, role="assistant", content="", status="draft", model=request_data.model)
+    assistant_message = convo_service.create_message(thread_id=thread_id, role="assistant", content="", status="draft", model=request_data.model, user_id=user_id)
 
     # Cache the user_id to be used by the stream
     convo_service.redis_client.set(f"stream_user:{assistant_message['id']}", user_id, ex=3600)
@@ -53,19 +53,19 @@ async def create_message(thread_id: str, request_data: CreateMessageRequest, use
 @router.get("/messages/{message_id}/stream")
 async def stream_message(message_id: str, request: Request, convo_service: ConversationService = Depends(get_conversation_service)):
     draft_message = convo_service.get_message_by_id(message_id)
-    if not draft_message or draft_message["status"] != "draft":
-        raise HTTPException(status_code=404, detail="Draft message not found.")
+    if not draft_message:
+        raise HTTPException(status_code=404, detail="Message not found.")
 
     user_id = convo_service.redis_client.get(f"stream_user:{message_id}")
     user_id = user_id.decode('utf-8') if user_id else "anonymous"
 
     rag_service = get_rag_service()
-    history = convo_service.get_messages_by_thread(draft_message["thread_id"], limit=20)[::-1]
+    history = convo_service.get_messages_by_thread(draft_message["room_id"], limit=20)[::-1]
     user_query = next((m["content"] for m in reversed(history) if m["role"] == "user"), "")
 
     rag_context = ""
     if user_query:
-        rag_context = await rag_service.get_context_from_attachments(user_query, draft_message["thread_id"])
+        rag_context = await rag_service.get_context_from_attachments(user_query, draft_message["room_id"])
 
     messages_for_llm = [{"role": m["role"], "content": m["content"]} for m in history if m["role"] in ["user", "assistant"]]
     system_prompt = "You are a helpful assistant."
@@ -73,7 +73,7 @@ async def stream_message(message_id: str, request: Request, convo_service: Conve
         system_prompt += f"\n\n{rag_context}"
     messages_for_llm.insert(0, {"role": "system", "content": system_prompt})
 
-    adapter = get_llm_adapter(draft_message["model"])
+    adapter = get_llm_adapter(draft_message.get("model", "gpt-4o-mini"))
 
     async def event_generator():
         SSE_SESSIONS_ACTIVE.inc()
@@ -82,7 +82,7 @@ async def stream_message(message_id: str, request: Request, convo_service: Conve
             yield {"event": "ping", "data": "staying alive"}
             content, meta, total_tokens = "", {}, 0
 
-            async for sse_event in adapter.generate_stream(message_id=message_id, messages=messages_for_llm, model=draft_message["model"], temperature=0.7, max_tokens=2048):
+            async for sse_event in adapter.generate_stream(message_id=message_id, messages=messages_for_llm, model=draft_message.get("model", "gpt-4o-mini"), temperature=0.7, max_tokens=2048):
                 if await request.is_disconnected(): break
                 if sse_event.event == "delta": content += sse_event.data.content
                 elif sse_event.event == "usage":
@@ -196,3 +196,94 @@ async def get_daily_usage(user_info: Dict[str, Any] = AUTH_DEPENDENCY, convo_ser
 
     usage = convo_service.get_today_usage(user_id)
     return {"usage": usage, "budget": settings.DAILY_TOKEN_BUDGET, "currency": "tokens"}
+
+@router.post("/search")
+async def search_conversations(
+    request: Dict[str, Any],
+    user_info: Dict[str, Any] = AUTH_DEPENDENCY,
+    rag_service = Depends(get_rag_service),
+    convo_service: ConversationService = Depends(get_conversation_service)
+):
+    """
+    Search conversations using hybrid RAG (BM25 + vector similarity).
+    """
+    try:
+        query = request.get("query", "")
+        thread_id = request.get("thread_id")
+        limit = request.get("limit", 10)
+        include_attachments = request.get("include_attachments", True)
+        
+        if not query:
+            raise HTTPException(status_code=400, detail="Query is required")
+        
+        user_id = user_info.get("user_id")
+        results = []
+        
+        # Search in messages using PostgreSQL full-text search
+        if thread_id:
+            sql_query = """
+                SELECT message_id, room_id, content_searchable, role, timestamp,
+                       ts_rank(ts, plainto_tsquery('simple', %s)) as rank
+                FROM messages
+                WHERE room_id = %s
+                  AND ts @@ plainto_tsquery('simple', %s)
+                ORDER BY rank DESC
+                LIMIT %s
+            """
+            params = (query, thread_id, query, limit)
+        else:
+            # Search across all user's messages
+            sql_query = """
+                SELECT m.message_id, m.room_id, m.content_searchable, m.role, m.timestamp,
+                       ts_rank(m.ts, plainto_tsquery('simple', %s)) as rank
+                FROM messages m
+                WHERE m.user_id = %s
+                  AND m.ts @@ plainto_tsquery('simple', %s)
+                ORDER BY rank DESC
+                LIMIT %s
+            """
+            params = (query, user_id, query, limit)
+        
+        message_results = convo_service.db.execute_query(sql_query, params)
+        
+        for row in message_results:
+            results.append({
+                "message_id": row["message_id"],
+                "thread_id": row["room_id"],
+                "content": row["content_searchable"],
+                "role": row["role"],
+                "created_at": row["timestamp"],
+                "relevance_score": float(row["rank"]),
+                "source": "message"
+            })
+        
+        # Search in attachments if requested
+        if include_attachments and thread_id:
+            chunks_data = rag_service._get_thread_chunks(thread_id)
+            if chunks_data:
+                hybrid_results = await rag_service._hybrid_search(query, chunks_data, limit)
+                
+                for chunk in hybrid_results:
+                    results.append({
+                        "message_id": f"attachment_{chunk['id']}",
+                        "thread_id": thread_id,
+                        "content": chunk["chunk_text"],
+                        "role": "attachment",
+                        "created_at": 0,
+                        "relevance_score": 0.8,
+                        "source": "attachment"
+                    })
+        
+        # Sort by relevance score and limit results
+        results.sort(key=lambda x: x["relevance_score"], reverse=True)
+        results = results[:limit]
+        
+        return {
+            "query": query,
+            "total_results": len(results),
+            "results": results
+        }
+        
+    except Exception as e:
+        logger.error(f"Conversation search error: {e}")
+        raise HTTPException(status_code=500, detail="Conversation search failed")

@@ -53,8 +53,9 @@ def test_normalize_scores(memory_service):
     assert [r['score'] for r in normalized] == [0.0, 0.5, 1.0]
 
 def test_merge_and_score(memory_service):
-    settings.HYBRID_BM25_WEIGHT = 0.6
-    settings.HYBRID_VEC_WEIGHT = 0.4
+    # Use the correct field names from settings
+    settings.RAG_BM25_WEIGHT = 0.6
+    settings.RAG_VEC_WEIGHT = 0.4
 
     bm25 = [{'message_id': '1', 'score': 10}, {'message_id': '2', 'score': 20}]
     vector = [{'message_id': '2', 'score': 50}, {'message_id': '3', 'score': 100}]

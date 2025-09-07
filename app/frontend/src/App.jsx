@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import SearchPanel from './components/conversation/SearchPanel';
-import { AppContextProvider } from './context/AppContext';
+import { AppProvider } from './context/AppContext';
 import Main from './pages/Main';
 
 const queryClient = new QueryClient();
@@ -23,7 +23,7 @@ function App() {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <AppContextProvider>
+      <AppProvider>
         {showSearch && <SearchPanel onClose={() => setShowSearch(false)} />}
         <Router>
           <Routes>
@@ -32,7 +32,7 @@ function App() {
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </Router>
-      </AppContextProvider>
+      </AppProvider>
     </QueryClientProvider>
   );
 }

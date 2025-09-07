@@ -65,6 +65,7 @@ const Composer = ({ onSendMessage, onFileUpload, isLoading, isUploading }) => {
       >
         <PaperAirplaneIcon className="h-5 w-5" />
       </button>
+      </div>
     </div>
   );
 };

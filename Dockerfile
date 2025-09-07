@@ -5,7 +5,7 @@ WORKDIR /app/frontend
 
 # Copy package files and install dependencies
 COPY app/frontend/package.json app/frontend/package-lock.json ./
-RUN npm ci
+RUN npm ci --legacy-peer-deps
 
 # Copy the rest of the frontend source code
 COPY app/frontend ./

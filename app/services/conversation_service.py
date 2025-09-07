@@ -65,33 +65,33 @@ class ConversationService:
         results = self.db.execute_query(sql_query, tuple(params))
         return [ConversationThread(**row) for row in results]
 
-    def create_message(self, thread_id: str, role: str, content: str, status: str = "draft", model: Optional[str] = None, meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def create_message(self, thread_id: str, role: str, content: str, status: str = "draft", model: Optional[str] = None, meta: Optional[Dict[str, Any]] = None, user_id: str = "anonymous") -> Dict[str, Any]:
         message_id = f"msg_{generate_id()}"
         ts = int(time.time())
         meta_json = json.dumps(meta) if meta else None
         query = """
-            INSERT INTO conversation_messages (id, thread_id, role, content, status, model, meta, created_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO messages (message_id, room_id, user_id, role, content, content_searchable, timestamp)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
         """
-        params = (message_id, thread_id, role, content, status, model, meta_json, ts)
+        params = (message_id, thread_id, user_id, role, content, content, ts)
         self.db.execute_update(query, params)
-        thread_update_query = "UPDATE conversation_threads SET updated_at = %s WHERE id = %s"
-        self.db.execute_update(thread_update_query, (ts, thread_id))
+        # thread_update_query = "UPDATE conversation_threads SET updated_at = %s WHERE id = %s"
+        # self.db.execute_update(thread_update_query, (ts, thread_id))
         return {"id": message_id, "thread_id": thread_id, "role": role, "content": content, "status": status, "model": model, "meta": meta, "created_at": ts}
 
     def update_message(self, message_id: str, content: str, status: str, meta: Dict[str, Any]) -> None:
         meta_json = json.dumps(meta)
-        query = "UPDATE conversation_messages SET content = %s, status = %s, meta = %s WHERE id = %s"
-        params = (content, status, meta_json, message_id)
+        query = "UPDATE messages SET content = %s WHERE message_id = %s"
+        params = (content, message_id)
         self.db.execute_update(query, params)
 
     def get_messages_by_thread(self, thread_id: str, cursor: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
-        sql_query = "SELECT * FROM conversation_messages WHERE thread_id = %s"
+        sql_query = "SELECT * FROM messages WHERE room_id = %s"
         params: List[Any] = [thread_id]
         if cursor:
-            sql_query += " AND created_at < %s"
+            sql_query += " AND timestamp < %s"
             params.append(int(cursor))
-        sql_query += " ORDER BY created_at DESC LIMIT %s"
+        sql_query += " ORDER BY timestamp DESC LIMIT %s"
         params.append(limit)
         results = self.db.execute_query(sql_query, tuple(params))
         for row in results:
@@ -109,7 +109,7 @@ class ConversationService:
         return results
 
     def get_message_by_id(self, message_id: str) -> Optional[Dict[str, Any]]:
-        query = "SELECT * FROM conversation_messages WHERE id = %s"
+        query = "SELECT * FROM messages WHERE message_id = %s"
         params = (message_id,)
         results = self.db.execute_query(query, params)
         if not results:

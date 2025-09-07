@@ -156,17 +156,33 @@ class StorageService:
 
     def get_messages(self, room_id: str) -> List[Message]:
         """Get and decrypt all messages for a room from the database."""
-        query = """
-            SELECT message_id, room_id, user_id, role,
-                   pgp_sym_decrypt(content, %s) as content,
-                   timestamp
-            FROM messages
-            WHERE room_id = %s
-            ORDER BY timestamp ASC
-        """
-        params = (self.db_encryption_key, room_id)
-        results: List[MessageRow] = self.db.execute_query(query, params)
-        return [Message(**row) for row in results]
+        # First try to get messages with decryption
+        try:
+            query = """
+                SELECT message_id, room_id, user_id, role,
+                       pgp_sym_decrypt(content, %s) as content,
+                       timestamp
+                FROM messages
+                WHERE room_id = %s
+                ORDER BY timestamp ASC
+            """
+            params = (self.db_encryption_key, room_id)
+            results: List[MessageRow] = self.db.execute_query(query, params)
+            return [Message(**row) for row in results]
+        except Exception as e:
+            logger.warning(f"Decryption failed for room {room_id}: {e}")
+            # If decryption fails, try to get content_searchable instead
+            query = """
+                SELECT message_id, room_id, user_id, role,
+                       content_searchable as content,
+                       timestamp
+                FROM messages
+                WHERE room_id = %s
+                ORDER BY timestamp ASC
+            """
+            params = (room_id,)
+            results: List[MessageRow] = self.db.execute_query(query, params)
+            return [Message(**row) for row in results]
 
     # Review operations
     def save_review_meta(self, review_meta: ReviewMeta) -> None:

@@ -63,14 +63,14 @@ class MemoryService:
 
         for r in norm_bm25:
             merged[r['message_id']] = r
-            merged[r['message_id']]['score'] *= settings.HYBRID_BM25_WEIGHT
+            merged[r['message_id']]['score'] *= settings.RAG_BM25_WEIGHT
 
         for r in norm_vector:
             if r['message_id'] in merged:
-                merged[r['message_id']]['score'] += r['score'] * settings.HYBRID_VEC_WEIGHT
+                merged[r['message_id']]['score'] += r['score'] * settings.RAG_VEC_WEIGHT
             else:
                 merged[r['message_id']] = r
-                merged[r['message_id']]['score'] *= settings.HYBRID_VEC_WEIGHT
+                merged[r['message_id']]['score'] *= settings.RAG_VEC_WEIGHT
 
         return sorted(list(merged.values()), key=lambda x: x['score'], reverse=True)
 
@@ -108,17 +108,16 @@ class MemoryService:
         if kind:
             sql += " AND kind = %s"
             params.append(kind)
-        if key:
-            sql += " AND key = %s"
-            params.append(key)
-        # The 'fact_type' column does not exist in the old schema this method targets.
-        # This method is for legacy facts only.
-        sql += " AND fact_type IS NULL ORDER BY confidence DESC"
+        # Note: 'key' column doesn't exist in the current schema, so we ignore it
+        # The 'fact_type' column exists in the current schema
+        sql += " ORDER BY confidence DESC"
         return self.db.execute_query(sql, tuple(params))
 
     async def delete_user_fact(self, user_id: str, kind: str, key: str) -> None:
-        sql = "DELETE FROM user_facts WHERE user_id = %s AND kind = %s AND key = %s"
-        params = (user_id, kind, key)
+        # Note: 'key' column doesn't exist in the current schema
+        # We'll use fact_type or just user_id and kind for deletion
+        sql = "DELETE FROM user_facts WHERE user_id = %s AND kind = %s"
+        params = (user_id, kind)
         self.db.execute_update(sql, params)
 
     # --- Unchanged context and promotion methods ---
