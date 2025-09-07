@@ -3,7 +3,9 @@ import ReactMarkdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import remarkGfm from 'remark-gfm';
-import { UserCircleIcon, CpuChipIcon, ClockIcon } from '@heroicons/react/24/solid';
+import rehypeKatex from 'rehype-katex';
+import 'katex/dist/katex.min.css';
+import { UserCircleIcon, CpuChipIcon, ClockIcon, ClipboardIcon, CheckIcon } from '@heroicons/react/24/solid';
 
 const BlinkingCursor = () => <span className="inline-block w-2 h-5 bg-blue-500 animate-blink" />;
 
@@ -33,13 +35,31 @@ const MessageCard = ({ message, onViewHistory }) => {
         <div className="prose prose-sm dark:prose-invert max-w-none mt-1">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
+            rehypePlugins={[rehypeKatex]}
             components={{
               code({ node, inline, className, children, ...props }) {
+                const [isCopied, setIsCopied] = React.useState(false);
                 const match = /language-(\w+)/.exec(className || '');
+                const codeText = String(children).replace(/\n$/, '');
+
+                const handleCopy = () => {
+                  navigator.clipboard.writeText(codeText);
+                  setIsCopied(true);
+                  setTimeout(() => setIsCopied(false), 2000);
+                };
+
                 return !inline && match ? (
-                  <SyntaxHighlighter style={vscDarkPlus} language={match[1]} PreTag="div" {...props}>
-                    {String(children).replace(/\n$/, '')}
-                  </SyntaxHighlighter>
+                  <div className="relative">
+                    <button
+                      onClick={handleCopy}
+                      className="absolute top-2 right-2 p-1.5 rounded-md bg-gray-700 hover:bg-gray-600 text-gray-300"
+                    >
+                      {isCopied ? <CheckIcon className="h-4 w-4" /> : <ClipboardIcon className="h-4 w-4" />}
+                    </button>
+                    <SyntaxHighlighter style={vscDarkPlus} language={match[1]} PreTag="div" {...props}>
+                      {codeText}
+                    </SyntaxHighlighter>
+                  </div>
                 ) : (
                   <code className={className} {...props}>{children}</code>
                 );

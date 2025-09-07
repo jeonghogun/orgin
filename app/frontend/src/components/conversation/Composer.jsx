@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { PaperAirplaneIcon, Cog6ToothIcon } from '@heroicons/react/24/solid';
 import SettingsPanel from './SettingsPanel';
 
-const Composer = ({ onSendMessage, onFileUpload, isLoading, isUploading }) => {
+const Composer = ({ messages, onSendMessage, onFileUpload, isLoading, isUploading }) => {
   const [text, setText] = useState('');
   const [showSettings, setShowSettings] = useState(false);
   const textareaRef = useRef(null);
@@ -26,6 +26,14 @@ const Composer = ({ onSendMessage, onFileUpload, isLoading, isUploading }) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
+    }
+
+    if (e.key === 'ArrowUp' && text === '') {
+      const lastUserMessage = [...messages].reverse().find(m => m.role === 'user');
+      if (lastUserMessage) {
+        e.preventDefault();
+        setText(lastUserMessage.content);
+      }
     }
   };
 
