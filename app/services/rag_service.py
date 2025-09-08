@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import math
+from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any, Tuple
 
 import openai
@@ -218,8 +219,6 @@ class RAGService:
             logger.error(f"Failed to generate RAG response: {e}")
             return "죄송합니다. 응답을 생성하는 중 오류가 발생했습니다."
 
-from datetime import datetime, timezone
-
     async def search_hybrid(
         self, query: str, user_id: str, thread_id: Optional[str], limit: int
     ) -> List[Dict[str, Any]]:
@@ -333,6 +332,22 @@ from datetime import datetime, timezone
             final_results.append((msg, final_score))
 
         return final_results
+
+
+    def _build_rag_prompt(self, query: str, context_chunks: List[Dict[str, Any]]) -> str:
+        """Build RAG prompt with context chunks."""
+        context_text = "\n\n".join([chunk.get('content', '') for chunk in context_chunks])
+        
+        prompt = f"""Based on the following context, please answer the user's question:
+
+Context:
+{context_text}
+
+Question: {query}
+
+Please provide a comprehensive answer based on the context provided."""
+        
+        return prompt
 
 
 # Global service instance

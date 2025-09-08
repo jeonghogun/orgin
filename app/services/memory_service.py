@@ -136,3 +136,23 @@ class MemoryService:
     async def archive_old_memories(self, room_id: str):
         # ... implementation unchanged ...
         pass
+
+
+# Global service instance
+memory_service: "MemoryService" = None
+
+def get_memory_service() -> "MemoryService":
+    global memory_service
+    if memory_service is None:
+        from app.services.database_service import get_database_service
+        from app.services.llm_service import get_llm_service
+        from app.core.secrets import get_secret_provider
+        from app.services.user_fact_service import get_user_fact_service
+        
+        memory_service = MemoryService(
+            db_service=get_database_service(),
+            llm_service=get_llm_service(),
+            secret_provider=get_secret_provider(),
+            user_fact_service=get_user_fact_service()
+        )
+    return memory_service

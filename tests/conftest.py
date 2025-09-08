@@ -96,6 +96,13 @@ def setup_test_environment(test_db):
     settings.REDIS_URL = "redis://localhost:6379/0"
     settings.CELERY_BROKER_URL = "redis://localhost:6379/0"
     settings.CELERY_RESULT_BACKEND = "redis://localhost:6379/0"
+    
+    # Override database connection settings for tests
+    settings.POSTGRES_HOST = "localhost"
+    settings.POSTGRES_PORT = 5433
+    settings.POSTGRES_USER = "user"
+    settings.POSTGRES_PASSWORD = "password"
+    settings.POSTGRES_DB = "test_origin_db"
 
     yield
 
