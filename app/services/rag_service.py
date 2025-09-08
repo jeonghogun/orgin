@@ -118,7 +118,7 @@ class RAGService:
         
         # Sort by combined score and return top_k
         combined_scores.sort(key=lambda x: x['score'], reverse=True)
-        return [item['chunk'] for item in combined_scores[:top_k]]
+        return combined_scores[:top_k]
 
     async def _get_vector_scores(self, query: str, chunks_data: List[Dict[str, Any]]) -> List[float]:
         """Get vector similarity scores for the query against chunks."""
@@ -217,6 +217,123 @@ class RAGService:
         except Exception as e:
             logger.error(f"Failed to generate RAG response: {e}")
             return "죄송합니다. 응답을 생성하는 중 오류가 발생했습니다."
+
+from datetime import datetime, timezone
+
+    async def search_hybrid(
+        self, query: str, user_id: str, thread_id: Optional[str], limit: int
+    ) -> List[Dict[str, Any]]:
+        """
+        Performs a hybrid search across conversation messages and attachments,
+        combining BM25, vector similarity, and time decay.
+        """
+        # 1. Get messages and attachments from the database
+        messages = self._get_thread_messages(user_id, thread_id)
+        attachment_chunks = self._get_thread_chunks(thread_id) if thread_id else []
+
+        # 2. Search both sources in parallel
+        message_results_task = asyncio.to_thread(self._bm25_search_with_time_decay, query, messages)
+        attachment_results_task = self._hybrid_search(query, attachment_chunks, top_k=limit)
+
+        message_results, attachment_results = await asyncio.gather(
+            message_results_task, attachment_results_task
+        )
+
+        # 3. Format results into a common structure
+        formatted_messages = [
+            {
+                "id": msg["id"],
+                "thread_id": msg["thread_id"],
+                "content": msg["content"],
+                "role": msg["role"],
+                "created_at": msg["created_at"].isoformat(),
+                "source": "message",
+                "score": score,
+            }
+            for msg, score in message_results
+        ]
+
+        formatted_attachments = [
+            {
+                "id": f"attachment_{res['chunk']['id']}",
+                "thread_id": thread_id,
+                "content": res["chunk"]["chunk_text"],
+                "role": "attachment",
+                "created_at": None,
+                "source": "attachment",
+                "score": res["score"],
+            }
+            for res in attachment_results
+        ]
+
+        all_results = formatted_messages + formatted_attachments
+        if not all_results:
+            return []
+
+        # 4. Normalize scores across all results for consistent ranking
+        all_scores = [res["score"] for res in all_results]
+        normalized_scores = self._normalize_scores(all_scores)
+        for i, res in enumerate(all_results):
+            res["relevance_score"] = normalized_scores[i]
+            del res["score"] # Clean up intermediate score
+
+        # 5. Sort by final relevance score and return top results
+        all_results.sort(key=lambda x: x["relevance_score"], reverse=True)
+        return all_results[:limit]
+
+    def _get_thread_messages(
+        self, user_id: str, thread_id: Optional[str]
+    ) -> List[Dict[str, Any]]:
+        """Fetches all messages for a given thread or user from the database."""
+        if thread_id:
+            sql = "SELECT id, thread_id, content, role, created_at FROM messages WHERE thread_id = %s"
+            params = (thread_id,)
+        else:
+            # This assumes a `threads` table with a `user_id` column exists.
+            sql = """
+                SELECT m.id, m.thread_id, m.content, m.role, m.created_at
+                FROM messages m
+                JOIN threads t ON m.thread_id = t.id
+                WHERE t.user_id = %s
+            """
+            params = (user_id,)
+        return self.db.execute_query(sql, params)
+
+    def _bm25_search_with_time_decay(
+        self, query: str, messages: List[Dict[str, Any]]
+    ) -> List[Tuple[Dict[str, Any], float]]:
+        """Performs BM25 search on messages and applies a time decay to the scores."""
+        if not messages:
+            return []
+
+        corpus = [msg.get("content", "") for msg in messages]
+        tokenized_corpus = [doc.lower().split() for doc in corpus]
+        if not tokenized_corpus:
+            return []
+
+        bm25 = BM25Okapi(tokenized_corpus)
+        query_tokens = query.lower().split()
+        bm25_scores = bm25.get_scores(query_tokens)
+
+        time_decay_factor = getattr(settings, "RAG_TIME_DECAY", 0.05)
+        now = datetime.now(timezone.utc)
+
+        final_results = []
+        for i, msg in enumerate(messages):
+            msg_time = msg.get("created_at")
+            if not msg_time:
+                decay = 0.5  # Default decay for messages with no timestamp
+            else:
+                if msg_time.tzinfo is None:
+                    msg_time = msg_time.replace(tzinfo=timezone.utc)
+                days_old = (now - msg_time).total_seconds() / (3600 * 24)
+                decay = 1 / (1 + time_decay_factor * days_old)
+
+            final_score = bm25_scores[i] * decay
+            final_results.append((msg, final_score))
+
+        return final_results
+
 
 # Global service instance
 rag_service: "RAGService" = None

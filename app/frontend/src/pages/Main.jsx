@@ -6,6 +6,7 @@ import { useParams } from 'react-router-dom';
 import { useConversationActions } from '../store/useConversationStore';
 import ThreadList from '../components/conversation/ThreadList';
 import ChatView from '../components/conversation/ChatView';
+import BudgetDisplay from '../components/conversation/BudgetDisplay';
 
 const Main = () => {
   const { threadId } = useParams();
@@ -36,9 +37,13 @@ const Main = () => {
       </div>
 
       <main className="flex-1 flex flex-col h-screen ml-72">
-        {threadId ? (
-          <ChatView key={threadId} threadId={threadId} />
-        ) : (
+        <div className="p-2 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+          <BudgetDisplay />
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          {threadId ? (
+            <ChatView key={threadId} threadId={threadId} />
+          ) : (
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
               <h2 className="text-2xl font-semibold">Select a conversation</h2>

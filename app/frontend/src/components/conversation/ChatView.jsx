@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 import { useMessages, useConversationActions, useGenerationSettings } from '../../store/useConversationStore';
+import RoomHeader from '../RoomHeader';
 import ChatTimeline from './ChatTimeline';
 import Composer from './Composer';
 import DiffViewModal from './DiffViewModal';
@@ -9,6 +10,7 @@ import DiffViewModal from './DiffViewModal';
 const ChatView = ({ threadId }) => {
   const [attachments, setAttachments] = useState([]);
   const [viewingMessageHistory, setViewingMessageHistory] = useState(null);
+  const [exportJob, setExportJob] = useState(null);
   const messages = useMessages(threadId);
   const { setMessages, addMessage, appendStreamChunk, updateMessage } = useConversationActions();
   const { model, temperature, maxTokens } = useGenerationSettings();
@@ -205,8 +207,59 @@ const ChatView = ({ threadId }) => {
     });
   };
 
+  const createExportJobMutation = useMutation({
+    mutationFn: (format) => axios.post(`/api/threads/${threadId}/export/jobs`, null, { params: { format } }),
+    onSuccess: (response) => {
+      setExportJob(response.data);
+    },
+    onError: (error) => {
+      console.error("Failed to start export job", error);
+      // You might want to show a toast notification here
+    }
+  });
+
+  const { data: exportStatus } = useQuery({
+    queryKey: ['exportStatus', exportJob?.jobId],
+    queryFn: async () => {
+      const { data } = await axios.get(`/api/export/jobs/${exportJob.jobId}`);
+      return data;
+    },
+    onSuccess: (data) => {
+      if (data.status === 'done' || data.status === 'error') {
+        setExportJob(data);
+      }
+    },
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      return (data?.status === 'queued' || data?.status === 'processing') ? 2000 : false;
+    },
+    enabled: !!exportJob && (exportJob.status === 'queued' || exportJob.status === 'processing'),
+  });
+
+  const headerActions = [
+    {
+      label: 'Export as ZIP',
+      onClick: () => createExportJobMutation.mutate('zip'),
+      variant: 'secondary',
+    }
+  ];
+
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full bg-white dark:bg-gray-800">
+      <RoomHeader title={`Thread`} subtitle={threadId} actions={headerActions} />
+
+      {exportJob && (
+        <div className="p-2 text-center bg-blue-100 dark:bg-blue-900 text-sm text-blue-800 dark:text-blue-200">
+          Export status: <strong>{exportStatus?.status || exportJob.status}</strong>.
+          {(exportStatus?.status === 'done' || exportJob.status === 'done') && (
+            <a href={`/api/export/jobs/${exportJob.jobId}/download`} className="font-bold ml-2 underline" download>Download</a>
+          )}
+          {(exportStatus?.status === 'error' || exportJob.status === 'error') && (
+            <span className="ml-2 text-red-500">{exportStatus?.error_message || 'An unknown error occurred.'}</span>
+          )}
+        </div>
+      )}
+
       {viewingMessageHistory && (
         <DiffViewModal
             messageId={viewingMessageHistory}
@@ -223,6 +276,7 @@ const ChatView = ({ threadId }) => {
       </div>
       <div className="p-4 border-t border-gray-200 dark:border-gray-700">
         <Composer
+          messages={messages}
           onSendMessage={handleSendMessage}
           onFileUpload={uploadFileMutation.mutate}
           isLoading={sendMessageMutation.isPending}

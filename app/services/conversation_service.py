@@ -166,6 +166,32 @@ class ConversationService:
         params = (status, file_url, error_message, int(time.time()), job_id)
         self.db.execute_update(query, params)
 
+    def get_room_hierarchy(self, thread_id: str) -> Dict[str, Optional[str]]:
+        """
+        Given a thread_id, finds the sub_room_id and its parent main_room_id.
+        This is a simplified implementation and assumes a certain schema.
+        """
+        # First, get the sub_room_id from the thread
+        thread_query = "SELECT sub_room_id FROM conversation_threads WHERE id = %s"
+        thread_result = self.db.execute_query(thread_query, (thread_id,))
+        if not thread_result:
+            return {"current_room": None, "parent_room": None}
+
+        sub_room_id = thread_result[0].get("sub_room_id")
+        if not sub_room_id:
+            return {"current_room": None, "parent_room": None} # Should not happen if data is consistent
+
+        # Second, get the main_room_id from the sub_room
+        # This assumes a 'sub_rooms' table with a 'main_room_id' foreign key
+        room_query = "SELECT main_room_id FROM sub_rooms WHERE id = %s"
+        room_result = self.db.execute_query(room_query, (sub_room_id,))
+
+        main_room_id = None
+        if room_result:
+            main_room_id = room_result[0].get("main_room_id")
+
+        return {"current_room": sub_room_id, "parent_room": main_room_id}
+
     def get_message_versions(self, message_id: str) -> List[Dict[str, Any]]:
         """
         Retrieves all versions of a message by traversing the parentId chain.

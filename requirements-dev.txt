@@ -5,3 +5,4 @@ trio
 trio-asyncio
 testing.postgresql
 gevent
+python-dotenv
