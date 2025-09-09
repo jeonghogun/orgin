@@ -16,13 +16,16 @@ from fastapi.testclient import TestClient
 # 프로젝트 루트를 Python 경로에 추가
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from scripts.test_container_manager import TestContainerManager
+# TestContainerManager removed - using simple test environment
 from app.config.settings import Settings
 from app.core.secrets import SecretProvider
 from app.services.database_service import DatabaseService
 
 # 전역 테스트 환경 관리자
 _test_environment: Dict[str, Any] = {}
+
+# 테스트용 상수
+USER_ID = "test-user-12345"
 
 # E2E/통합 테스트에서 사용하는 LLM 모의 호출 함수
 # 각 LLM Provider의 invoke()가 반환하는 형식을 흉내냅니다: (json_string, metadata_dict)
@@ -42,16 +45,18 @@ def test_environment():
     global _test_environment
     
     if not _test_environment:
-        manager = TestContainerManager()
-        _test_environment = manager.create_test_environment()
-        _test_environment['manager'] = manager
+        # 간단한 테스트 환경 설정 (Docker 컨테이너 없이)
+        _test_environment = {
+            'database_url': 'postgresql://test_user:test_password@localhost:5432/test_origin_db',
+            'redis_url': 'redis://localhost:6379/0',
+            'postgres_port': 5432,
+            'redis_port': 6379
+        }
     
     yield _test_environment
     
     # 세션 종료 시 정리
-    if 'manager' in _test_environment:
-        _test_environment['manager'].cleanup()
-        _test_environment.clear()
+    _test_environment.clear()
 
 @pytest.fixture(scope="function")
 def isolated_test_env(test_environment):
@@ -64,7 +69,7 @@ def isolated_test_env(test_environment):
         'DATABASE_URL': test_environment['database_url'],
         'REDIS_URL': test_environment['redis_url'],
         'POSTGRES_HOST': 'localhost',
-        'POSTGRES_PORT': test_environment['postgres_port'],
+        'POSTGRES_PORT': str(test_environment['postgres_port']),
         'POSTGRES_USER': 'test_user',
         'POSTGRES_PASSWORD': 'test_password',
         'POSTGRES_DB': 'test_origin_db',
@@ -291,7 +296,7 @@ def authenticated_client(isolated_test_env, test_user_id: str):
         # conversation_messages 스키마에 맞춰 저장 (content는 BYTEA이므로 bytes로 저장)
         insert_sql = (
             """
-            INSERT INTO conversation_messages (message_id, thread_id, user_id, role, content, content_searchable, timestamp, embedding)
+            INSERT INTO conversation_messages (message_id, thread_id, user_id, role, content, content_searchable, timestamp, meta)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """
         )
@@ -303,7 +308,7 @@ def authenticated_client(isolated_test_env, test_user_id: str):
             content.encode("utf-8"),
             content,
             ts,
-            None,
+            json.dumps(meta) if meta else None,
         )
         test_convo_service.db.execute_update(insert_sql, params)
         # 메타 저장 (메모리)

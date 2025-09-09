@@ -43,7 +43,7 @@ class ConversationService:
         created_at = int(time.time())
         query = """
             INSERT INTO conversation_threads (id, sub_room_id, user_id, title, pinned, archived, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, %s, %s, to_timestamp(%s), to_timestamp(%s))
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         """
         params = (thread_id, sub_room_id, user_id, thread_data.title, False, False, created_at, created_at)
         self.db.execute_update(query, params)
@@ -70,13 +70,13 @@ class ConversationService:
         created_at = int(time.time())
         meta_json = json.dumps(meta) if meta else None
         query = """
-            INSERT INTO conversation_messages (id, thread_id, role, content, status, model, meta, created_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, to_timestamp(%s))
+            INSERT INTO conversation_messages (message_id, thread_id, user_id, role, content, content_searchable, timestamp, meta)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         """
-        params = (message_id, thread_id, role, content, status, model, meta_json, created_at)
+        params = (message_id, thread_id, user_id, role, content, content, created_at, meta_json)
         self.db.execute_update(query, params)
 
-        thread_update_query = "UPDATE conversation_threads SET updated_at = to_timestamp(%s) WHERE id = %s"
+        thread_update_query = "UPDATE conversation_threads SET updated_at = %s WHERE id = %s"
         self.db.execute_update(thread_update_query, (created_at, thread_id))
 
         return {"id": message_id, "thread_id": thread_id, "role": role, "content": content, "status": status, "model": model, "meta": meta, "created_at": created_at}
@@ -92,9 +92,9 @@ class ConversationService:
         params: List[Any] = [thread_id]
         if cursor:
             # Assuming cursor is a timestamp value from the 'created_at' field
-            sql_query += " AND created_at < to_timestamp(%s)"
+            sql_query += " AND timestamp < %s"
             params.append(int(cursor))
-        sql_query += " ORDER BY created_at DESC LIMIT %s"
+        sql_query += " ORDER BY timestamp DESC LIMIT %s"
         params.append(limit)
         results = self.db.execute_query(sql_query, tuple(params))
         for row in results:
@@ -105,7 +105,7 @@ class ConversationService:
         return results
 
     def get_all_messages_by_thread(self, thread_id: str) -> List[Dict[str, Any]]:
-        query = "SELECT * FROM conversation_messages WHERE thread_id = %s ORDER BY created_at ASC"
+        query = "SELECT * FROM conversation_messages WHERE thread_id = %s ORDER BY timestamp ASC"
         params = (thread_id,)
         results = self.db.execute_query(query, params)
         for row in results:
@@ -115,7 +115,7 @@ class ConversationService:
         return results
 
     def get_message_by_id(self, message_id: str) -> Optional[Dict[str, Any]]:
-        query = "SELECT * FROM conversation_messages WHERE id = %s"
+        query = "SELECT * FROM conversation_messages WHERE message_id = %s"
         params = (message_id,)
         results = self.db.execute_query(query, params)
         if not results:
@@ -146,7 +146,7 @@ class ConversationService:
         return new_message
 
     def get_attachment_by_id(self, attachment_id: str) -> Optional[Dict[str, Any]]:
-        query = "SELECT * FROM attachments WHERE id = %s"
+        query = "SELECT * FROM attachments WHERE attachment_id = %s"
         params = (attachment_id,)
         results = self.db.execute_query(query, params)
         return results[0] if results else None
@@ -155,22 +155,22 @@ class ConversationService:
         job_id = f"exp_{generate_id()}"
         created_at = int(time.time())
         query = """
-            INSERT INTO export_jobs (id, thread_id, user_id, format, status, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, 'queued', to_timestamp(%s), to_timestamp(%s))
+            INSERT INTO export_jobs (job_id, thread_id, user_id, format, status, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, 'queued', %s, %s)
         """
         params = (job_id, thread_id, user_id, format, created_at, created_at)
         self.db.execute_update(query, params)
         return {"id": job_id, "status": "queued"}
 
     def get_export_job(self, job_id: str) -> Optional[Dict[str, Any]]:
-        query = "SELECT * FROM export_jobs WHERE id = %s"
+        query = "SELECT * FROM export_jobs WHERE job_id = %s"
         params = (job_id,)
         results = self.db.execute_query(query, params)
         return results[0] if results else None
 
     def update_export_job_status(self, job_id: str, status: str, file_url: Optional[str] = None, error_message: Optional[str] = None):
         updated_at = int(time.time())
-        query = "UPDATE export_jobs SET status = %s, file_url = %s, error_message = %s, updated_at = to_timestamp(%s) WHERE id = %s"
+        query = "UPDATE export_jobs SET status = %s, file_url = %s, error_message = %s, updated_at = %s WHERE job_id = %s"
         params = (status, file_url, error_message, updated_at, job_id)
         self.db.execute_update(query, params)
 
@@ -219,8 +219,8 @@ class ConversationService:
     def create_attachment(self, attachment_data: Dict[str, Any]) -> Attachment:
         attachment_id = f"att_{generate_id()}"
         created_at = int(time.time())
-        query = "INSERT INTO attachments (id, kind, name, mime, size, url, created_at) VALUES (%s, %s, %s, %s, %s, %s, to_timestamp(%s))"
-        params = (attachment_id, attachment_data["kind"], attachment_data["name"], attachment_data["mime"], attachment_data["size"], attachment_data["url"], created_at)
+        query = "INSERT INTO attachments (attachment_id, thread_id, filename, content_type, file_size, file_path, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s)"
+        params = (attachment_id, attachment_data["thread_id"], attachment_data["name"], attachment_data["mime"], attachment_data["size"], attachment_data["url"], created_at)
         self.db.execute_update(query, params)
         return Attachment(id=attachment_id, created_at=created_at, **attachment_data)
 

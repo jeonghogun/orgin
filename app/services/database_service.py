@@ -92,7 +92,14 @@ class DatabaseService:
         pool = self._get_or_create_pool()
         conn = pool.getconn()
         try:
-            register_vector(conn)
+            # Try to register vector extension, but don't fail if it's not available
+            try:
+                register_vector(conn)
+            except psycopg2.ProgrammingError as e:
+                if "vector type not found" in str(e):
+                    logger.warning("pgvector extension not available, continuing without vector support")
+                else:
+                    raise
             # Clear test data if in test mode
             self._clear_test_data(conn)
             yield conn

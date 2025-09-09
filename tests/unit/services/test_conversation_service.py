@@ -96,9 +96,10 @@ def test_create_message(conversation_service, mock_db_service):
     query, params = args[0], args[1]
 
     assert "INSERT INTO conversation_messages" in query
-    assert "id, thread_id, role, content, status, model, meta, created_at" in query
+    assert "message_id, thread_id, user_id, role, content, content_searchable, timestamp, meta" in query
     assert params[1] == "thr_123"
-    assert params[2] == "user"
-    assert params[3] == "Hello"
-    assert params[6] == '{"some": "data"}'
+    assert params[2] == "anonymous"
+    assert params[3] == "user"
+    assert params[4] == "Hello"
+    assert params[7] == '{"some": "data"}'
     assert result["thread_id"] == "thr_123"

@@ -140,12 +140,12 @@ class StorageService:
         """Save an encrypted message to the database."""
         embedding = None # TODO: Add embedding generation
         query = """
-            INSERT INTO messages (message_id, room_id, user_id, role, content, content_searchable, timestamp, embedding)
-            VALUES (%s, %s, %s, %s, pgp_sym_encrypt(%s, %s), %s, %s, %s)
+            INSERT INTO messages (message_id, room_id, user_id, role, content, content_searchable, timestamp)
+            VALUES (%s, %s, %s, %s, pgp_sym_encrypt(%s, %s), %s, %s)
         """
         params = (
             message.message_id, message.room_id, message.user_id, message.role,
-            message.content, self.db_encryption_key, message.content, message.timestamp, embedding
+            message.content, self.db_encryption_key, message.content, message.timestamp
         )
         self.db.execute_update(query, params)
 
