@@ -22,7 +22,6 @@ const useEventSource = (url, eventListeners) => {
     eventSourceRef.current = es;
 
     es.onopen = () => {
-      console.log('SSE connection opened to', url);
       reconnectAttemptsRef.current = 0;
       if (eventListeners.open) {
         eventListeners.open();
@@ -36,19 +35,15 @@ const useEventSource = (url, eventListeners) => {
     });
 
     es.onerror = (e) => {
-      console.error('SSE connection error:', e);
       es.close();
 
       if (reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS) {
         const delay = INITIAL_RECONNECT_DELAY * Math.pow(2, reconnectAttemptsRef.current);
-        console.log(`Attempting to reconnect SSE in ${delay}ms...`);
-
         reconnectTimeoutRef.current = setTimeout(() => {
           reconnectAttemptsRef.current++;
           connect();
         }, delay);
       } else {
-        console.error('SSE max reconnection attempts reached. Giving up.');
         if (eventListeners.error) {
           eventListeners.error(new Error('Max reconnection attempts reached.'));
         }

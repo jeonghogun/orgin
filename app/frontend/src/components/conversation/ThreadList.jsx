@@ -1,34 +1,19 @@
 import React, { useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { Link, useParams } from 'react-router-dom';
+import { useMutation } from '@tanstack/react-query';
 import axios from 'axios';
-import { useThreads, useConversationActions } from '../../store/useConversationStore';
+import { useThreads } from '../../store/useConversationStore';
+import { useAppContext } from '../../context/AppContext';
 import { PlusIcon, ChatBubbleLeftIcon, ArrowDownTrayIcon } from '@heroicons/react/24/outline';
 import BudgetDisplay from './BudgetDisplay';
 
 const ThreadList = ({ isLoading, error }) => {
   const threads = useThreads();
-  const { addThread } = useConversationActions();
-  const navigate = useNavigate();
-  const queryClient = useQueryClient();
+  const { handleNewThread, createThreadMutation } = useAppContext();
   const { threadId: currentThreadId } = useParams();
   const [exportJobs, setExportJobs] = useState({});
 
   const MOCK_SUB_ROOM_ID = 'sub_room_123';
-
-  const createThreadMutation = useMutation({
-    mutationFn: (newThread) => axios.post(`/api/convo/subrooms/${MOCK_SUB_ROOM_ID}/threads`, newThread),
-    onSuccess: (response) => {
-      const newThread = response.data;
-      addThread(newThread);
-      navigate(`/threads/${newThread.id}`);
-    },
-  });
-
-  const handleNewThread = () => {
-    const title = "New Conversation"; // Simple title for now
-    createThreadMutation.mutate({ title });
-  };
 
   const exportThreadMutation = useMutation({
     mutationFn: ({ threadId, format }) => 

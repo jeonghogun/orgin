@@ -75,16 +75,14 @@ const ChatView = ({ threadId }) => {
           appendStreamChunk(threadId, messageId, content);
         }
       } catch (error) {
-        console.error('Error parsing streaming data:', error, 'Raw data:', e.data);
+        // Error parsing streaming data, ignore.
       }
     },
     done: (e) => {
-      console.log('SSE stream finished.');
       setActiveStreamUrl(null); // Stop the connection
       queryClient.invalidateQueries({ queryKey: ['messages', threadId] });
     },
     error: (e) => {
-      console.error('SSE connection error:', e);
       setActiveStreamUrl(null); // Stop trying to reconnect on fatal error
     }
   }), [threadId, activeStreamUrl, appendStreamChunk, queryClient]);
@@ -106,7 +104,9 @@ const ChatView = ({ threadId }) => {
   const createExportJobMutation = useMutation({
     mutationFn: (format) => axios.post(`/api/threads/${threadId}/export/jobs`, null, { params: { format } }),
     onSuccess: (response) => setExportJob(response.data),
-    onError: (error) => console.error("Failed to start export job", error)
+    onError: (error) => {
+      // Maybe show an error to the user in the future.
+    }
   });
 
   const { data: exportStatus } = useQuery({

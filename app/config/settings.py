@@ -37,7 +37,7 @@ class Settings(BaseSettings):
                     username=user,
                     password=password,
                     host=host,
-                    port=port,
+                    port=int(port),
                     path=f"{db}",
                 ))
         return v

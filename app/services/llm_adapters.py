@@ -7,7 +7,7 @@ from typing import AsyncGenerator, Dict, Any, List, Optional
 
 import openai
 from anthropic import AsyncAnthropic
-from google.generativeai import GenerativeModel, configure
+from google.generativeai import GenerativeModel, configure, types as genai_types
 from openai.types.chat import ChatCompletionChunk
 
 import redis
@@ -138,10 +138,75 @@ class AnthropicAdapter(BaseLLMAdapter):
         yield SSEEvent(event="done", data={})
 
 class GoogleAdapter(BaseLLMAdapter):
-    async def generate_stream(self, messages: List[Dict[str, Any]], model: str, temperature: float, max_tokens: int, tools: Optional[List[Dict[str, Any]]] = None) -> AsyncGenerator[SSEEvent, None]:
-        logger.warning("GoogleAdapter is not fully implemented yet.")
-        yield SSEEvent(event="delta", data=SSEDelta(content="[Google Gemini Response Placeholder]"))
-        await asyncio.sleep(0.1)
+    async def generate_stream(
+        self,
+        message_id: str,
+        messages: List[Dict[str, Any]],
+        model: str,
+        temperature: float,
+        max_tokens: int,
+        tools: Optional[List[Dict[str, Any]]] = None,
+    ) -> AsyncGenerator[SSEEvent, None]:
+        start_time = time.time()
+        was_successful = False
+
+        # TODO: Implement Redis-based cancellation check for Gemini streams.
+
+        gemini_model = GenerativeModel(model)
+
+        system_instruction = None
+        gemini_messages = []
+        for msg in messages:
+            if msg["role"] == "system":
+                # The system instruction is handled by a dedicated parameter.
+                system_instruction = msg["content"]
+                continue
+
+            # Gemini uses 'model' for the assistant's role.
+            role = "model" if msg["role"] == "assistant" else msg["role"]
+            gemini_messages.append({"role": role, "parts": [{"text": msg["content"]}]})
+
+        generation_config = genai_types.GenerationConfig(
+            temperature=temperature,
+            max_output_tokens=max_tokens,
+        )
+
+        try:
+            # NOTE: Assuming `generate_content_async` is the correct method for async streaming
+            # based on library conventions, as direct documentation was ambiguous.
+            # The `stream=True` parameter is crucial.
+            response = await gemini_model.generate_content_async(
+                contents=gemini_messages,
+                generation_config=generation_config,
+                system_instruction=system_instruction,
+                stream=True
+            )
+
+            async for chunk in response:
+                if chunk.text:
+                    yield SSEEvent(event="delta", data=SSEDelta(content=chunk.text))
+
+            # TODO: Determine how to get token usage from the Gemini stream.
+            # This information does not appear to be in the standard stream chunks.
+
+            was_successful = True
+        except AttributeError:
+            logger.error(
+                "`generate_content_async` not found. The `google-generativeai` library may be outdated or lacks an async client."
+            )
+            yield SSEEvent(event="error", data={"error": "Gemini adapter is misconfigured or library is incompatible."})
+            raise
+        except Exception as e:
+            LLM_CALLS_TOTAL.labels(provider="google", outcome="failure").inc()
+            logger.error(f"Google Gemini streaming error: {e}", exc_info=True)
+            error_data = {"code": e.__class__.__name__, "message": str(e)}
+            yield SSEEvent(event="error", data=error_data)
+        finally:
+            duration = time.time() - start_time
+            LLM_LATENCY_SECONDS.labels(provider="google").observe(duration)
+            if was_successful:
+                LLM_CALLS_TOTAL.labels(provider="google", outcome="success").inc()
+
         yield SSEEvent(event="done", data={})
 
 def get_llm_adapter(provider: str) -> BaseLLMAdapter:

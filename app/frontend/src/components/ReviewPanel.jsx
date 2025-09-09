@@ -18,7 +18,6 @@ const ReviewPanel = () => {
   const [socketError, setSocketError] = useState(null);
 
   const handleSocketMessage = useCallback((message) => {
-    console.log('WebSocket message received:', message);
     if (message.type === 'status_update' && message.payload && message.payload.status) {
       setReviewStatus(message.payload.status);
     }

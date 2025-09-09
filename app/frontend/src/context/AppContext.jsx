@@ -2,7 +2,7 @@ import React, { createContext, useState, useContext } from 'react';
 
 const AppContext = createContext();
 
-export const AppProvider = ({ children }) => {
+export const AppProvider = ({ children, value: providerValue }) => {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [selectedRoomId, setSelectedRoomId] = useState(null);
   const [error, setError] = useState(null);
@@ -23,6 +23,7 @@ export const AppProvider = ({ children }) => {
   };
 
   const value = {
+    // Internal state
     sidebarOpen,
     setSidebarOpen,
     selectedRoomId,
@@ -30,6 +31,8 @@ export const AppProvider = ({ children }) => {
     handleRoomSelect, // Keep for now for sidebar active state
     error,
     showError,
+    // Merge passed-in values
+    ...providerValue,
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
