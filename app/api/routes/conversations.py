@@ -291,23 +291,19 @@ async def search_conversations(
     Search conversations and attachments using a hybrid RAG approach
     (BM25 with time decay + vector similarity).
     """
-    try:
-        user_id = user_info.get("user_id")
-        if not user_id:
-            raise HTTPException(status_code=401, detail="User not authenticated")
+    user_id = user_info.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="User not authenticated")
 
-        results = await rag_service.search_hybrid(
-            query=request.query,
-            user_id=user_id,
-            thread_id=request.thread_id,
-            limit=request.limit,
-        )
-        
-        return {
-            "query": request.query,
-            "total_results": len(results),
-            "results": results,
-        }
-    except Exception as e:
-        logger.error(f"Conversation search error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"An unexpected error occurred during search: {e}")
+    results = await rag_service.search_hybrid(
+        query=request.query,
+        user_id=user_id,
+        thread_id=request.thread_id,
+        limit=request.limit,
+    )
+
+    return {
+        "query": request.query,
+        "total_results": len(results),
+        "results": results,
+    }

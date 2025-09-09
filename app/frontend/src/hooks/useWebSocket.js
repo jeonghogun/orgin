@@ -1,101 +1,118 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 
-const useWebSocket = (roomId, onMessage) => {
-  const socketRef = useRef(null);
-  const [isConnected, setIsConnected] = useState(false);
-  const reconnectTimeoutRef = useRef(null);
+const MAX_RECONNECT_ATTEMPTS = 5;
+const INITIAL_RECONNECT_DELAY = 1000; // 1 second
 
-  useEffect(() => {
-    if (!roomId) {
+/**
+ * A generic WebSocket hook with automatic reconnection logic.
+ * @param {string | null} url The WebSocket URL to connect to. If null, no connection is made.
+ * @param {function} onMessage A callback function to handle incoming messages.
+ * @param {string | null} token An optional authentication token.
+ * @returns {{ connectionStatus: 'idle' | 'connecting' | 'connected' | 'disconnected' | 'reconnecting' | 'failed' | 'error' }}
+ */
+const useWebSocket = (url, onMessage, token = null) => {
+  const [connectionStatus, setConnectionStatus] = useState('idle');
+  const websocket = useRef(null);
+  const reconnectAttempts = useRef(0);
+  const processedMessageIds = useRef(new Set());
+
+  const connect = useCallback(() => {
+    if (!url) {
+      return;
+    }
+    if (websocket.current && websocket.current.readyState === WebSocket.OPEN) {
+      console.log('WebSocket already connected.');
       return;
     }
 
-    const connectWebSocket = () => {
-      // 기존 연결이 있다면 정리
-      if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-        socketRef.current.close();
-      }
+    setConnectionStatus('connecting');
 
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const host = window.location.host;
-      const wsUrl = `${protocol}//${host}/ws/rooms/${roomId}`;
+    // The WebSocket constructor handles the token presence correctly.
+    websocket.current = new WebSocket(url, token ? ['graphql-ws', token] : undefined);
 
-      // Attempt to get the auth token from localStorage.
-      const token = localStorage.getItem('firebaseIdToken') || localStorage.getItem('authToken');
+    websocket.current.onopen = () => {
+      console.log('WebSocket connected to:', url);
+      setConnectionStatus('connected');
+      reconnectAttempts.current = 0;
+    };
 
+    websocket.current.onmessage = (event) => {
       try {
-        socketRef.current = new WebSocket(wsUrl, token ? [token] : undefined);
+        const message = JSON.parse(event.data);
 
-        socketRef.current.onopen = () => {
-          console.log(`WebSocket connected to room ${roomId}`);
-          setIsConnected(true);
-          
-          // 재연결 타이머 클리어
-          if (reconnectTimeoutRef.current) {
-            clearTimeout(reconnectTimeoutRef.current);
-            reconnectTimeoutRef.current = null;
-          }
-        };
-
-        socketRef.current.onmessage = (event) => {
-          try {
-            const message = JSON.parse(event.data);
-            if (message.type === 'new_message') {
-              onMessage(message.payload);
-            }
-          } catch (error) {
-            console.error('Error parsing incoming WebSocket message:', error);
-          }
-        };
-
-        socketRef.current.onerror = (error) => {
-          console.error('WebSocket error:', error);
-          setIsConnected(false);
-        };
-
-        socketRef.current.onclose = (event) => {
-          console.log(`WebSocket disconnected from room ${roomId}`, event.code, event.reason);
-          setIsConnected(false);
-          
-          // 정상적인 종료가 아닌 경우에만 재연결 시도
-          if (event.code !== 1000 && event.code !== 1001) {
-            console.log(`Attempting to reconnect to room ${roomId} in 3 seconds...`);
-            reconnectTimeoutRef.current = setTimeout(() => {
-              if (roomId) {
-                connectWebSocket();
-              }
-            }, 3000);
-          }
-        };
-      } catch (error) {
-        console.error('Failed to create WebSocket connection:', error);
-        setIsConnected(false);
-      }
-    };
-
-    // 초기 연결
-    connectWebSocket();
-
-    // Cleanup function
-    return () => {
-      // 재연결 타이머 클리어
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current);
-        reconnectTimeoutRef.current = null;
-      }
-      
-      // WebSocket 연결 종료 (정상 종료 코드 사용)
-      if (socketRef.current) {
-        if (socketRef.current.readyState === WebSocket.OPEN) {
-          socketRef.current.close(1000, 'Component unmounting');
+        // Use a timestamp or a unique message ID for deduplication if available
+        const messageId = message.id || message.ts || message.timestamp;
+        if (messageId && processedMessageIds.current.has(messageId)) {
+          console.log('Skipping duplicate message:', messageId);
+          return;
         }
-        socketRef.current = null;
+        if (messageId) {
+          processedMessageIds.current.add(messageId);
+        }
+
+        onMessage(message);
+      } catch (err) {
+        console.error('Failed to parse WebSocket message:', err);
       }
     };
-  }, [roomId, onMessage]);
 
-  // 연결 상태 반환
-  return { isConnected };
+    websocket.current.onerror = (err) => {
+      console.error('WebSocket error:', err);
+      setConnectionStatus('error');
+    };
+
+    websocket.current.onclose = (event) => {
+      console.log(`WebSocket disconnected:`, event.code, event.reason);
+      setConnectionStatus('disconnected');
+
+      // Do not reconnect on normal closure or policy violations
+      if (event.code === 1000 || event.code === 1001 || event.code === 1008) {
+        if (event.code === 1008) setConnectionStatus('failed');
+        return;
+      }
+
+      if (reconnectAttempts.current < MAX_RECONNECT_ATTEMPTS) {
+        const delay = INITIAL_RECONNECT_DELAY * Math.pow(2, reconnectAttempts.current);
+        console.log(`Attempting to reconnect in ${delay}ms...`);
+        setConnectionStatus('reconnecting');
+        setTimeout(() => {
+          reconnectAttempts.current++;
+          connect();
+        }, delay);
+      } else {
+        console.error('Could not reconnect to WebSocket after multiple attempts.');
+        setConnectionStatus('failed');
+      }
+    };
+  }, [url, onMessage, token]);
+
+  useEffect(() => {
+    const handleOnline = () => {
+      console.log('Browser is online. Attempting to connect WebSocket.');
+      connect();
+    };
+    const handleOffline = () => {
+      console.log('Browser is offline. Closing WebSocket.');
+      if (websocket.current) {
+        websocket.current.close();
+      }
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    connect();
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+      if (websocket.current) {
+        websocket.current.close(1000); // Normal closure
+      }
+    };
+  }, [connect]);
+
+  return { connectionStatus };
 };
 
 export default useWebSocket;

@@ -76,3 +76,29 @@ def test_create_new_message_version(conversation_service, mock_db_service):
     args, kwargs = conversation_service.create_message.call_args
     assert kwargs["content"] == "New content"
     assert kwargs["meta"]["parentId"] == "msg_orig"
+
+def test_create_message(conversation_service, mock_db_service):
+    """
+    Test that create_message constructs the correct SQL query.
+    """
+    result = conversation_service.create_message(
+        thread_id="thr_123",
+        role="user",
+        content="Hello",
+        status="complete",
+        model="gpt-4o",
+        meta={"some": "data"}
+    )
+
+    mock_db_service.execute_update.assert_called()
+    # First call is to INSERT, second is to UPDATE thread timestamp
+    args, _ = mock_db_service.execute_update.call_args_list[0]
+    query, params = args[0], args[1]
+
+    assert "INSERT INTO conversation_messages" in query
+    assert "id, thread_id, role, content, status, model, meta, created_at" in query
+    assert params[1] == "thr_123"
+    assert params[2] == "user"
+    assert params[3] == "Hello"
+    assert params[6] == '{"some": "data"}'
+    assert result["thread_id"] == "thr_123"

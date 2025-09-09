@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import SearchPanel from './components/conversation/SearchPanel';
 import { AppProvider } from './context/AppContext';
 import Main from './pages/Main';
+import ErrorBoundary from './components/common/ErrorBoundary';
 
 const queryClient = new QueryClient();
 
@@ -25,13 +26,15 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <AppProvider>
         {showSearch && <SearchPanel onClose={() => setShowSearch(false)} />}
-        <Router>
-          <Routes>
-            <Route path="/" element={<Main />} />
-            <Route path="/threads/:threadId" element={<Main />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </Router>
+        <ErrorBoundary>
+          <Router>
+            <Routes>
+              <Route path="/" element={<Main />} />
+              <Route path="/threads/:threadId" element={<Main />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </Router>
+        </ErrorBoundary>
       </AppProvider>
     </QueryClientProvider>
   );
