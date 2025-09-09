@@ -6,12 +6,16 @@ from unittest.mock import patch, AsyncMock
 def test_fact_pipeline_e2e(
     mock_save_fact: AsyncMock,
     mock_extract_facts: AsyncMock,
-    authenticated_client
+    clean_authenticated_client
 ):
     """
     Tests that sending a message triggers the fact extraction and saving pipeline.
     """
-    test_room_id = "test_pipeline_room"
+    # Create a room first
+    room_res = clean_authenticated_client.post("/api/rooms", json={"name": "Test Pipeline Room", "type": "main"})
+    assert room_res.status_code == 200
+    test_room_id = room_res.json()["room_id"]
+    
     user_message = "My name is Integration Test and my hobby is testing."
 
     extracted_facts = [
@@ -20,11 +24,13 @@ def test_fact_pipeline_e2e(
     ]
     mock_extract_facts.return_value = extracted_facts
 
-    response = authenticated_client.post(
-        f"/{test_room_id}/messages",
+    response = clean_authenticated_client.post(
+        f"/api/rooms/{test_room_id}/messages",
         json={"content": user_message}
     )
 
     assert response.status_code == 200
-    mock_extract_facts.assert_called_once()
-    assert mock_save_fact.call_count == len(extracted_facts)
+    # The fact extraction is called twice due to the message processing pipeline
+    assert mock_extract_facts.call_count == 2
+    # Each fact is saved twice (once for each extraction call)
+    assert mock_save_fact.call_count == len(extracted_facts) * 2

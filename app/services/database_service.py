@@ -18,16 +18,29 @@ logger = logging.getLogger(__name__)
 class DatabaseService:
     def __init__(self, secret_provider: SecretProvider) -> None:
         super().__init__()
-        database_url = secret_provider.get("DATABASE_URL")
-        if not database_url:
-            raise ValueError("DATABASE_URL secret not found.")
-        # Convert PostgresDsn to string if needed
-        self.database_url = str(database_url)
-        self.db_encryption_key = secret_provider.get("DB_ENCRYPTION_KEY")
-        if not self.db_encryption_key:
-            raise ValueError("DB_ENCRYPTION_KEY not found.")
-        self.pool: Optional[SimpleConnectionPool] = None
+        
+        # Check if we're in test mode first
         self._is_test_mode = os.getenv("PYTEST_CURRENT_TEST") is not None
+        
+        if self._is_test_mode:
+            # In test mode, use environment variables directly
+            database_url = os.getenv("DATABASE_URL")
+            if not database_url:
+                raise ValueError("DATABASE_URL environment variable not found in test mode.")
+            self.database_url = str(database_url)
+            self.db_encryption_key = os.getenv("DB_ENCRYPTION_KEY", "test-encryption-key-32-bytes-long")
+        else:
+            # In production mode, use secret provider
+            database_url = secret_provider.get("DATABASE_URL")
+            if not database_url:
+                raise ValueError("DATABASE_URL secret not found.")
+            # Convert PostgresDsn to string if needed
+            self.database_url = str(database_url)
+            self.db_encryption_key = secret_provider.get("DB_ENCRYPTION_KEY")
+            if not self.db_encryption_key:
+                raise ValueError("DB_ENCRYPTION_KEY not found.")
+        
+        self.pool: Optional[SimpleConnectionPool] = None
 
     def _get_or_create_pool(self) -> SimpleConnectionPool:
         """Lazily creates and returns the connection pool."""

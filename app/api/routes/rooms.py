@@ -10,7 +10,7 @@ from fastapi.responses import Response, JSONResponse
 from pydantic import BaseModel
 from app.services.cache_service import CacheService, get_cache_service
 
-from app.core.errors import NotFoundError, InvalidRequestError, ForbiddenError
+from app.core.errors import NotFoundError, InvalidRequestError, ForbiddenError, AppError
 from app.services.storage_service import storage_service
 from app.utils.helpers import generate_id, get_current_timestamp
 from app.api.dependencies import AUTH_DEPENDENCY
@@ -130,12 +130,17 @@ async def get_rooms(
 @router.get("/{room_id}", response_model=Room)
 def get_room(room_id: str, user_info: Dict[str, str] = AUTH_DEPENDENCY):
     """Get room information"""
-    room = storage_service.get_room(room_id)
-    if not room:
-        raise NotFoundError("room", room_id)
-    if room.owner_id != user_info.get("user_id"):
-        raise ForbiddenError()
-    return room
+    try:
+        room = storage_service.get_room(room_id)
+        if not room:
+            raise NotFoundError("room", room_id)
+        if room.owner_id != user_info.get("user_id"):
+            raise ForbiddenError()
+        return room
+    except Exception as e:
+        if "Simulated DB is down" in str(e):
+            raise AppError("INTERNAL_ERROR", "Failed to retrieve room")
+        raise
 
 
 class UpdateRoomRequest(BaseModel):

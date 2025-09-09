@@ -32,8 +32,7 @@ async def test_semantic_memory_inheritance(
     mock_get_llm,
     spied_get_relevant,
     mock_build_prompt,
-    authenticated_client: TestClient,
-    db_session,
+    clean_authenticated_client: TestClient,
 ):
     """
     Tests that a sub-room correctly inherits memories from its parent main room
@@ -69,7 +68,7 @@ async def test_semantic_memory_inheritance(
     mock_build_prompt.return_value = "Final Prompt"
 
     # --- 2. Setup: Create main and sub rooms ---
-    client = authenticated_client
+    client = clean_authenticated_client
     main_room_res = client.post("/api/rooms", json={"name": "Main Inheritance Test", "type": "main"})
     assert main_room_res.status_code == 200, main_room_res.text
     main_room_id = main_room_res.json()["room_id"]

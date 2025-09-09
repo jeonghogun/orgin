@@ -17,7 +17,7 @@ from app.tasks.review_tasks import (
 @patch("app.services.llm_service.GeminiProvider.invoke", new_callable=AsyncMock)
 @patch("app.services.llm_service.OpenAIProvider.invoke", new_callable=AsyncMock)
 @patch("app.services.review_service.ReviewService.start_review_process", new_callable=AsyncMock)
-async def test_full_review_flow_e2e(mock_start_review, mock_openai_invoke, mock_gemini_invoke, mock_claude_invoke, authenticated_client: TestClient):
+async def test_full_review_flow_e2e(mock_start_review, mock_openai_invoke, mock_gemini_invoke, mock_claude_invoke, clean_authenticated_client: TestClient):
     """
     Tests the full, end-to-end review flow, ensuring all three LLM providers are called.
     """
@@ -62,11 +62,11 @@ async def test_full_review_flow_e2e(mock_start_review, mock_openai_invoke, mock_
     mock_start_review.side_effect = mock_review_process
 
     # --- Setup: Create parent rooms ---
-    main_room_res = authenticated_client.post("/api/rooms", json={"name": "Main for E2E", "type": "main"})
+    main_room_res = clean_authenticated_client.post("/api/rooms", json={"name": "Main for E2E", "type": "main"})
     assert main_room_res.status_code == 200
     main_room_id = main_room_res.json()["room_id"]
 
-    sub_room_res = authenticated_client.post(
+    sub_room_res = clean_authenticated_client.post(
         "/api/rooms",
         json={"name": "Sub for E2E", "type": "sub", "parent_id": main_room_id}
     )
@@ -78,7 +78,7 @@ async def test_full_review_flow_e2e(mock_start_review, mock_openai_invoke, mock_
     review_instruction = "E2E test instruction"
     custom_panelists = ["openai", "gemini"] # Test with a subset of providers
 
-    create_review_res = authenticated_client.post(
+    create_review_res = clean_authenticated_client.post(
         f"/api/rooms/{sub_room_id}/reviews",
         json={"topic": review_topic, "instruction": review_instruction, "panelists": custom_panelists}
     )
@@ -91,7 +91,7 @@ async def test_full_review_flow_e2e(mock_start_review, mock_openai_invoke, mock_
     start_time = time.time()
     review_status = ""
     while time.time() - start_time < timeout_seconds:
-        status_res = authenticated_client.get(f"/api/reviews/{review_id}")
+        status_res = clean_authenticated_client.get(f"/api/reviews/{review_id}")
         assert status_res.status_code == 200
         review_status = status_res.json()["status"]
         if review_status == "completed":
@@ -103,7 +103,7 @@ async def test_full_review_flow_e2e(mock_start_review, mock_openai_invoke, mock_
     assert review_status == "completed", f"Review did not complete within {timeout_seconds} seconds."
 
     # --- Fetch and validate the final report ---
-    report_res = authenticated_client.get(f"/api/reviews/{review_id}/report")
+    report_res = clean_authenticated_client.get(f"/api/reviews/{review_id}/report")
     assert report_res.status_code == 200
 
     report_data = report_res.json()["data"]
@@ -116,7 +116,7 @@ async def test_full_review_flow_e2e(mock_start_review, mock_openai_invoke, mock_
 
 @pytest.mark.e2e
 @patch("app.tasks.review_tasks.LLMService")
-async def test_review_flow_with_provider_fallback(mock_llm_class, authenticated_client: TestClient):
+async def test_review_flow_with_provider_fallback(mock_llm_class, clean_authenticated_client: TestClient):
     """
     Tests that the full E2E review flow completes successfully even if one provider
     fails, demonstrating the fallback logic.
@@ -135,13 +135,13 @@ async def test_review_flow_with_provider_fallback(mock_llm_class, authenticated_
     mock_llm_instance.get_provider.return_value.invoke.side_effect = invoke_side_effect
 
     # 2. Setup rooms
-    main_room_res = authenticated_client.post("/api/rooms", json={"name": "Main for Fallback", "type": "main"})
+    main_room_res = clean_authenticated_client.post("/api/rooms", json={"name": "Main for Fallback", "type": "main"})
     main_room_id = main_room_res.json()["room_id"]
-    sub_room_res = authenticated_client.post("/api/rooms", json={"name": "Sub for Fallback", "type": "sub", "parent_id": main_room_id})
+    sub_room_res = clean_authenticated_client.post("/api/rooms", json={"name": "Sub for Fallback", "type": "sub", "parent_id": main_room_id})
     sub_room_id = sub_room_res.json()["room_id"]
 
     # 3. Trigger the review with all three panelists
-    create_review_res = authenticated_client.post(
+    create_review_res = clean_authenticated_client.post(
         f"/api/rooms/{sub_room_id}/reviews",
         json={"topic": "Fallback Test", "instruction": "Test", "panelists": ["openai", "gemini", "claude"]}
     )
@@ -153,7 +153,7 @@ async def test_review_flow_with_provider_fallback(mock_llm_class, authenticated_
     start_time = time.time()
     review_status = ""
     while time.time() - start_time < timeout_seconds:
-        status_res = authenticated_client.get(f"/api/reviews/{review_id}")
+        status_res = clean_authenticated_client.get(f"/api/reviews/{review_id}")
         assert status_res.status_code == 200
         review_status = status_res.json()["status"]
         if review_status == "completed":

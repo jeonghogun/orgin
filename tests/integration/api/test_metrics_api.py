@@ -1,5 +1,4 @@
 from fastapi.testclient import TestClient
-from app.services.storage_service import storage_service
 import time
 
 def test_get_metrics_endpoint(authenticated_client: TestClient):
@@ -10,9 +9,8 @@ def test_get_metrics_endpoint(authenticated_client: TestClient):
     # We need to create rooms and reviews first to satisfy foreign key constraints
     # Note: The test client is synchronous, so we don't use await here.
     # The underlying app calls are async and handled by the TestClient.
-    main_room_res = authenticated_client.post("/api/rooms", json={"name": "Main for Metrics", "type": "main"})
-    assert main_room_res.status_code == 200
-    main_room_id = main_room_res.json()["room_id"]
+    # Use the existing main room created by authenticated_client fixture
+    main_room_id = "room_main_1"
 
     sub_room_res = authenticated_client.post(f"/api/rooms", json={"name": "Sub for Metrics", "type": "sub", "parent_id": main_room_id})
     assert sub_room_res.status_code == 200
@@ -33,9 +31,10 @@ def test_get_metrics_endpoint(authenticated_client: TestClient):
         round_metrics=[],
         created_at=int(time.time())
     )
-    # The storage service methods are async, so we need to run them in an event loop
-    import asyncio
-    asyncio.run(storage_service.save_review_metrics(metric1))
+    # Save the review metrics
+    from app.api.dependencies import get_storage_service
+    storage_service = get_storage_service()
+    storage_service.save_review_metrics(metric1)
 
     # --- 2. Call the endpoint ---
     response = authenticated_client.get("/api/metrics")

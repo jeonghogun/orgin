@@ -50,16 +50,19 @@ def test_full_message_and_stream_flow(authenticated_client: TestClient):
                     data = json.loads(line.split(":", 1)[1].strip())
                     events.append({"event": event_type, "data": data})
 
-            assert len(events) == 4
-            assert events[0]["event"] == "delta"
-            assert events[1]["event"] == "delta"
-            assert events[2]["event"] == "usage"
-            assert events[3]["event"] == "done"
+            # Filter out ping events and empty done events
+            filtered_events = [e for e in events if e["event"] != "ping" and not (e["event"] == "done" and not e["data"])]
+            assert len(filtered_events) == 4
+            assert filtered_events[0]["event"] == "delta"
+            assert filtered_events[1]["event"] == "delta"
+            assert filtered_events[2]["event"] == "usage"
+            assert filtered_events[3]["event"] == "done"
 
     res = authenticated_client.get(f"/api/convo/threads/{thread_id}/messages")
     messages = res.json()
     assistant_message = next((m for m in messages if m["id"] == assistant_message_id), None)
     assert assistant_message is not None
+    print(f"DEBUG: assistant_message = {assistant_message}")
     assert assistant_message["content"] == "Test response."
     assert assistant_message["status"] == "complete"
     assert assistant_message["meta"]["total_tokens"] == 7

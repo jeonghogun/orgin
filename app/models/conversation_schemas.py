@@ -36,8 +36,9 @@ class ToolCall(BaseModel):
 class MessageMeta(BaseModel):
     tokens_prompt: Optional[int] = None
     tokens_output: Optional[int] = None
+    total_tokens: Optional[int] = None
     cost_usd: Optional[float] = None
-    parent_id: Optional[str] = None # For version tree
+    parent_id: Optional[str] = Field(default=None, alias='parentId') # For version tree
     attachments: Optional[List[Attachment]] = None
     tool_calls: Optional[List[ToolCall]] = None
 

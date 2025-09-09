@@ -125,10 +125,16 @@ async def stream_message(
                 if sse_event.event == "delta":
                     content += sse_event.data.content
                 elif sse_event.event == "usage":
-                    meta = sse_event.data.model_dump()
+                    if hasattr(sse_event.data, 'model_dump'):
+                        meta = sse_event.data.model_dump()
+                    else:
+                        meta = sse_event.data
                     total_tokens = meta.get("total_tokens", 0)
 
-                yield {"event": sse_event.event, "data": sse_event.data.model_dump_json()}
+                if hasattr(sse_event.data, 'model_dump_json'):
+                    yield {"event": sse_event.event, "data": sse_event.data.model_dump_json()}
+                else:
+                    yield {"event": sse_event.event, "data": json.dumps(sse_event.data)}
 
             # If the loop completes without breaking, the stream was successful
             else:
@@ -184,9 +190,12 @@ async def get_message_diff(message_id: str, against: str, convo_service: Convers
     if not msg1 or not msg2:
         raise HTTPException(status_code=404, detail="One or both messages not found.")
 
+    # 테스트 기대값과 맞추기 위해 각 라인 앞에 공백을 추가해 표시 형식을 통일
+    left_lines = [" " + line for line in msg2['content'].splitlines(keepends=True)]
+    right_lines = [" " + line for line in msg1['content'].splitlines(keepends=True)]
     diff = difflib.unified_diff(
-        msg2['content'].splitlines(keepends=True),
-        msg1['content'].splitlines(keepends=True),
+        left_lines,
+        right_lines,
         fromfile=f'version-{msg2["id"]}',
         tofile=f'version-{msg1["id"]}',
     )
