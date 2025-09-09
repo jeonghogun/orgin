@@ -69,7 +69,9 @@ async def stream_message(
     if user_id == "anonymous":
         raise HTTPException(status_code=401, detail="Could not identify user for streaming.")
 
-    thread_id = draft_message["room_id"]
+    thread_id = draft_message.get("thread_id")
+    if not thread_id:
+        raise HTTPException(status_code=404, detail="Thread ID not found in message.")
     history = convo_service.get_messages_by_thread(thread_id, limit=20)[::-1]
     user_query = next((m["content"] for m in reversed(history) if m["role"] == "user"), "")
 
@@ -113,6 +115,7 @@ async def stream_message(
         SSE_SESSIONS_ACTIVE.inc()
         content, meta, total_tokens = "", {}, 0
         stream_successful = False
+        error_sent = False
         try:
             # Send an initial ping to confirm connection
             yield {"event": "ping", "data": json.dumps({"message": "Connection established"})}
@@ -120,6 +123,10 @@ async def stream_message(
             async for sse_event in adapter.generate_stream(message_id=message_id, messages=messages_for_llm, model=draft_message.get("model", "gpt-4o-mini"), temperature=0.7, max_tokens=2048):
                 if await request.is_disconnected():
                     logger.warning(f"Client disconnected from stream {message_id}")
+                    # Yield a specific error for disconnection and stop
+                    if not error_sent:
+                        yield {"event": "error", "data": json.dumps({"error": "Client disconnected"})}
+                        error_sent = True
                     break
 
                 if sse_event.event == "delta":
@@ -136,14 +143,16 @@ async def stream_message(
                 else:
                     yield {"event": sse_event.event, "data": json.dumps(sse_event.data)}
 
-            # If the loop completes without breaking, the stream was successful
-            else:
+            # After the loop, if no error was sent, send the done event.
+            if not error_sent:
                 yield {"event": "done", "data": json.dumps({"message": "Stream completed successfully"})}
                 stream_successful = True
 
         except Exception as e:
             logger.error(f"Error during SSE stream for {message_id}: {e}", exc_info=True)
-            yield {"event": "error", "data": json.dumps({"error": "An error occurred during streaming."})}
+            if not error_sent:
+                yield {"event": "error", "data": json.dumps({"error": "An error occurred during streaming."})}
+                error_sent = True
 
         finally:
             SSE_SESSIONS_ACTIVE.dec()

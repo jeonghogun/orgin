@@ -21,7 +21,6 @@ const useWebSocket = (url, onMessage, token = null) => {
       return;
     }
     if (websocket.current && websocket.current.readyState === WebSocket.OPEN) {
-      console.log('WebSocket already connected.');
       return;
     }
 
@@ -31,7 +30,6 @@ const useWebSocket = (url, onMessage, token = null) => {
     websocket.current = new WebSocket(url, token ? ['graphql-ws', token] : undefined);
 
     websocket.current.onopen = () => {
-      console.log('WebSocket connected to:', url);
       setConnectionStatus('connected');
       reconnectAttempts.current = 0;
     };
@@ -43,7 +41,6 @@ const useWebSocket = (url, onMessage, token = null) => {
         // Use a timestamp or a unique message ID for deduplication if available
         const messageId = message.id || message.ts || message.timestamp;
         if (messageId && processedMessageIds.current.has(messageId)) {
-          console.log('Skipping duplicate message:', messageId);
           return;
         }
         if (messageId) {
@@ -52,17 +49,15 @@ const useWebSocket = (url, onMessage, token = null) => {
 
         onMessage(message);
       } catch (err) {
-        console.error('Failed to parse WebSocket message:', err);
+        // Failed to parse WebSocket message
       }
     };
 
     websocket.current.onerror = (err) => {
-      console.error('WebSocket error:', err);
       setConnectionStatus('error');
     };
 
     websocket.current.onclose = (event) => {
-      console.log(`WebSocket disconnected:`, event.code, event.reason);
       setConnectionStatus('disconnected');
 
       // Do not reconnect on normal closure or policy violations
@@ -73,14 +68,12 @@ const useWebSocket = (url, onMessage, token = null) => {
 
       if (reconnectAttempts.current < MAX_RECONNECT_ATTEMPTS) {
         const delay = INITIAL_RECONNECT_DELAY * Math.pow(2, reconnectAttempts.current);
-        console.log(`Attempting to reconnect in ${delay}ms...`);
         setConnectionStatus('reconnecting');
         setTimeout(() => {
           reconnectAttempts.current++;
           connect();
         }, delay);
       } else {
-        console.error('Could not reconnect to WebSocket after multiple attempts.');
         setConnectionStatus('failed');
       }
     };
@@ -88,11 +81,9 @@ const useWebSocket = (url, onMessage, token = null) => {
 
   useEffect(() => {
     const handleOnline = () => {
-      console.log('Browser is online. Attempting to connect WebSocket.');
       connect();
     };
     const handleOffline = () => {
-      console.log('Browser is offline. Closing WebSocket.');
       if (websocket.current) {
         websocket.current.close();
       }

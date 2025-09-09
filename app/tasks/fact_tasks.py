@@ -15,7 +15,8 @@ def request_user_clarification_task(self, user_id: str, room_id: str, fact_type:
             f"regarding a conflict for fact type '{fact_type}' involving fact IDs: {fact_ids}"
         )
         # In a real application, this would send a websocket message to the frontend.
-        print(f"Placeholder: A user clarification for {fact_type} would be requested for user {user_id}.")
+        # The print statement below was for debugging and is removed in production.
+        pass
 
     except Exception as exc:
         logger.error(f"Error in request_user_clarification_task for user {user_id}: {exc}", exc_info=True)
