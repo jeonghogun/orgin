@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useState, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
-import useReviewSocket from '../hooks/useReviewSocket';
+import useWebSocket from '../hooks/useWebSocket';
 import axios from 'axios';
 
 import { useQuery } from '@tanstack/react-query';
@@ -14,8 +14,24 @@ const fetchReport = async (reviewId) => {
 
 const ReviewPanel = () => {
   const { reviewId } = useParams();
+  const [reviewStatus, setReviewStatus] = useState('pending');
+  const [socketError, setSocketError] = useState(null);
+
+  const handleSocketMessage = useCallback((message) => {
+    console.log('WebSocket message received:', message);
+    if (message.type === 'status_update' && message.payload && message.payload.status) {
+      setReviewStatus(message.payload.status);
+    }
+    if (message.event === 'error') {
+        setSocketError(message.data?.error || 'An unknown socket error occurred.');
+    }
+  }, []);
+
   const placeholderToken = "your-placeholder-jwt-here";
-  const { status: reviewStatus, error: socketError, connectionStatus } = useReviewSocket(reviewId, placeholderToken);
+  const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+  const wsUrl = `${wsProtocol}://${window.location.host}/ws/reviews/${reviewId}`;
+
+  const { connectionStatus } = useWebSocket(wsUrl, handleSocketMessage, placeholderToken);
 
   const { data: report, isLoading: isReportLoading, error: reportError } = useQuery({
     queryKey: ['reviewReport', reviewId],
