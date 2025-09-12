@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, useParams, useNavigate } from 'react-router-dom';
-import { QueryClient, QueryClientProvider, useMutation, useQueryClient } from '@tanstack/react-query';
+import React, { useState, useEffect } from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate, useParams, useNavigate, useLocation } from 'react-router-dom';
+import { QueryClient, QueryClientProvider, useMutation, useQueryClient, useQuery } from '@tanstack/react-query';
 import axios from 'axios';
 
 import SearchPanel from './components/conversation/SearchPanel';
@@ -9,30 +9,49 @@ import Main from './pages/Main';
 import ErrorBoundary from './components/common/ErrorBoundary';
 import useKeyboardShortcuts from './hooks/useKeyboardShortcuts';
 import { useConversationActions } from './store/useConversationStore';
-import useRoomStore from './store/useRoomStore';
-
-const queryClient = new QueryClient();
+import { ROOM_TYPES } from './constants';
 
 // This component uses hooks that require Router context (like useNavigate)
 function AppContent() {
   const [showSearch, setShowSearch] = useState(false);
   const { addThread } = useConversationActions();
-  const { selectedRoomId } = useRoomStore();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { roomId } = useParams();
+  const location = useLocation();
+
+  // 룸 목록을 가져와서 메인룸 자동 선택
+  const { data: rooms = [] } = useQuery({
+    queryKey: ['rooms'],
+    queryFn: async () => {
+      const { data } = await axios.get('/api/rooms');
+      return data;
+    },
+    staleTime: 5 * 60 * 1000,
+    retry: 1,
+  });
+
+  // 메인룸 자동 선택 로직 - 루트 경로에서만 실행
+  useEffect(() => {
+    if (rooms.length > 0 && !roomId && location.pathname === '/') {
+      const mainRoom = rooms.find(room => room.type === ROOM_TYPES.MAIN);
+      if (mainRoom) {
+        navigate(`/rooms/${mainRoom.room_id}`);
+      }
+    }
+  }, [rooms, roomId, location.pathname, navigate]);
 
   // Logic for creating a new thread (conversation) in the selected room
   const createThreadMutation = useMutation({
     mutationFn: (newThread) => {
-      if (!selectedRoomId) throw new Error("No room selected");
-      // This API endpoint needs to be verified. Assuming a standard REST structure.
-      return axios.post(`/api/rooms/${selectedRoomId}/threads`, newThread);
+      if (!roomId) throw new Error("No room selected");
+      return axios.post(`/api/convo/rooms/${roomId}/threads`, newThread);
     },
     onSuccess: (response) => {
       const newThread = response.data;
-      queryClient.invalidateQueries({ queryKey: ['threads', selectedRoomId] });
+      queryClient.invalidateQueries({ queryKey: ['threads', roomId] });
       addThread(newThread);
-      navigate(`/rooms/${selectedRoomId}/threads/${newThread.id}`);
+      navigate(`/rooms/${roomId}/threads/${newThread.id}`);
     },
     onError: (error) => {
       console.error('Failed to create thread:', error);
@@ -76,14 +95,30 @@ function AppContent() {
 
   useKeyboardShortcuts(shortcuts);
 
+  // 룸 생성 mutation 추가
+  const createRoomMutation = useMutation({
+    mutationFn: async ({ name, type, parentId }) => {
+      const { data } = await axios.post('/api/rooms', { name, type, parent_id: parentId });
+      return data;
+    },
+    onSuccess: (newRoom) => {
+      queryClient.invalidateQueries({ queryKey: ['rooms'] });
+      navigate(`/rooms/${newRoom.room_id}`);
+    },
+    onError: (error) => {
+      console.error('Failed to create room:', error);
+      alert('Error: ' + error.response?.data?.detail || 'Could not create room.');
+    },
+  });
+
   return (
-    <AppProvider value={{ handleNewThread, createThreadMutation }}>
+    <AppProvider value={{ handleNewThread, createThreadMutation, createRoomMutation }}>
       {showSearch && <SearchPanel onClose={() => setShowSearch(false)} />}
       <ErrorBoundary>
         <Routes>
-          <Route path="/" element={<Main />} />
-          <Route path="/rooms/:roomId" element={<Main />} />
-          <Route path="/rooms/:roomId/threads/:threadId" element={<Main />} />
+          <Route path="/" element={<Main createRoomMutation={createRoomMutation} />} />
+          <Route path="/rooms/:roomId" element={<Main createRoomMutation={createRoomMutation} />} />
+          <Route path="/rooms/:roomId/threads/:threadId" element={<Main createRoomMutation={createRoomMutation} />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </ErrorBoundary>
@@ -91,15 +126,9 @@ function AppContent() {
   );
 }
 
-// Main App component sets up providers and the router
+// App component is now simpler, as providers are in main.jsx
 function App() {
-  return (
-    <QueryClientProvider client={queryClient}>
-      <Router>
-        <AppContent />
-      </Router>
-    </QueryClientProvider>
-  );
+  return <AppContent />;
 }
 
 export default App;

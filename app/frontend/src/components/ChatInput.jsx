@@ -1,8 +1,9 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 import { SSE } from 'sse.js';
 import { useAppContext } from '../context/AppContext';
+import { useConversationActions, useRoomCreationRequest } from '../store/useConversationStore';
 
 // Use stream endpoint with proper JSON response handling
 const streamMessageApi = async ({ roomId, content, onChunk, onIdReceived }) => {
@@ -33,11 +34,24 @@ const uploadFileApi = async ({ roomId, file }) => {
   return data;
 };
 
-const ChatInput = ({ roomId, roomData, disabled = false, onCreateSubRoom, onCreateReviewRoom }) => {
+const ChatInput = ({ roomId, roomData, disabled = false, onCreateSubRoom, onCreateReviewRoom, createRoomMutation }) => {
   const [message, setMessage] = useState('');
   const fileInputRef = useRef(null);
   const queryClient = useQueryClient();
   const { showError } = useAppContext();
+  const { clearRoomCreation } = useConversationActions();
+  const roomCreationRequest = useRoomCreationRequest();
+  const [forceUpdate, setForceUpdate] = useState(0);
+  
+  // roomCreationRequest 상태 변경 시 강제 리렌더링
+  useEffect(() => {
+    setForceUpdate(prev => prev + 1);
+  }, [roomCreationRequest]);
+  
+  // 디버그용 로그
+  console.log('ChatInput - roomCreationRequest:', roomCreationRequest);
+  console.log('ChatInput - roomId:', roomId);
+  console.log('ChatInput - forceUpdate:', forceUpdate);
 
   const streamMutation = useMutation({
     mutationFn: streamMessageApi,
@@ -66,7 +80,22 @@ const ChatInput = ({ roomId, roomData, disabled = false, onCreateSubRoom, onCrea
     e.preventDefault();
     if (!message.trim() || !roomId || streamMutation.isPending || disabled) return;
 
-    // Simple approach: just send the message and let the server handle everything
+    // 룸 생성 요청이 활성화되어 있는지 확인
+    if (roomCreationRequest?.active && roomCreationRequest?.parentId === roomId) {
+      // 룸 생성 로직
+      if (createRoomMutation) {
+        createRoomMutation.mutate({
+          name: message.trim(),
+          type: roomCreationRequest.type,
+          parentId: roomId
+        });
+      }
+      clearRoomCreation();
+      setMessage('');
+      return;
+    }
+
+    // 일반 메시지 전송
     streamMutation.mutate({
       roomId,
       content: message,
@@ -129,6 +158,7 @@ const ChatInput = ({ roomId, roomData, disabled = false, onCreateSubRoom, onCrea
 
       <form onSubmit={handleSubmit} className="flex-1 relative">
         <textarea
+          key={`textarea-${roomId}-${roomCreationRequest?.active ? 'active' : 'inactive'}`}
           value={message}
           onChange={(e) => setMessage(e.target.value)}
           onKeyDown={(e) => {
@@ -137,7 +167,20 @@ const ChatInput = ({ roomId, roomData, disabled = false, onCreateSubRoom, onCrea
               handleSubmit(e);
             }
           }}
-          placeholder={disabled ? "룸을 선택해주세요" : "무엇이든 물어보세요..."}
+          placeholder={(() => {
+            const isRoomCreationActive = roomCreationRequest?.active && roomCreationRequest?.parentId === roomId;
+            console.log('Placeholder condition check:', {
+              disabled,
+              roomCreationRequestActive: roomCreationRequest?.active,
+              parentIdMatch: roomCreationRequest?.parentId === roomId,
+              isRoomCreationActive,
+              promptText: roomCreationRequest?.promptText
+            });
+            
+            if (disabled) return "룸을 선택해주세요";
+            if (isRoomCreationActive) return roomCreationRequest.promptText;
+            return "무엇이든 물어보세요...";
+          })()}
           disabled={disabled || streamMutation.isPending || uploadMutation.isPending}
           className="w-full px-4 py-3 pr-12 bg-panel-elevated border border-border rounded-lg text-text placeholder-muted focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent disabled:opacity-50 disabled:cursor-not-allowed resize-none"
           rows={1}

@@ -64,14 +64,19 @@ const useConversationStore = create(
         }
       }),
 
-      startRoomCreation: (parentId, type, promptText) => set((state) => {
-        state.roomCreationRequest = {
-          active: true,
-          type,
-          parentId,
-          promptText,
-        };
-      }),
+      startRoomCreation: (parentId, type, promptText) => {
+        console.log('startRoomCreation called:', { parentId, type, promptText });
+        set((state) => {
+          console.log('Setting roomCreationRequest state:', { parentId, type, promptText });
+          state.roomCreationRequest = {
+            active: true,
+            type,
+            parentId,
+            promptText,
+          };
+          console.log('New state after setting:', state.roomCreationRequest);
+        });
+      },
 
       clearRoomCreation: () => set((state) => {
         state.roomCreationRequest = {

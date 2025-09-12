@@ -97,12 +97,14 @@ const RoomItem = memo(({ room, level, parentRoom = null, onRenameClick, onDelete
   const handleAddSubRoom = (e) => {
     e.preventDefault();
     e.stopPropagation();
+    console.log('+ button clicked for sub room, room_id:', room.room_id);
     onCreateSubRoom(room.room_id);
   };
 
   const handleAddReviewRoom = (e) => {
     e.preventDefault();
     e.stopPropagation();
+    console.log('+ button clicked for review room, room_id:', room.room_id);
     onCreateReviewRoom(room.room_id);
   };
 
@@ -197,6 +199,7 @@ const Sidebar = memo(() => {
   const { startRoomCreation, addMessage } = useConversationActions();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { roomId: currentRoomId } = useParams();
 
   const [renamingRoom, setRenamingRoom] = useState(null);
   const [deletingRoom, setDeletingRoom] = useState(null);
@@ -207,6 +210,7 @@ const Sidebar = memo(() => {
     staleTime: 5 * 60 * 1000,
     retry: 1,
   });
+
 
   const renameMutation = useMutation({
     mutationFn: async ({ roomId, newName }) => {
@@ -247,6 +251,7 @@ const Sidebar = memo(() => {
   // 메인룸 자동 생성 로직 완전 제거 (My Main Room이 이미 있음)
 
   const handleCreateSubRoom = useCallback((parentId) => {
+    console.log('handleCreateSubRoom called with parentId:', parentId);
     const promptText = "어떤 세부룸을 만들까요?";
     startRoomCreation(parentId, ROOM_TYPES.SUB, promptText);
     if (threadId) {
@@ -261,6 +266,7 @@ const Sidebar = memo(() => {
   }, [threadId, startRoomCreation, addMessage]);
 
   const handleCreateReviewRoom = useCallback((parentId) => {
+    console.log('handleCreateReviewRoom called with parentId:', parentId);
     const promptText = "어떤 주제로 검토룸을 열까요?";
     startRoomCreation(parentId, ROOM_TYPES.REVIEW, promptText);
     if (threadId) {

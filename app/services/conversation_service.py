@@ -42,28 +42,42 @@ class ConversationService:
         thread_id = f"thr_{generate_id()}"
         created_at = int(time.time())
         query = """
-            INSERT INTO conversation_threads (id, room_id, user_id, title, pinned, archived, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO conversation_threads (thread_id, sub_room_id, title, is_pinned, is_archived, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
         """
-        params = (thread_id, room_id, user_id, thread_data.title, False, False, created_at, created_at)
+        params = (thread_id, room_id, thread_data.title, False, False, created_at, created_at)
         self.db.execute_update(query, params)
-        return ConversationThread(id=thread_id, room_id=room_id, user_id=user_id, title=thread_data.title, pinned=False, archived=False, created_at=created_at, updated_at=created_at)
+        return ConversationThread(id=thread_id, sub_room_id=room_id, user_id=user_id, title=thread_data.title, pinned=False, archived=False, created_at=created_at, updated_at=created_at)
 
     def get_threads_by_room(self, room_id: str, query: Optional[str] = None, pinned: Optional[bool] = None, archived: Optional[bool] = None) -> List[ConversationThread]:
-        sql_query = "SELECT * FROM conversation_threads WHERE room_id = %s"
+        sql_query = "SELECT * FROM conversation_threads WHERE sub_room_id = %s"
         params: List[Any] = [room_id]
         if query:
             sql_query += " AND title ILIKE %s"
             params.append(f"%{query}%")
         if pinned is not None:
-            sql_query += " AND pinned = %s"
+            sql_query += " AND is_pinned = %s"
             params.append(pinned)
         if archived is not None:
-            sql_query += " AND archived = %s"
+            sql_query += " AND is_archived = %s"
             params.append(archived)
         sql_query += " ORDER BY updated_at DESC"
         results = self.db.execute_query(sql_query, tuple(params))
-        return [ConversationThread(**row) for row in results]
+        threads = []
+        for row in results:
+            # Map database columns to schema fields
+            thread_data = {
+                'id': row['thread_id'],
+                'sub_room_id': row['sub_room_id'],
+                'user_id': 'anonymous',  # Default user_id since it's not in the table
+                'title': row['title'],
+                'pinned': row['is_pinned'],
+                'archived': row['is_archived'],
+                'created_at': row['created_at'],
+                'updated_at': row['updated_at']
+            }
+            threads.append(ConversationThread(**thread_data))
+        return threads
 
     def create_message(self, thread_id: str, role: str, content: str, status: str = "draft", model: Optional[str] = None, meta: Optional[Dict[str, Any]] = None, user_id: str = "anonymous") -> Dict[str, Any]:
         message_id = f"msg_{generate_id()}"

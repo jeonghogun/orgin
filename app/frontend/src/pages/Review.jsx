@@ -7,7 +7,7 @@ import { useQuery } from '@tanstack/react-query';
 import axios from 'axios';
 import { useAppContext } from '../context/AppContext';
 
-const Review = ({ reviewId, isSplitView = false }) => {
+const Review = ({ reviewId, isSplitView = false, createRoomMutation }) => {
   const { sidebarOpen } = useAppContext();
   const navigate = useNavigate();
 
@@ -60,7 +60,7 @@ const Review = ({ reviewId, isSplitView = false }) => {
           </div>
         )}
 
-        <MessageList roomId={review?.room_id} />
+        <MessageList roomId={review?.room_id} createRoomMutation={createRoomMutation} />
       </div>
 
       <div 
@@ -69,7 +69,7 @@ const Review = ({ reviewId, isSplitView = false }) => {
           left: !isSplitView && sidebarOpen ? '280px' : '0px',
         }}
       >
-        <ChatInput roomId={review?.room_id} />
+        <ChatInput roomId={review?.room_id} createRoomMutation={createRoomMutation} />
       </div>
     </div>
   );

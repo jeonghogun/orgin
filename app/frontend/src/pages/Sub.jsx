@@ -6,7 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import axios from 'axios';
 import { useAppContext } from '../context/AppContext';
 
-const Sub = ({ roomId, onToggleReview }) => {
+const Sub = ({ roomId, onToggleReview, createRoomMutation }) => {
   const { sidebarOpen } = useAppContext();
   
   // 룸 정보 조회
@@ -44,7 +44,7 @@ const Sub = ({ roomId, onToggleReview }) => {
       {/* 메시지 목록 - 독립적인 스크롤 영역 */}
       <div className="flex-1 overflow-y-auto px-4 pb-20 min-h-0">
         <div className="max-w-3xl mx-auto">
-          <MessageList roomId={roomId} />
+          <MessageList roomId={roomId} createRoomMutation={createRoomMutation} />
         </div>
       </div>
 
@@ -57,7 +57,7 @@ const Sub = ({ roomId, onToggleReview }) => {
         }}
       >
         <div className="max-w-3xl mx-auto">
-          <ChatInput roomId={roomId} />
+          <ChatInput roomId={roomId} createRoomMutation={createRoomMutation} />
         </div>
       </div>
     </div>
