@@ -44,13 +44,14 @@ const Main = () => {
           {threadId ? (
             <ChatView key={threadId} threadId={threadId} />
           ) : (
-          <div className="flex items-center justify-center h-full">
-            <div className="text-center">
-              <h2 className="text-2xl font-semibold">Select a conversation</h2>
-              <p className="text-gray-500">Choose a conversation from the list, or start a new one.</p>
+            <div className="flex items-center justify-center h-full">
+              <div className="text-center">
+                <h2 className="text-2xl font-semibold">Select a conversation</h2>
+                <p className="text-gray-500">Choose a conversation from the list, or start a new one.</p>
+              </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </main>
     </div>
   );

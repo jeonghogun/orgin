@@ -156,17 +156,21 @@ def run_rebuttal_turn(self: BaseTask, review_id: str, review_room_id: str, turn_
         panel_configs = [ProviderPanelistConfig(**p) for p in successful_panelists]
         round_1_summaries = []
         for persona, output in turn_1_outputs.items():
+            arguments_str = "\n- ".join(output.get('arguments', []))
+            risks_str = "\n- ".join(output.get('risks', []))
+            opportunities_str = "\n- ".join(output.get('opportunities', []))
+            
             summary = f"""Panelist: {persona}
 Key Takeaway: {output.get('key_takeaway', 'N/A')}
 Arguments:
-- {"\\n- ".join(output.get('arguments', []))}
+- {arguments_str}
 Risks:
-- {"\\n- ".join(output.get('risks', []))}
+- {risks_str}
 Opportunities:
-- {"\\n- ".join(output.get('opportunities', []))}"""
+- {opportunities_str}"""
             round_1_summaries.append(summary)
 
-        rebuttal_context = "\\n\\n---\\n\\n".join(round_1_summaries)
+        rebuttal_context = "\n\n---\n\n".join(round_1_summaries)
 
         prompt = f"""Rebuttal Round.
 Here are the summaries of the initial arguments:
@@ -219,13 +223,13 @@ Review these arguments carefully.
 def run_synthesis_turn(self: BaseTask, review_id: str, review_room_id: str, turn_1_outputs: Dict[str, Any], turn_2_outputs: Dict[str, Any], all_metrics: List[List[Dict[str, Any]]], successful_panelists: List[Dict[str, Any]], trace_id: str):
     try:
         panel_configs = [ProviderPanelistConfig(**p) for p in successful_panelists]
-        r1_context = "\\n".join([f"Key takeaway from {p}: {o.get('key_takeaway', 'N/A')}" for p, o in turn_1_outputs.items()])
+        r1_context = "\n".join([f"Key takeaway from {p}: {o.get('key_takeaway', 'N/A')}" for p, o in turn_1_outputs.items()])
 
         r2_context_parts = []
         for persona, output in turn_2_outputs.items():
-            agreements = "\\n".join(f"- {a}" for a in output.get("agreements", []))
-            disagreements = "\\n".join(f"- Point: {d['point']}, Reasoning: {d['reasoning']}" for d in output.get("disagreements", []))
-            additions = "\\n".join(f"- Point: {a['point']}, Reasoning: {a['reasoning']}" for a in output.get("additions", []))
+            agreements = "\n".join(f"- {a}" for a in output.get("agreements", []))
+            disagreements = "\n".join(f"- Point: {d['point']}, Reasoning: {d['reasoning']}" for d in output.get("disagreements", []))
+            additions = "\n".join(f"- Point: {a['point']}, Reasoning: {a['reasoning']}" for a in output.get("additions", []))
             r2_context_parts.append(f"""Panelist: {persona}
 Agreements:
 {agreements}
@@ -233,9 +237,9 @@ Disagreements:
 {disagreements}
 Additions:
 {additions}""")
-        r2_context = "\\n\\n---\\n\\n".join(r2_context_parts)
+        r2_context = "\n\n---\n\n".join(r2_context_parts)
 
-        synthesis_context = f"Initial Arguments:\\n{r1_context}\\n\\nRebuttal Arguments:\\n{r2_context}"
+        synthesis_context = f"Initial Arguments:\n{r1_context}\n\nRebuttal Arguments:\n{r2_context}"
         prompt = f"""Synthesis Round.
 Based on all previous arguments from round 1 and 2, please synthesize them into your final, comprehensive position.
 Provide actionable recommendations based on your conclusion.
