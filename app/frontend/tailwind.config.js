@@ -7,12 +7,12 @@ export default {
   theme: {
     extend: {
       colors: {
-        bg: '#0E0F13',
-        panel: '#14161C',
-        'panel-elev': '#171A21',
-        border: '#242936',
-        text: '#E8ECF1',
-        muted: '#A0A6B3',
+        bg: '#121212',
+        panel: '#1E1E1E',
+        'panel-elev': '#242424',
+        border: '#333333',
+        text: '#E0E0E0',
+        muted: '#9E9E9E',
         accent: '#22C55E',
         'accent-weak': '#16A34A',
         warn: '#F59E0B',

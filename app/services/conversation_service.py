@@ -38,20 +38,20 @@ class ConversationService:
         usage = self.redis_client.get(key)
         return int(usage) if usage else 0
 
-    def create_thread(self, sub_room_id: str, user_id: str, thread_data: ConversationThreadCreate) -> ConversationThread:
+    def create_thread(self, room_id: str, user_id: str, thread_data: ConversationThreadCreate) -> ConversationThread:
         thread_id = f"thr_{generate_id()}"
         created_at = int(time.time())
         query = """
-            INSERT INTO conversation_threads (id, sub_room_id, user_id, title, pinned, archived, created_at, updated_at)
+            INSERT INTO conversation_threads (id, room_id, user_id, title, pinned, archived, created_at, updated_at)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         """
-        params = (thread_id, sub_room_id, user_id, thread_data.title, False, False, created_at, created_at)
+        params = (thread_id, room_id, user_id, thread_data.title, False, False, created_at, created_at)
         self.db.execute_update(query, params)
-        return ConversationThread(id=thread_id, sub_room_id=sub_room_id, user_id=user_id, title=thread_data.title, pinned=False, archived=False, created_at=created_at, updated_at=created_at)
+        return ConversationThread(id=thread_id, room_id=room_id, user_id=user_id, title=thread_data.title, pinned=False, archived=False, created_at=created_at, updated_at=created_at)
 
-    def get_threads_by_subroom(self, sub_room_id: str, query: Optional[str] = None, pinned: Optional[bool] = None, archived: Optional[bool] = None) -> List[ConversationThread]:
-        sql_query = "SELECT * FROM conversation_threads WHERE sub_room_id = %s"
-        params: List[Any] = [sub_room_id]
+    def get_threads_by_room(self, room_id: str, query: Optional[str] = None, pinned: Optional[bool] = None, archived: Optional[bool] = None) -> List[ConversationThread]:
+        sql_query = "SELECT * FROM conversation_threads WHERE room_id = %s"
+        params: List[Any] = [room_id]
         if query:
             sql_query += " AND title ILIKE %s"
             params.append(f"%{query}%")
@@ -178,25 +178,25 @@ class ConversationService:
         """
         Given a thread_id, finds the sub_room_id and its parent main_room_id.
         """
-        # First, get the sub_room_id from the thread
-        thread_query = "SELECT sub_room_id FROM conversation_threads WHERE id = %s"
+        # First, get the room_id from the thread
+        thread_query = "SELECT room_id FROM conversation_threads WHERE id = %s"
         thread_result = self.db.execute_query(thread_query, (thread_id,))
         if not thread_result:
             return {"current_room": None, "parent_room": None}
 
-        sub_room_id = thread_result[0].get("sub_room_id")
-        if not sub_room_id:
+        room_id = thread_result[0].get("room_id")
+        if not room_id:
             return {"current_room": None, "parent_room": None}
 
         # Second, get the parent_id from the rooms table
         room_query = "SELECT parent_id FROM rooms WHERE room_id = %s"
-        room_result = self.db.execute_query(room_query, (sub_room_id,))
+        room_result = self.db.execute_query(room_query, (room_id,))
 
         parent_room_id = None
         if room_result:
             parent_room_id = room_result[0].get("parent_id")
 
-        return {"current_room": sub_room_id, "parent_room": parent_room_id}
+        return {"current_room": room_id, "parent_room": parent_room_id}
 
     def get_message_versions(self, message_id: str) -> List[Dict[str, Any]]:
         """

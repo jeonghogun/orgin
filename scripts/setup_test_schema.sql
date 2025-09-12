@@ -71,7 +71,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_embedding ON messages USING ivfflat (emb
 -- Create conversation_threads table
 CREATE TABLE IF NOT EXISTS conversation_threads (
     id VARCHAR(255) PRIMARY KEY,
-    sub_room_id VARCHAR(255) NOT NULL REFERENCES rooms(room_id) ON DELETE CASCADE,
+    room_id VARCHAR(255) NOT NULL REFERENCES rooms(room_id) ON DELETE CASCADE,
     user_id VARCHAR(255) NOT NULL,
     title VARCHAR(500),
     pinned BOOLEAN DEFAULT FALSE,
@@ -120,7 +120,7 @@ CREATE TABLE IF NOT EXISTS attachments (
 
 -- Create additional indexes
 CREATE INDEX IF NOT EXISTS idx_reviews_room_id ON reviews(room_id);
-CREATE INDEX IF NOT EXISTS idx_conversation_threads_sub_room_id ON conversation_threads(sub_room_id);
+CREATE INDEX IF NOT EXISTS idx_conversation_threads_room_id ON conversation_threads(room_id);
 CREATE INDEX IF NOT EXISTS idx_conversation_threads_created_at ON conversation_threads(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_conversation_threads_pinned_archived ON conversation_threads(pinned, archived);
 CREATE INDEX IF NOT EXISTS idx_user_profiles_user_id ON user_profiles(user_id);

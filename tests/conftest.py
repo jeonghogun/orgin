@@ -613,7 +613,7 @@ def authenticated_client(isolated_test_env, test_user_id: str):
     except Exception as e:
         print(f"[TEST-DB] Failed to seed prerequisite rooms: {e}")
 
-     
+    print("[DEBUG] Seeded rooms for test.")
     return client
 
 @pytest.fixture(scope="function")

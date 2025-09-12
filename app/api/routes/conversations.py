@@ -29,14 +29,17 @@ AVAILABLE_MODELS = [{"id": "gpt-4o", "name": "GPT-4o"}, {"id": "claude-3-opus-20
 async def get_models():
     return AVAILABLE_MODELS
 
-@router.post("/subrooms/{sub_room_id}/threads", response_model=ConversationThread, status_code=201)
-async def create_thread(sub_room_id: str, thread_data: ConversationThreadCreate, user_info: Dict[str, Any] = AUTH_DEPENDENCY, convo_service: ConversationService = Depends(get_conversation_service)):
+@router.post("/rooms/{room_id}/threads", response_model=ConversationThread, status_code=201)
+async def create_thread(room_id: str, thread_data: ConversationThreadCreate, user_info: Dict[str, Any] = AUTH_DEPENDENCY, convo_service: ConversationService = Depends(get_conversation_service)):
+    print(f"DEBUG: create_thread called for room_id: {room_id}")
     user_id = user_info.get("user_id")
-    return convo_service.create_thread(sub_room_id, user_id, thread_data)
+    # Note: The service layer will need to be updated to handle generic room_id
+    return convo_service.create_thread(room_id, user_id, thread_data)
 
-@router.get("/subrooms/{sub_room_id}/threads", response_model=List[ConversationThread])
-async def list_threads(sub_room_id: str, query: Optional[str] = None, pinned: Optional[bool] = None, archived: Optional[bool] = None, convo_service: ConversationService = Depends(get_conversation_service)):
-    return convo_service.get_threads_by_subroom(sub_room_id, query, pinned, archived)
+@router.get("/rooms/{room_id}/threads", response_model=List[ConversationThread])
+async def list_threads(room_id: str, query: Optional[str] = None, pinned: Optional[bool] = None, archived: Optional[bool] = None, convo_service: ConversationService = Depends(get_conversation_service)):
+    # Note: The service layer will need to be updated to handle generic room_id
+    return convo_service.get_threads_by_room(room_id, query, pinned, archived)
 
 @router.post("/threads/{thread_id}/messages", response_model=Dict[str, str], dependencies=[Depends(check_budget)])
 async def create_message(thread_id: str, request_data: CreateMessageRequest, user_info: Dict[str, Any] = AUTH_DEPENDENCY, convo_service: ConversationService = Depends(get_conversation_service)):
