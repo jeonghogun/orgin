@@ -1,121 +1,77 @@
-import React, { useState } from 'react';
+import React, { useEffect } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { useMutation } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import axios from 'axios';
-import { useThreads } from '../../store/useConversationStore';
+import { useConversationActions } from '../../store/useConversationStore';
+import useRoomStore from '../../store/useRoomStore';
 import { useAppContext } from '../../context/AppContext';
-import { PlusIcon, ChatBubbleLeftIcon, ArrowDownTrayIcon } from '@heroicons/react/24/outline';
-import BudgetDisplay from './BudgetDisplay';
+import { PlusIcon, ChatBubbleLeftIcon } from '@heroicons/react/24/outline';
 
-const ThreadList = ({ isLoading, error }) => {
-  const threads = useThreads();
+const ThreadList = () => {
+  const { setThreads, threads } = useConversationActions();
+  const { selectedRoomId } = useRoomStore();
   const { handleNewThread, createThreadMutation } = useAppContext();
   const { threadId: currentThreadId } = useParams();
-  const [exportJobs, setExportJobs] = useState({});
 
-  const MOCK_SUB_ROOM_ID = 'sub_room_123';
-
-  const exportThreadMutation = useMutation({
-    mutationFn: ({ threadId, format }) => 
-      axios.post(`/api/convo/threads/${threadId}/export/jobs?format=${format}`),
-    onSuccess: (response, variables) => {
-      const { jobId } = response.data;
-      setExportJobs(prev => ({
-        ...prev,
-        [variables.threadId]: { jobId, status: 'processing', format: variables.format }
-      }));
-      
-      // Start polling for job status
-      pollExportJob(variables.threadId, jobId);
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['threads', selectedRoomId],
+    queryFn: async () => {
+      const { data } = await axios.get(`/api/rooms/${selectedRoomId}/threads`);
+      return data;
     },
+    onSuccess: (data) => {
+      setThreads(data);
+    },
+    enabled: !!selectedRoomId,
   });
 
-  const pollExportJob = async (threadId, jobId) => {
-    const pollInterval = setInterval(async () => {
-      try {
-        const response = await axios.get(`/api/export/jobs/${jobId}`);
-        const job = response.data;
-        
-        setExportJobs(prev => ({
-          ...prev,
-          [threadId]: { ...prev[threadId], status: job.status }
-        }));
-        
-        if (job.status === 'done' || job.status === 'failed') {
-          clearInterval(pollInterval);
-          if (job.status === 'done' && job.file_url) {
-            // Trigger download
-            window.open(`/api/export/jobs/${jobId}/download`, '_blank');
-          }
-        }
-      } catch (error) {
-        console.error('Error polling export job:', error);
-        clearInterval(pollInterval);
-      }
-    }, 2000);
-  };
+  useEffect(() => {
+    if (data) {
+        setThreads(data);
+    }
+  }, [data, setThreads]);
 
-  const handleExportThread = (threadId, format = 'zip') => {
-    exportThreadMutation.mutate({ threadId, format });
-  };
+  if (!selectedRoomId) {
+    return (
+      <div className="p-4 text-center text-muted">
+        <p>Select a room to see conversations.</p>
+      </div>
+    );
+  }
 
   return (
-    <div className="w-72 h-screen bg-gray-50 dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col">
-      <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
-        <h2 className="text-lg font-semibold">Conversations</h2>
+    <div className="h-full bg-panel flex flex-col">
+      <div className="p-4 border-b border-border flex justify-between items-center">
+        <h2 className="text-h2">Conversations</h2>
         <button
           onClick={handleNewThread}
           disabled={createThreadMutation.isPending}
-          className="p-2 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50"
+          className="p-2 rounded-button hover:bg-panel-elev disabled:opacity-50"
+          title="New Conversation (Ctrl+N)"
         >
           <PlusIcon className="h-6 w-6" />
         </button>
       </div>
 
       <div className="flex-1 overflow-y-auto">
-        {isLoading && <div className="p-4">Loading...</div>}
-        {error && <div className="p-4 text-red-500">Error.</div>}
+        {isLoading && <div className="p-4 text-muted">Loading threads...</div>}
+        {error && <div className="p-4 text-danger">Error loading threads.</div>}
         <nav className="p-2 space-y-1">
-          {threads.map((thread) => {
-            const exportJob = exportJobs[thread.id];
-            return (
-              <div
-                key={thread.id}
-                className={`flex items-center space-x-2 p-2 rounded-md text-sm font-medium group ${
-                  thread.id === currentThreadId
-                    ? 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-white'
-                    : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
-                }`}
-              >
-                <Link
-                  to={`/threads/${thread.id}`}
-                  className="flex items-center space-x-3 flex-1 min-w-0"
-                >
-                  <ChatBubbleLeftIcon className="h-5 w-5 flex-shrink-0" />
-                  <span className="truncate">{thread.title}</span>
-                </Link>
-                <button
-                  onClick={(e) => {
-                    e.preventDefault();
-                    handleExportThread(thread.id, 'zip');
-                  }}
-                  disabled={exportJob?.status === 'processing'}
-                  className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-50"
-                  title="Export conversation"
-                >
-                  {exportJob?.status === 'processing' ? (
-                    <div className="h-4 w-4 border-2 border-gray-300 border-t-blue-500 rounded-full animate-spin" />
-                  ) : (
-                    <ArrowDownTrayIcon className="h-4 w-4" />
-                  )}
-                </button>
-              </div>
-            );
-          })}
+          {threads.map((thread) => (
+            <Link
+              key={thread.id}
+              to={`/rooms/${selectedRoomId}/threads/${thread.id}`}
+              className={`flex items-center space-x-3 p-2 rounded-lg text-sm font-medium group ${
+                thread.id === currentThreadId
+                  ? 'bg-accent text-white'
+                  : 'text-text hover:bg-panel-elev'
+              }`}
+            >
+              <ChatBubbleLeftIcon className="h-5 w-5 flex-shrink-0" />
+              <span className="truncate">{thread.title}</span>
+            </Link>
+          ))}
         </nav>
-      </div>
-      <div className="p-2 border-t border-gray-200 dark:border-gray-700">
-        <BudgetDisplay />
       </div>
     </div>
   );

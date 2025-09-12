@@ -108,7 +108,10 @@ async def get_rooms(
     user_info: Dict[str, str] = AUTH_DEPENDENCY,
     cache_service: CacheService = Depends(get_cache_service)
 ):
-    """Get all rooms for a user, with caching."""
+    """
+    Get all rooms for a user. If no rooms exist, create a default Main Room.
+    Implements caching.
+    """
     user_id = user_info.get("user_id")
     if not user_id:
         raise InvalidRequestError("Invalid user information.")
@@ -118,16 +121,28 @@ async def get_rooms(
     # 1. Try to get from cache
     cached_rooms_data = await cache_service.get(cache_key)
     if cached_rooms_data:
-        # Pydantic models need to be reconstructed from dict
         return [Room(**room_data) for room_data in cached_rooms_data]
 
     # 2. If miss, get from DB
-    # Run the synchronous DB call in a separate thread to avoid blocking the event loop
     rooms = await asyncio.to_thread(storage_service.get_rooms_by_owner, user_id)
 
-    # 3. Store in cache for next time
+    # 3. If no rooms exist for the user, create a default Main Room
+    if not rooms:
+        new_room_id = generate_id()
+        # Run synchronous DB call in a separate thread
+        main_room = await asyncio.to_thread(
+            storage_service.create_room,
+            room_id=new_room_id,
+            name="Main Room",
+            owner_id=user_id,
+            room_type=RoomType.MAIN,
+            parent_id=None
+        )
+        rooms = [main_room]
+        # The cache was missed, so we don't need to invalidate, just set it below.
+
+    # 4. Store in cache for next time
     if rooms:
-        # We cache the list of dicts from the model dump
         await cache_service.set(cache_key, [room.model_dump() for room in rooms])
 
     return rooms

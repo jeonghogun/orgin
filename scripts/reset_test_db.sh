@@ -4,9 +4,9 @@
 echo "Resetting test database..."
 
 # Connect to test database and truncate all tables
-docker exec orgin-test-db-1 psql -U user -d test_origin_db -c "
+docker exec app-test-db-1 psql -U test_user -d test_origin_db -c "
 SET session_replication_role = replica;
-TRUNCATE TABLE conversation_contexts, review_events, reviews, messages, memories, user_facts, rooms, user_profiles RESTART IDENTITY CASCADE;
+TRUNCATE TABLE rooms, messages, memories, reviews, conversation_threads, user_profiles, conversation_messages, attachments, export_jobs, review_metrics RESTART IDENTITY CASCADE;
 SET session_replication_role = DEFAULT;
 "
 
