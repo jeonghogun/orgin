@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
-import { QueryClient, QueryClientProvider, useMutation, useQueryClient } from '@tanstack/react-query';
+import { Routes, Route, Navigate, useNavigate, useParams } from 'react-router-dom';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 
 import SearchPanel from './components/conversation/SearchPanel';
@@ -10,8 +10,6 @@ import ErrorBoundary from './components/common/ErrorBoundary';
 import useKeyboardShortcuts from './hooks/useKeyboardShortcuts';
 import { useConversationActions } from './store/useConversationStore';
 import { ROOM_TYPES } from './constants';
-
-const queryClient = new QueryClient();
 
 // This ID is hardcoded in ThreadList.jsx as well. Centralizing it here for now.
 const MOCK_SUB_ROOM_ID = 'sub_room_123';
@@ -140,15 +138,9 @@ function AppContent() {
   );
 }
 
-// Main App component now sets up providers and the router
+// Main App component now simply renders AppContent
 function App() {
-  return (
-    <QueryClientProvider client={queryClient}>
-      <Router>
-        <AppContent />
-      </Router>
-    </QueryClientProvider>
-  );
+  return <AppContent />;
 }
 
 export default App;
