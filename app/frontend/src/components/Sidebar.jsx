@@ -244,7 +244,12 @@ const Sidebar = memo(() => {
     return hierarchicalRooms.find(room => room.type === ROOM_TYPES.MAIN);
   }, [hierarchicalRooms]);
 
-  // 메인룸 자동 생성 로직 완전 제거 (My Main Room이 이미 있음)
+  // 메인룸 자동 생성 로직
+  useEffect(() => {
+    if (!isLoading && !error && !mainRoom && hierarchicalRooms.length === 0) {
+      createRoomMutation.mutate({ name: "메인룸", type: ROOM_TYPES.MAIN });
+    }
+  }, [isLoading, error, mainRoom, hierarchicalRooms.length, createRoomMutation]);
 
   const handleCreateSubRoom = useCallback((parentId) => {
     const promptText = "어떤 세부룸을 만들까요?";
