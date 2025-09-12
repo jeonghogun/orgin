@@ -47,10 +47,10 @@ def test_environment():
     if not _test_environment:
         # 간단한 테스트 환경 설정 (Docker 컨테이너 없이)
         _test_environment = {
-            'database_url': 'postgresql://test_user:test_password@localhost:5432/test_origin_db',
-            'redis_url': 'redis://localhost:6379/0',
-            'postgres_port': 5432,
-            'redis_port': 6379
+            'database_url': 'postgresql://test_user:test_password@localhost:5434/test_origin_db',
+            'redis_url': 'redis://localhost:6380/0',
+            'postgres_port': 5434,
+            'redis_port': 6380
         }
     
     yield _test_environment

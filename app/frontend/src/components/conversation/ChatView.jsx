@@ -66,16 +66,23 @@ const ChatView = ({ threadId }) => {
 
   const streamEventHandlers = useMemo(() => ({
     delta: (e) => {
+      if (!e.data || e.data.trim() === '') return;
+      const messageId = activeStreamUrl?.split('/')[4];
+      if (!messageId) return;
+
+      let content;
       try {
-        if (!e.data || e.data.trim() === '') return;
+        // Try to parse as JSON first
         const data = JSON.parse(e.data);
-        const content = data.content || data.text || data || '';
-        const messageId = activeStreamUrl?.split('/')[4];
-        if (content && messageId) {
-          appendStreamChunk(threadId, messageId, content);
-        }
+        // Extract content from a potential JSON structure
+        content = data.content || data.text || '';
       } catch (error) {
-        // Error parsing streaming data, ignore.
+        // If parsing fails, assume it's a plain text chunk
+        content = e.data;
+      }
+
+      if (content) {
+        appendStreamChunk(threadId, messageId, content);
       }
     },
     done: (e) => {
@@ -83,6 +90,9 @@ const ChatView = ({ threadId }) => {
       queryClient.invalidateQueries({ queryKey: ['messages', threadId] });
     },
     error: (e) => {
+      // It's better to show an error to the user.
+      // For now, just log it and stop the stream.
+      console.error("Streaming error received:", e);
       setActiveStreamUrl(null); // Stop trying to reconnect on fatal error
     }
   }), [threadId, activeStreamUrl, appendStreamChunk, queryClient]);
