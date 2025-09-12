@@ -6,6 +6,14 @@ const useConversationStore = create(
     threads: [],
     messagesByThread: {}, // { [threadId]: [message1, message2] }
 
+    // Room creation flow state
+    roomCreationRequest: {
+      active: false,
+      type: null, // 'SUB' or 'REVIEW'
+      parentId: null,
+      promptText: '',
+    },
+
     // Generation Settings
     model: 'gpt-4o',
     temperature: 0.7,
@@ -55,6 +63,24 @@ const useConversationStore = create(
           threadMessages[messageIndex] = updatedMessage;
         }
       }),
+
+      startRoomCreation: (parentId, type, promptText) => set((state) => {
+        state.roomCreationRequest = {
+          active: true,
+          type,
+          parentId,
+          promptText,
+        };
+      }),
+
+      clearRoomCreation: () => set((state) => {
+        state.roomCreationRequest = {
+          active: false,
+          type: null,
+          parentId: null,
+          promptText: '',
+        };
+      }),
     }
   }))
 );
@@ -62,6 +88,7 @@ const useConversationStore = create(
 export const useThreads = () => useConversationStore((state) => state.threads);
 export const useMessages = (threadId) => useConversationStore((state) => state.messagesByThread[threadId] || []);
 export const useConversationActions = () => useConversationStore((state) => state.actions);
+export const useRoomCreationRequest = () => useConversationStore((state) => state.roomCreationRequest);
 export const useGenerationSettings = () => useConversationStore((state) => ({
     model: state.model,
     temperature: state.temperature,

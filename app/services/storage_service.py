@@ -229,6 +229,32 @@ class StorageService:
         # The DB doesn't have 'started_at' or 'failed_panels'. Pydantic will use defaults.
         return ReviewMeta(**result[0])
 
+    def get_review_meta_by_room_id(self, room_id: str) -> Optional[ReviewMeta]:
+        """Get the latest review for a given room_id from the database."""
+        query = """
+            SELECT
+                review_id,
+                room_id,
+                topic,
+                instruction,
+                status,
+                total_rounds,
+                current_round,
+                created_at,
+                completed_at
+            FROM reviews
+            WHERE room_id = %s
+            ORDER BY created_at DESC
+            LIMIT 1
+        """
+        params = (room_id,)
+        result = self.db.execute_query(query, params)
+
+        if not result:
+            return None
+
+        return ReviewMeta(**result[0])
+
     def get_reviews_by_room(self, room_id: str) -> List[ReviewMeta]:
         """Get all reviews for a given room from the database."""
         query = "SELECT * FROM reviews WHERE room_id = %s ORDER BY created_at DESC"

@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ROOM_TYPES } from '../constants';
+import { useConversationActions, useRoomCreationRequest } from '../store/useConversationStore';
 import { useAppContext } from '../context/AppContext';
 import RenameRoomModal from './modals/RenameRoomModal';
 import DeleteConfirmationModal from './modals/DeleteConfirmationModal';
@@ -192,7 +193,8 @@ const RoomItem = memo(({ room, level, parentRoom = null, onRenameClick, onDelete
 });
 
 const Sidebar = memo(() => {
-  const { sidebarOpen, setSidebarOpen, handleRoomSelect, showError } = useAppContext();
+  const { sidebarOpen, setSidebarOpen, handleRoomSelect, showError, createRoomMutation, threadId } = useAppContext();
+  const { startRoomCreation, addMessage } = useConversationActions();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
@@ -234,20 +236,6 @@ const Sidebar = memo(() => {
     },
   });
 
-  const createRoomMutation = useMutation({
-    mutationFn: async ({ name, type, parentId }) => {
-      const { data } = await axios.post('/api/rooms', { name, type, parent_id: parentId });
-      return data;
-    },
-    onSuccess: (newRoom) => {
-      queryClient.invalidateQueries({ queryKey: ['rooms'] });
-      handleRoomSelect(newRoom.room_id);
-      navigate(`/rooms/${newRoom.room_id}`);
-    },
-    onError: (error) => {
-      showError('룸 생성에 실패했습니다: ' + (error.response?.data?.detail || error.message));
-    },
-  });
 
   const hierarchicalRooms = useMemo(() => buildRoomHierarchy(rooms), [rooms]);
 
@@ -259,26 +247,32 @@ const Sidebar = memo(() => {
   // 메인룸 자동 생성 로직 완전 제거 (My Main Room이 이미 있음)
 
   const handleCreateSubRoom = useCallback((parentId) => {
-    const roomName = prompt('새 세부룸의 이름을 입력하세요:', '새 세부룸');
-    if (roomName && roomName.trim()) {
-      createRoomMutation.mutate({ 
-        name: roomName.trim(), 
-        type: ROOM_TYPES.SUB, 
-        parentId 
+    const promptText = "어떤 세부룸을 만들까요?";
+    startRoomCreation(parentId, ROOM_TYPES.SUB, promptText);
+    if (threadId) {
+      addMessage(threadId, {
+        id: `ai_prompt_${Date.now()}`,
+        role: 'assistant',
+        content: promptText,
+        status: 'complete',
+        created_at: Math.floor(Date.now() / 1000),
       });
     }
-  }, [createRoomMutation]);
+  }, [threadId, startRoomCreation, addMessage]);
 
   const handleCreateReviewRoom = useCallback((parentId) => {
-    const topic = prompt('어떤 주제로 검토룸을 만들까요?', '');
-    if (topic && topic.trim()) {
-      createRoomMutation.mutate({ 
-        name: topic.trim(), 
-        type: ROOM_TYPES.REVIEW, 
-        parentId 
+    const promptText = "어떤 주제로 검토룸을 열까요?";
+    startRoomCreation(parentId, ROOM_TYPES.REVIEW, promptText);
+    if (threadId) {
+      addMessage(threadId, {
+        id: `ai_prompt_${Date.now()}`,
+        role: 'assistant',
+        content: promptText,
+        status: 'complete',
+        created_at: Math.floor(Date.now() / 1000),
       });
     }
-  }, [createRoomMutation]);
+  }, [threadId, startRoomCreation, addMessage]);
 
   const handleRenameClick = useCallback((room) => setRenamingRoom(room), []);
   const handleDeleteClick = useCallback((room) => setDeletingRoom(room), []);

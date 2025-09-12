@@ -62,8 +62,10 @@ def _format_export_as_markdown(export_data: ExportData) -> str:
 
 
 @router.post("", response_model=Room)
-def create_room(
-    room_request: CreateRoomRequest, user_info: Dict[str, str] = AUTH_DEPENDENCY
+async def create_room(
+    room_request: CreateRoomRequest,
+    user_info: Dict[str, str] = AUTH_DEPENDENCY,
+    cache_service: CacheService = Depends(get_cache_service),
 ):
     """Create a new chat room with hierarchy rules."""
     user_id = user_info.get("user_id")
@@ -94,6 +96,10 @@ def create_room(
         room_type=room_request.type,
         parent_id=room_request.parent_id,
     )
+
+    # Invalidate cache
+    await cache_service.delete(f"rooms:{user_id}")
+
     return new_room
 
 
@@ -148,10 +154,11 @@ class UpdateRoomRequest(BaseModel):
 
 
 @router.patch("/{room_id}", response_model=Room)
-def update_room_name(
+async def update_room_name(
     room_id: str,
     room_request: UpdateRoomRequest,
     user_info: Dict[str, str] = AUTH_DEPENDENCY,
+    cache_service: CacheService = Depends(get_cache_service),
 ):
     """Update the name of a room."""
     user_id = user_info.get("user_id")
@@ -166,6 +173,9 @@ def update_room_name(
     if not success:
         raise NotFoundError("room", room_id)
 
+    # Invalidate cache
+    await cache_service.delete(f"rooms:{user_id}")
+
     updated_room = storage_service.get_room(room_id)
     if not updated_room:
         # This is an edge case, but good to handle
@@ -174,7 +184,11 @@ def update_room_name(
 
 
 @router.delete("/{room_id}", status_code=204)
-def delete_room(room_id: str, user_info: Dict[str, str] = AUTH_DEPENDENCY):
+async def delete_room(
+    room_id: str,
+    user_info: Dict[str, str] = AUTH_DEPENDENCY,
+    cache_service: CacheService = Depends(get_cache_service),
+):
     """Delete a room."""
     user_id = user_info.get("user_id")
     room = storage_service.get_room(room_id)
@@ -189,6 +203,9 @@ def delete_room(room_id: str, user_info: Dict[str, str] = AUTH_DEPENDENCY):
     success = storage_service.delete_room(room_id)
     if not success:
         raise NotFoundError("room", room_id)
+
+    # Invalidate cache
+    await cache_service.delete(f"rooms:{user_id}")
 
     return Response(status_code=204)
 

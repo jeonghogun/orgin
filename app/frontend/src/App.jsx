@@ -23,6 +23,7 @@ function AppContent() {
   const { addThread } = useConversationActions();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { threadId } = useParams();
 
   // Logic for creating a new thread, moved from ThreadList.jsx
   const createThreadMutation = useMutation({
@@ -126,7 +127,7 @@ function AppContent() {
 
   return (
     // The AppProvider now gets the handleNewThread function to pass down via context
-    <AppProvider value={{ handleNewThread, createThreadMutation, handleNewRoom, handleCopy, handlePaste }}>
+    <AppProvider value={{ handleNewThread, createThreadMutation, handleNewRoom, handleCopy, handlePaste, createRoomMutation, threadId }}>
       {showSearch && <SearchPanel onClose={() => setShowSearch(false)} />}
       <ErrorBoundary>
         <Routes>

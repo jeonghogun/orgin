@@ -133,16 +133,31 @@ async def get_reviews_by_room(
     return reviews
 
 
-@router.get("/reviews/{review_id}", response_model=ReviewMeta)
+@router.get("/reviews/{id}", response_model=ReviewMeta)
 async def get_review(
-    review_id: str,
+    id: str,
     user_info: Dict[str, str] = AUTH_DEPENDENCY,
-    storage_service: StorageService = Depends(get_storage_service),  # pyright: ignore[reportCallInDefaultInitializer]
+    storage_service: StorageService = Depends(get_storage_service),
 ) -> ReviewMeta:
-    """Get review information"""
-    review = storage_service.get_review_meta(review_id)
+    """
+    Get review information by its review_id or the room_id of the review room.
+    """
+    # Try fetching by review_id first
+    review = storage_service.get_review_meta(id)
+
+    # If not found, try fetching by room_id
+    if not review:
+        review = storage_service.get_review_meta_by_room_id(id)
+
+    # If still not found, or if found but owner doesn't match, raise error
     if not review:
         raise HTTPException(status_code=404, detail="Review not found")
+
+    # Verify that the associated room belongs to the user
+    room = storage_service.get_room(review.room_id)
+    if not room or room.owner_id != user_info.get("user_id"):
+        raise HTTPException(status_code=403, detail="Access denied to review")
+
     return review
 
 
