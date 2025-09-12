@@ -109,28 +109,26 @@ const RoomItem = memo(({ room, level, parentRoom = null, onRenameClick, onDelete
   };
 
   return (
-    <div
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => {
-        setIsHovered(false);
-        setMenuOpen(false);
-      }}
-      className="relative"
-    >
-      <Link to={getLinkDestination()} onClick={onRoomSelect} className="block">
-        <div
-          className={`flex items-center gap-3 px-4 py-2 cursor-pointer transition-colors duration-150 ${
-            isActive ? 'bg-accent/10 border-l-2 border-accent' : 'hover:bg-white/5'
-          }`}
-          style={{ paddingLeft: `${16 + indent}px` }}
-        >
-          <div className="w-4 h-4 flex-shrink-0">
+    <div>
+      <div
+        onMouseEnter={() => setIsHovered(true)}
+        onMouseLeave={() => {
+          setIsHovered(false);
+          setMenuOpen(false);
+        }}
+        className={`flex items-center justify-between transition-colors duration-150 ${
+          isActive ? 'bg-accent/10' : 'hover:bg-white/5'
+        }`}
+        style={{ paddingLeft: `${16 + indent}px` }}
+      >
+        <Link to={getLinkDestination()} onClick={onRoomSelect} className="flex-1 flex items-center gap-3 py-2 cursor-pointer truncate">
+          <div className={`w-4 h-4 flex-shrink-0 ${isActive ? 'text-accent' : 'text-muted'}`}>
             {isReviewRoom ? (
-              <svg viewBox="0 0 16 16" fill="currentColor" className="w-4 h-4 text-muted">
+              <svg viewBox="0 0 16 16" fill="currentColor" className="w-4 h-4">
                 <path d="M8 0C3.6 0 0 3.6 0 8s3.6 8 8 8 8-3.6 8-8-3.6-8-8-8zm0 14c-3.3 0-6-2.7-6-6s2.7-6 6-6 6 2.7 6 6-2.7 6-6 6z"/>
               </svg>
             ) : (
-              <svg viewBox="0 0 16 16" fill="currentColor" className="w-4 h-4 text-muted">
+              <svg viewBox="0 0 16 16" fill="currentColor" className="w-4 h-4">
                 <path d="M14 1H2C1.4 1 1 1.4 1 2v10c0 .6.4 1 1 1h2l3 3 3-3h5c.6 0 1-.4 1-1V2c0-.6-.4-1-1-1z"/>
               </svg>
             )}
@@ -138,42 +136,42 @@ const RoomItem = memo(({ room, level, parentRoom = null, onRenameClick, onDelete
           <span className={`flex-1 text-body truncate ${isReviewRoom ? 'text-muted' : 'text-text'}`}>
             {isReviewRoom ? `검토: ${room.name}` : room.name}
           </span>
+        </Link>
 
-          {isHovered && (
-            <div className="flex items-center gap-1">
-              {/* + 버튼 - 메인룸과 세부룸에만 표시 */}
-              {(room.type === ROOM_TYPES.MAIN || room.type === ROOM_TYPES.SUB) && (
-                <button 
-                  onClick={room.type === ROOM_TYPES.MAIN ? handleAddSubRoom : handleAddReviewRoom}
-                  className="p-1 rounded-full hover:bg-white/10 text-muted hover:text-text"
-                  title={room.type === ROOM_TYPES.MAIN ? "세부룸 추가" : "검토룸 추가"}
-                >
-                  <svg viewBox="0 0 16 16" fill="currentColor" className="w-4 h-4">
-                    <path d="M8 0C3.6 0 0 3.6 0 8s3.6 8 8 8 8-3.6 8-8-3.6-8-8-8zm4 9H7v5H5V9H0V7h5V2h2v5h5v2z"/>
+        {isHovered && (
+          <div className="flex items-center gap-1 pr-2">
+            {/* + 버튼 - 메인룸과 세부룸에만 표시 */}
+            {(room.type === ROOM_TYPES.MAIN || room.type === ROOM_TYPES.SUB) && (
+              <button
+                onClick={room.type === ROOM_TYPES.MAIN ? handleAddSubRoom : handleAddReviewRoom}
+                className="p-1 rounded-full hover:bg-white/10 text-muted hover:text-text"
+                title={room.type === ROOM_TYPES.MAIN ? "세부룸 추가" : "검토룸 추가"}
+              >
+                <svg viewBox="0 0 16 16" fill="currentColor" className="w-4 h-4">
+                  <path d="M8 0C3.6 0 0 3.6 0 8s3.6 8 8 8 8-3.6 8-8-3.6-8-8-8zm4 9H7v5H5V9H0V7h5V2h2v5h5v2z"/>
+                </svg>
+              </button>
+            )}
+
+            {/* 메뉴 버튼 - 메인룸이 아닌 경우에만 표시 */}
+            {room.type !== ROOM_TYPES.MAIN && (
+              <div className="relative">
+                <button onClick={handleMenuClick} className="p-1 rounded-full hover:bg-white/10">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
                   </svg>
                 </button>
-              )}
-              
-              {/* 메뉴 버튼 - 메인룸이 아닌 경우에만 표시 */}
-              {room.type !== ROOM_TYPES.MAIN && (
-                <div className="relative">
-                  <button onClick={handleMenuClick} className="p-1 rounded-full hover:bg-white/10">
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
-                    </svg>
-                  </button>
-                  {isMenuOpen && (
-                    <div className="absolute right-0 mt-2 w-32 bg-panel-elev border border-border rounded-md shadow-lg z-10">
-                      <button onClick={handleRename} className="w-full text-left px-4 py-2 text-sm text-text hover:bg-white/5">이름 변경</button>
-                      <button onClick={handleDelete} className="w-full text-left px-4 py-2 text-sm text-danger hover:bg-white/5">삭제</button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      </Link>
+                {isMenuOpen && (
+                  <div className="absolute right-0 mt-2 w-32 bg-panel-elev border border-border rounded-md shadow-lg z-10">
+                    <button onClick={handleRename} className="w-full text-left px-4 py-2 text-sm text-text hover:bg-white/5">이름 변경</button>
+                    <button onClick={handleDelete} className="w-full text-left px-4 py-2 text-sm text-danger hover:bg-white/5">삭제</button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
       {room.children && room.children.length > 0 && (
         <div>
           {room.children.map(child => (
