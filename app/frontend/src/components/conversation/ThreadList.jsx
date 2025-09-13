@@ -2,12 +2,11 @@ import React, { useEffect } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import axios from 'axios';
-import { useConversationActions, useThreads } from '../../store/useConversationStore';
+import { useThreads, setThreads } from '../../store/useConversationStore';
 import { useAppContext } from '../../context/AppContext';
 import { PlusIcon, ChatBubbleLeftIcon } from '@heroicons/react/24/outline';
 
 const ThreadList = () => {
-  const { setThreads } = useConversationActions();
   const threads = useThreads();
   const { handleNewThread, createThreadMutation } = useAppContext();
   const { threadId: currentThreadId, roomId: selectedRoomId } = useParams();

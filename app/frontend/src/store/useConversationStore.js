@@ -91,11 +91,25 @@ const useConversationStore = create(
 );
 
 export const useThreads = () => useConversationStore((state) => state.threads);
-export const useMessages = (threadId) => useConversationStore((state) => state.messagesByThread[threadId] || []);
-export const useConversationActions = () => useConversationStore((state) => state.actions);
+export const useMessages = (threadId) => {
+  const messages = useConversationStore((state) => state.messagesByThread[threadId]);
+  return messages || [];
+};
+// Export individual action functions to avoid object recreation
+export const setThreads = (threads) => useConversationStore.getState().actions.setThreads(threads);
+export const addThread = (thread) => useConversationStore.getState().actions.addThread(thread);
+export const setMessages = (threadId, messages) => useConversationStore.getState().actions.setMessages(threadId, messages);
+export const addMessage = (threadId, message) => useConversationStore.getState().actions.addMessage(threadId, message);
+export const updateMessage = (threadId, messageId, updatedMessage) => useConversationStore.getState().actions.updateMessage(threadId, messageId, updatedMessage);
+export const appendStreamChunk = (threadId, messageId, chunk) => useConversationStore.getState().actions.appendStreamChunk(threadId, messageId, chunk);
+export const startRoomCreation = (parentId, type, promptText) => useConversationStore.getState().actions.startRoomCreation(parentId, type, promptText);
+export const clearRoomCreation = () => useConversationStore.getState().actions.clearRoomCreation();
+export const setSettings = (settings) => useConversationStore.getState().actions.setSettings(settings);
 export const useRoomCreationRequest = () => useConversationStore((state) => state.roomCreationRequest);
-export const useGenerationSettings = () => useConversationStore((state) => ({
-    model: state.model,
-    temperature: state.temperature,
-    maxTokens: state.maxTokens,
-}));
+export const useGenerationSettings = () => {
+  const model = useConversationStore((state) => state.model);
+  const temperature = useConversationStore((state) => state.temperature);
+  const maxTokens = useConversationStore((state) => state.maxTokens);
+  
+  return { model, temperature, maxTokens };
+};

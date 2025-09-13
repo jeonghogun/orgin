@@ -1,7 +1,7 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
-import { useMessages, useConversationActions, useGenerationSettings } from '../../store/useConversationStore';
+import { useMessages, useGenerationSettings, setMessages, addMessage, appendStreamChunk } from '../../store/useConversationStore';
 import useEventSource from '../../hooks/useEventSource';
 import RoomHeader from '../RoomHeader';
 import ChatTimeline from './ChatTimeline';
@@ -15,23 +15,29 @@ const ChatView = ({ threadId }) => {
   const [activeStreamUrl, setActiveStreamUrl] = useState(null);
 
   const messages = useMessages(threadId);
-  const { setMessages, addMessage, appendStreamChunk } = useConversationActions();
   const { model, temperature, maxTokens } = useGenerationSettings();
   const queryClient = useQueryClient();
 
   // --- Data Fetching and Mutations ---
 
-  const { isLoading, error } = useQuery({
+  const { data: fetchedMessages, isLoading, error } = useQuery({
     queryKey: ['messages', threadId],
     queryFn: async () => {
       const { data } = await axios.get(`/api/convo/threads/${threadId}/messages`);
       return data;
     },
-    onSuccess: (data) => {
-      setMessages(threadId, data.reverse());
-    },
     enabled: !!threadId,
   });
+
+  useEffect(() => {
+    if (fetchedMessages) {
+      // Check if the store already has messages to avoid overwriting optimistic updates
+      const existingMessages = queryClient.getQueryData(['messages', threadId]);
+      if (!existingMessages || existingMessages.length === 0) {
+        setMessages(threadId, fetchedMessages.reverse());
+      }
+    }
+  }, [fetchedMessages, threadId, setMessages, queryClient]);
 
   const uploadFileMutation = useMutation({
     mutationFn: (file) => {

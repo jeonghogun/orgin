@@ -1,11 +1,10 @@
 import React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import axios from 'axios';
-import { useGenerationSettings, useConversationActions } from '../../store/useConversationStore';
+import { useGenerationSettings, setSettings } from '../../store/useConversationStore';
 
 const SettingsPanel = () => {
   const { model, temperature, maxTokens } = useGenerationSettings();
-  const { setSettings } = useConversationActions();
 
   const { data: availableModels = [], isLoading } = useQuery({
     queryKey: ['models'],

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useParams, useNavigate, useLocation } from 'react-router-dom';
 import { QueryClient, QueryClientProvider, useMutation, useQueryClient, useQuery } from '@tanstack/react-query';
 import axios from 'axios';
@@ -8,16 +8,15 @@ import { AppProvider } from './context/AppContext';
 import Main from './pages/Main';
 import ErrorBoundary from './components/common/ErrorBoundary';
 import useKeyboardShortcuts from './hooks/useKeyboardShortcuts';
-import { useConversationActions } from './store/useConversationStore';
+import { addThread, addMessage, startRoomCreation } from './store/useConversationStore';
 import { ROOM_TYPES } from './constants';
 
 // This component uses hooks that require Router context (like useNavigate)
 function AppContent() {
   const [showSearch, setShowSearch] = useState(false);
-  const { addThread } = useConversationActions();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { roomId } = useParams();
+  const { roomId, threadId } = useParams();
   const location = useLocation();
 
   // 룸 목록을 가져와서 메인룸 자동 선택
@@ -43,11 +42,11 @@ function AppContent() {
 
   // Logic for creating a new thread (conversation) in the selected room
   const createThreadMutation = useMutation({
-    mutationFn: (newThread) => {
+    mutationFn: ({ roomId, title }) => {
       if (!roomId) throw new Error("No room selected");
-      return axios.post(`/api/convo/rooms/${roomId}/threads`, newThread);
+      return axios.post(`/api/convo/rooms/${roomId}/threads`, { title });
     },
-    onSuccess: (response) => {
+    onSuccess: (response, { roomId }) => {
       const newThread = response.data;
       queryClient.invalidateQueries({ queryKey: ['threads', roomId] });
       addThread(newThread);
@@ -60,10 +59,11 @@ function AppContent() {
   });
 
   const handleNewThread = () => {
-    if (createThreadMutation.isPending) return;
-    const title = "New Conversation";
-    createThreadMutation.mutate({ title });
+    if (createThreadMutation.isPending || !roomId) return;
+    createThreadMutation.mutate({ roomId, title: "New Conversation" });
   };
+  
+
 
   const handleSearch = () => setShowSearch(true);
 
@@ -111,8 +111,14 @@ function AppContent() {
     },
   });
 
+  // 룸 생성 시작 함수
+  const initiateRoomCreation = useCallback((parentId, type) => {
+    const promptText = type === ROOM_TYPES.SUB ? "어떤 세부룸을 만들까요?" : "어떤 주제로 검토룸을 열까요?";
+    startRoomCreation(parentId, type, promptText);
+  }, []);
+
   return (
-    <AppProvider value={{ handleNewThread, createThreadMutation, createRoomMutation }}>
+    <AppProvider value={{ handleNewThread, createRoomMutation, initiateRoomCreation }}>
       {showSearch && <SearchPanel onClose={() => setShowSearch(false)} />}
       <ErrorBoundary>
         <Routes>

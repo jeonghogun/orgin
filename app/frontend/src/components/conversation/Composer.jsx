@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { PaperAirplaneIcon, Cog6ToothIcon } from '@heroicons/react/24/solid';
 import SettingsPanel from './SettingsPanel';
 import { useAppContext } from '../../context/AppContext';
-import { useRoomCreationRequest, useConversationActions } from '../../store/useConversationStore';
+import { useRoomCreationRequest, clearRoomCreation } from '../../store/useConversationStore';
 
 const Composer = ({ messages, onSendMessage, onFileUpload, isLoading, isUploading }) => {
   const [text, setText] = useState('');
@@ -12,7 +12,6 @@ const Composer = ({ messages, onSendMessage, onFileUpload, isLoading, isUploadin
 
   const { createRoomMutation } = useAppContext();
   const roomCreationRequest = useRoomCreationRequest();
-  const { clearRoomCreation } = useConversationActions();
 
   useEffect(() => {
     if (textareaRef.current) {

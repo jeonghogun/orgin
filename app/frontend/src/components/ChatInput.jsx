@@ -1,9 +1,9 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 import { SSE } from 'sse.js';
 import { useAppContext } from '../context/AppContext';
-import { useConversationActions, useRoomCreationRequest } from '../store/useConversationStore';
+import { useRoomCreationRequest, clearRoomCreation } from '../store/useConversationStore';
 
 // Use stream endpoint with proper JSON response handling
 const streamMessageApi = async ({ roomId, content, onChunk, onIdReceived }) => {
@@ -39,19 +39,11 @@ const ChatInput = ({ roomId, roomData, disabled = false, onCreateSubRoom, onCrea
   const fileInputRef = useRef(null);
   const queryClient = useQueryClient();
   const { showError } = useAppContext();
-  const { clearRoomCreation } = useConversationActions();
   const roomCreationRequest = useRoomCreationRequest();
-  const [forceUpdate, setForceUpdate] = useState(0);
-  
-  // roomCreationRequest 상태 변경 시 강제 리렌더링
-  useEffect(() => {
-    setForceUpdate(prev => prev + 1);
-  }, [roomCreationRequest]);
   
   // 디버그용 로그
   console.log('ChatInput - roomCreationRequest:', roomCreationRequest);
   console.log('ChatInput - roomId:', roomId);
-  console.log('ChatInput - forceUpdate:', forceUpdate);
 
   const streamMutation = useMutation({
     mutationFn: streamMessageApi,
