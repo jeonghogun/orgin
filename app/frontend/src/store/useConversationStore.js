@@ -86,6 +86,38 @@ const useConversationStore = create(
           promptText: '',
         };
       }),
+
+      // Interactive review room creation
+      reviewRoomCreation: {
+        active: false,
+        parentId: null,
+        topic: null,
+        history: [], // [{role: 'user' | 'assistant', content: '...'}, ...]
+      },
+
+      startReviewRoomCreation: (parentId, topic) => set((state) => {
+        state.reviewRoomCreation = {
+          active: true,
+          parentId,
+          topic,
+          history: [{ role: 'user', content: topic }],
+        };
+      }),
+
+      addReviewRoomHistory: (message) => set((state) => {
+        if (state.reviewRoomCreation.active) {
+          state.reviewRoomCreation.history.push(message);
+        }
+      }),
+
+      clearReviewRoomCreation: () => set((state) => {
+        state.reviewRoomCreation = {
+          active: false,
+          parentId: null,
+          topic: null,
+          history: [],
+        };
+      }),
     }
   }))
 );
@@ -106,6 +138,10 @@ export const startRoomCreation = (parentId, type, promptText) => useConversation
 export const clearRoomCreation = () => useConversationStore.getState().actions.clearRoomCreation();
 export const setSettings = (settings) => useConversationStore.getState().actions.setSettings(settings);
 export const useRoomCreationRequest = () => useConversationStore((state) => state.roomCreationRequest);
+export const useReviewRoomCreation = () => useConversationStore((state) => state.reviewRoomCreation);
+export const startReviewRoomCreation = (parentId, topic) => useConversationStore.getState().actions.startReviewRoomCreation(parentId, topic);
+export const addReviewRoomHistory = (message) => useConversationStore.getState().actions.addReviewRoomHistory(message);
+export const clearReviewRoomCreation = () => useConversationStore.getState().actions.clearReviewRoomCreation();
 export const useGenerationSettings = () => {
   const model = useConversationStore((state) => state.model);
   const temperature = useConversationStore((state) => state.temperature);

@@ -18,10 +18,11 @@ from app.core.metrics import LLM_CALLS_TOTAL, LLM_LATENCY_SECONDS, LLM_TOKENS_TO
 logger = logging.getLogger(__name__)
 
 # Configure clients at module level
-openai_client = openai.AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
-anthropic_client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
-if settings.GEMINI_API_KEY:
-    configure(api_key=settings.GEMINI_API_KEY)
+if not settings.TESTING:
+    openai_client = openai.AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+    anthropic_client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+    if settings.GEMINI_API_KEY:
+        configure(api_key=settings.GEMINI_API_KEY)
 
 class BaseLLMAdapter(ABC):
     """Abstract base class for LLM provider adapters."""

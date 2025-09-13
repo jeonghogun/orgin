@@ -49,7 +49,7 @@ class ConversationService:
         self.db.execute_update(query, params)
         return ConversationThread(id=thread_id, sub_room_id=room_id, user_id=user_id, title=thread_data.title, pinned=False, archived=False, created_at=created_at, updated_at=created_at)
 
-    def get_threads_by_room(self, room_id: str, query: Optional[str] = None, pinned: Optional[bool] = None, archived: Optional[bool] = None) -> List[ConversationThread]:
+    async def get_threads_by_room(self, room_id: str, query: Optional[str] = None, pinned: Optional[bool] = None, archived: Optional[bool] = None) -> List[ConversationThread]:
         sql_query = "SELECT * FROM conversation_threads WHERE sub_room_id = %s"
         params: List[Any] = [room_id]
         if query:
@@ -62,7 +62,7 @@ class ConversationService:
             sql_query += " AND is_archived = %s"
             params.append(archived)
         sql_query += " ORDER BY updated_at DESC"
-        results = self.db.execute_query(sql_query, tuple(params))
+        results = await asyncio.to_thread(self.db.execute_query, sql_query, tuple(params))
         threads = []
         for row in results:
             # Map database columns to schema fields
@@ -118,10 +118,10 @@ class ConversationService:
                     row['meta'] = json.loads(row['meta'])
         return results
 
-    def get_all_messages_by_thread(self, thread_id: str) -> List[Dict[str, Any]]:
+    async def get_all_messages_by_thread(self, thread_id: str) -> List[Dict[str, Any]]:
         query = "SELECT * FROM conversation_messages WHERE thread_id = %s ORDER BY timestamp ASC"
         params = (thread_id,)
-        results = self.db.execute_query(query, params)
+        results = await asyncio.to_thread(self.db.execute_query, query, params)
         for row in results:
             if row and row.get('meta'):
                 if isinstance(row['meta'], str):

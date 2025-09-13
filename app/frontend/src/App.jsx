@@ -117,14 +117,39 @@ function AppContent() {
     startRoomCreation(parentId, type, promptText);
   }, []);
 
+  const interactiveReviewRoomMutation = useMutation({
+    mutationFn: async ({ parentId, topic, history }) => {
+      const { data } = await axios.post(`/api/rooms/${parentId}/create-review-room`, { topic, history });
+      return data;
+    },
+    onSuccess: (data, { parentId }) => {
+      if (data.status === 'created') {
+        queryClient.invalidateQueries({ queryKey: ['rooms'] });
+        navigate(`/rooms/${data.room.room_id}`);
+      } else if (data.status === 'needs_more_context') {
+        addMessage(parentId, {
+          id: `ai_prompt_${Date.now()}`,
+          role: 'assistant',
+          content: data.question,
+          status: 'complete',
+          created_at: Math.floor(Date.now() / 1000),
+        });
+      }
+    },
+    onError: (error) => {
+      console.error('Failed to create review room interactively:', error);
+      alert('Error: ' + error.response?.data?.detail || 'Could not create review room.');
+    },
+  });
+
   return (
-    <AppProvider value={{ handleNewThread, createRoomMutation, initiateRoomCreation }}>
+    <AppProvider value={{ handleNewThread, createRoomMutation, initiateRoomCreation, interactiveReviewRoomMutation }}>
       {showSearch && <SearchPanel onClose={() => setShowSearch(false)} />}
       <ErrorBoundary>
         <Routes>
-          <Route path="/" element={<Main createRoomMutation={createRoomMutation} />} />
-          <Route path="/rooms/:roomId" element={<Main createRoomMutation={createRoomMutation} />} />
-          <Route path="/rooms/:roomId/threads/:threadId" element={<Main createRoomMutation={createRoomMutation} />} />
+          <Route path="/" element={<Main createRoomMutation={createRoomMutation} interactiveReviewRoomMutation={interactiveReviewRoomMutation} />} />
+          <Route path="/rooms/:roomId" element={<Main createRoomMutation={createRoomMutation} interactiveReviewRoomMutation={interactiveReviewRoomMutation} />} />
+          <Route path="/rooms/:roomId/threads/:threadId" element={<Main createRoomMutation={createRoomMutation} interactiveReviewRoomMutation={interactiveReviewRoomMutation} />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </ErrorBoundary>

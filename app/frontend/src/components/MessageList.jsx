@@ -10,7 +10,7 @@ const fetchMessages = async (roomId) => {
   return data || [];
 };
 
-const MessageList = ({ roomId, createRoomMutation }) => {
+const MessageList = ({ roomId, createRoomMutation, interactiveReviewRoomMutation }) => {
   const messagesEndRef = useRef(null);
 
   const { data: messages = [], isLoading } = useQuery({
@@ -51,6 +51,7 @@ const MessageList = ({ roomId, createRoomMutation }) => {
             roomId={roomId}
             disabled={!roomId}
             createRoomMutation={createRoomMutation}
+            interactiveReviewRoomMutation={interactiveReviewRoomMutation}
           />
         </div>
       </div>
@@ -70,6 +71,7 @@ const MessageList = ({ roomId, createRoomMutation }) => {
           roomId={roomId}
           disabled={!roomId}
           createRoomMutation={createRoomMutation}
+          interactiveReviewRoomMutation={interactiveReviewRoomMutation}
         />
       </div>
     </div>
