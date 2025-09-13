@@ -4,7 +4,7 @@ Room-related API endpoints - Refactored for synchronous operations and standardi
 
 import logging
 import asyncio
-from typing import Dict, List, Literal
+from typing import Dict, List, Literal, Optional
 from fastapi import APIRouter, Query, Depends
 from fastapi.responses import Response, JSONResponse
 from pydantic import BaseModel
@@ -12,16 +12,67 @@ from app.services.cache_service import CacheService, get_cache_service
 
 from app.core.errors import NotFoundError, InvalidRequestError, ForbiddenError, AppError
 from app.services.storage_service import storage_service
+from app.services.conversation_service import get_conversation_service
+from app.services.llm_service import get_llm_service
+from app.services.memory_service import get_memory_service
 from app.utils.helpers import generate_id, get_current_timestamp
 from app.api.dependencies import AUTH_DEPENDENCY
 from app.models.enums import RoomType
-from app.models.schemas import CreateRoomRequest, Room, ExportData, ExportableReview
+from app.models.schemas import CreateRoomRequest, Room, ExportData, ExportableReview, Message
 
 
 logger = logging.getLogger(__name__)
 
 # Create router
 router = APIRouter(tags=["rooms"])
+
+
+async def _handle_sub_room_creation_context(
+    parent_room_id: str, new_room_name: str, new_room_id: str, user_id: str
+):
+    """Helper to add context to a new sub-room based on parent history."""
+    conversation_service = get_conversation_service()
+    llm_service = get_llm_service()
+    memory_service = get_memory_service()
+
+    # 1. Get conversation history from parent room
+    threads = await asyncio.to_thread(conversation_service.get_threads_by_room, parent_room_id)
+    full_conversation = ""
+    for thread in threads:
+        messages = await asyncio.to_thread(conversation_service.get_all_messages_by_thread, thread.id)
+        for msg in messages:
+            full_conversation += f"{msg['role']}: {msg['content']}\n"
+
+    # 2. Check if the new room's topic exists in the conversation
+    initial_message_content = ""
+    if new_room_name.lower() in full_conversation.lower():
+        # Topic exists, summarize it
+        system_prompt = f"You are a helpful assistant. Summarize the following conversation, focusing on the key points, facts, and decisions related to the topic: '{new_room_name}'. Provide a concise summary."
+        user_prompt = full_conversation
+        summary, _ = await llm_service.invoke("openai", "gpt-4o", system_prompt, user_prompt, "summary-gen")
+        initial_message_content = f"이 세부룸은 메인룸의 '{new_room_name}' 논의를 기반으로 생성되었습니다.\n\n**핵심 요약:**\n{summary}"
+    else:
+        # Topic is new, inherit general context and profile
+        profile = await memory_service.get_user_profile(user_id)
+        context = await memory_service.get_context(parent_room_id, user_id)
+
+        system_prompt = "You are a helpful AI assistant starting a new conversation. Based on the user's profile and the general context of the main room, generate a welcoming message to kick off the discussion about a new topic."
+        user_prompt = f"New Topic: '{new_room_name}'\nUser Profile: {profile.model_dump_json() if profile else 'Not available'}\nMain Room Context: {context.model_dump_json() if context else 'Not available'}"
+
+        welcome_message, _ = await llm_service.invoke("openai", "gpt-4o", system_prompt, user_prompt, "welcome-gen")
+        initial_message_content = welcome_message
+
+    # 3. Add the initial message to the new room
+    if initial_message_content:
+        initial_message = Message(
+            message_id=generate_id("msg"),
+            room_id=new_room_id,
+            user_id="system",
+            role="assistant",
+            content=initial_message_content,
+            timestamp=get_current_timestamp(),
+        )
+        await asyncio.to_thread(storage_service.save_message, initial_message)
 
 
 def _format_export_as_markdown(export_data: ExportData) -> str:
@@ -73,14 +124,14 @@ async def create_room(
         raise InvalidRequestError("Invalid user information.")
 
     if room_request.type == RoomType.MAIN:
-        existing_rooms = storage_service.get_rooms_by_owner(user_id)
+        existing_rooms = await asyncio.to_thread(storage_service.get_rooms_by_owner, user_id)
         if any(r.type == RoomType.MAIN for r in existing_rooms):
             raise InvalidRequestError("Main room already exists for this user.")
 
     if room_request.type in [RoomType.SUB, RoomType.REVIEW]:
         if not room_request.parent_id:
             raise InvalidRequestError("Sub/Review rooms must have a parent_id.")
-        parent_room = storage_service.get_room(room_request.parent_id)
+        parent_room = await asyncio.to_thread(storage_service.get_room, room_request.parent_id)
         if not parent_room:
             raise NotFoundError("room", room_request.parent_id)
         if room_request.type == RoomType.SUB and parent_room.type != RoomType.MAIN:
@@ -89,13 +140,23 @@ async def create_room(
             raise InvalidRequestError("Review rooms must have a sub room as a parent.")
 
     room_id = generate_id()
-    new_room = storage_service.create_room(
+    new_room = await asyncio.to_thread(
+        storage_service.create_room,
         room_id=room_id,
         name=room_request.name,
         owner_id=user_id,
         room_type=room_request.type,
         parent_id=room_request.parent_id,
     )
+
+    # If a sub-room is created, handle context inheritance
+    if new_room.type == RoomType.SUB and new_room.parent_id:
+        await _handle_sub_room_creation_context(
+            parent_room_id=new_room.parent_id,
+            new_room_name=new_room.name,
+            new_room_id=new_room.room_id,
+            user_id=user_id,
+        )
 
     # Invalidate cache
     await cache_service.delete(f"rooms:{user_id}")
@@ -280,3 +341,68 @@ def export_room_data(
         )
 
     return JSONResponse(content=export_data.model_dump())
+
+
+class CreateReviewRoomInteractiveRequest(BaseModel):
+    topic: str
+    history: Optional[List[Dict[str, str]]] = None
+
+class CreateReviewRoomInteractiveResponse(BaseModel):
+    status: Literal["created", "needs_more_context"]
+    question: Optional[str] = None
+    room: Optional[Room] = None
+
+
+@router.post("/{parent_id}/create-review-room", response_model=CreateReviewRoomInteractiveResponse)
+async def create_review_room_interactive(
+    parent_id: str,
+    request: CreateReviewRoomInteractiveRequest,
+    user_info: Dict[str, str] = AUTH_DEPENDENCY,
+):
+    """Interactively creates a review room."""
+    user_id = user_info.get("user_id")
+    if not user_id:
+        raise InvalidRequestError("Invalid user information.")
+
+    parent_room = await asyncio.to_thread(storage_service.get_room, parent_id)
+    if not parent_room or parent_room.type != RoomType.SUB:
+        raise InvalidRequestError("Parent room must be a sub-room.")
+
+    conversation_service = get_conversation_service()
+    llm_service = get_llm_service()
+
+    # Get conversation history from the parent sub-room
+    threads = await conversation_service.get_threads_by_room(parent_id)
+    full_conversation = ""
+    for thread in threads:
+        messages = await conversation_service.get_all_messages_by_thread(thread.id)
+        for msg in messages:
+            full_conversation += f"{msg['role']}: {msg['content']}\n"
+
+    # Simple check for context sufficiency
+    # A more robust check would involve embeddings or LLM calls
+    context_sufficient = request.topic.lower() in full_conversation.lower()
+
+    if request.history and len(request.history) > 0:
+        context_sufficient = True # If user provided more info, assume it's enough
+
+    if context_sufficient:
+        # Create the review room
+        room_id = generate_id()
+        new_room = await asyncio.to_thread(
+            storage_service.create_room,
+            room_id=room_id,
+            name=request.topic,
+            owner_id=user_id,
+            room_type=RoomType.REVIEW,
+            parent_id=parent_id,
+        )
+        return CreateReviewRoomInteractiveResponse(status="created", room=new_room)
+    else:
+        # Ask a follow-up question
+        system_prompt = "You are an AI assistant helping a user create a 'review room'. The user has provided a topic, but more context is needed. Ask a clarifying question to understand what specific aspect of the topic they want to review."
+        user_prompt = f"The topic is '{request.topic}'. The conversation history of the parent room does not seem to contain enough information about it. What clarifying question should I ask the user?"
+
+        question, _ = await llm_service.invoke("openai", "gpt-4o", system_prompt, user_prompt, "question-gen")
+
+        return CreateReviewRoomInteractiveResponse(status="needs_more_context", question=question)

@@ -301,3 +301,14 @@ class LLMService:
     # --- Common Methods ---
     def get_provider_status(self) -> Dict[str, Dict[str, Any]]:
         return retry_manager.get_provider_status()
+
+
+# Global service instance
+llm_service: "LLMService" = None
+
+def get_llm_service() -> "LLMService":
+    global llm_service
+    if llm_service is None:
+        from app.core.secrets import get_secret_provider
+        llm_service = LLMService(secret_provider=get_secret_provider())
+    return llm_service

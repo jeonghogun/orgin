@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 import { SSE } from 'sse.js';
 import { useAppContext } from '../context/AppContext';
-import { useRoomCreationRequest, clearRoomCreation } from '../store/useConversationStore';
+import { useRoomCreationRequest, clearRoomCreation, useReviewRoomCreation, addReviewRoomHistory, clearReviewRoomCreation } from '../store/useConversationStore';
 
 // Use stream endpoint with proper JSON response handling
 const streamMessageApi = async ({ roomId, content, onChunk, onIdReceived }) => {
@@ -34,15 +34,17 @@ const uploadFileApi = async ({ roomId, file }) => {
   return data;
 };
 
-const ChatInput = ({ roomId, roomData, disabled = false, onCreateSubRoom, onCreateReviewRoom, createRoomMutation }) => {
+const ChatInput = ({ roomId, roomData, disabled = false, onCreateSubRoom, onCreateReviewRoom, createRoomMutation, interactiveReviewRoomMutation }) => {
   const [message, setMessage] = useState('');
   const fileInputRef = useRef(null);
   const queryClient = useQueryClient();
   const { showError } = useAppContext();
   const roomCreationRequest = useRoomCreationRequest();
+  const reviewRoomCreation = useReviewRoomCreation();
   
   // 디버그용 로그
   console.log('ChatInput - roomCreationRequest:', roomCreationRequest);
+  console.log('ChatInput - reviewRoomCreation:', reviewRoomCreation);
   console.log('ChatInput - roomId:', roomId);
 
   const streamMutation = useMutation({
@@ -83,6 +85,23 @@ const ChatInput = ({ roomId, roomData, disabled = false, onCreateSubRoom, onCrea
         });
       }
       clearRoomCreation();
+      setMessage('');
+      return;
+    }
+
+    // 대화형 검토룸 생성 요청 확인
+    if (reviewRoomCreation?.active && reviewRoomCreation?.parentId === roomId) {
+      if (interactiveReviewRoomMutation) {
+        addReviewRoomHistory({ role: 'user', content: message.trim() });
+        const updatedHistory = [...reviewRoomCreation.history, { role: 'user', content: message.trim() }];
+
+        interactiveReviewRoomMutation.mutate({
+          parentId: reviewRoomCreation.parentId,
+          topic: reviewRoomCreation.topic,
+          history: updatedHistory,
+        });
+      }
+      // Do not clear the creation state here, wait for the response
       setMessage('');
       return;
     }
@@ -160,17 +179,12 @@ const ChatInput = ({ roomId, roomData, disabled = false, onCreateSubRoom, onCrea
             }
           }}
           placeholder={(() => {
-            const isRoomCreationActive = roomCreationRequest?.active && roomCreationRequest?.parentId === roomId;
-            console.log('Placeholder condition check:', {
-              disabled,
-              roomCreationRequestActive: roomCreationRequest?.active,
-              parentIdMatch: roomCreationRequest?.parentId === roomId,
-              isRoomCreationActive,
-              promptText: roomCreationRequest?.promptText
-            });
-            
+            const isSubRoomCreationActive = roomCreationRequest?.active && roomCreationRequest?.parentId === roomId;
+            const isReviewRoomCreationActive = reviewRoomCreation?.active && reviewRoomCreation?.parentId === roomId;
+
             if (disabled) return "룸을 선택해주세요";
-            if (isRoomCreationActive) return roomCreationRequest.promptText;
+            if (isSubRoomCreationActive) return roomCreationRequest.promptText;
+            if (isReviewRoomCreationActive) return "어떤 주제로 검토룸을 열까요?";
             return "무엇이든 물어보세요...";
           })()}
           disabled={disabled || streamMutation.isPending || uploadMutation.isPending}

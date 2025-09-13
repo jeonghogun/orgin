@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ROOM_TYPES } from '../constants';
-import { useRoomCreationRequest, startRoomCreation, addMessage } from '../store/useConversationStore';
+import { useRoomCreationRequest, startRoomCreation, addMessage, startReviewRoomCreation } from '../store/useConversationStore';
 import { useAppContext } from '../context/AppContext';
 import RenameRoomModal from './modals/RenameRoomModal';
 import DeleteConfirmationModal from './modals/DeleteConfirmationModal';
@@ -257,9 +257,7 @@ const Sidebar = memo(() => {
 
   const handleCreateReviewRoom = useCallback((parentId) => {
     const promptText = "어떤 주제로 검토룸을 열까요?";
-    startRoomCreation(parentId, ROOM_TYPES.REVIEW, promptText);
-    
-    // AI 메시지 추가
+    // This now just adds the initial prompt. The actual creation is handled by the interactive flow.
     addMessage(parentId, {
       id: `ai_prompt_${Date.now()}`,
       role: 'assistant',
@@ -267,7 +265,12 @@ const Sidebar = memo(() => {
       status: 'complete',
       created_at: Math.floor(Date.now() / 1000),
     });
-  }, [startRoomCreation, addMessage]);
+    // We don't call startRoomCreation here anymore for reviews.
+    // The ChatInput will handle the interactive creation process.
+    // We just need to make sure the UI knows a review creation is in progress.
+    // The prompt in the input box will be handled by ChatInput's placeholder logic.
+    startReviewRoomCreation(parentId, ""); // Start with an empty topic
+  }, [addMessage, startReviewRoomCreation]);
 
   const handleRenameClick = useCallback((room) => setRenamingRoom(room), []);
   const handleDeleteClick = useCallback((room) => setDeletingRoom(room), []);

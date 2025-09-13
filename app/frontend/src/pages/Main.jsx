@@ -8,7 +8,7 @@ import ChatView from '../components/conversation/ChatView';
 import MessageList from '../components/MessageList';
 import { ROOM_TYPES } from '../constants';
 
-const Main = ({ createRoomMutation }) => {
+const Main = ({ createRoomMutation, interactiveReviewRoomMutation }) => {
   const { threadId, roomId } = useParams();
 
   // 현재 선택된 룸 정보 가져오기
@@ -34,20 +34,13 @@ const Main = ({ createRoomMutation }) => {
       {/* The ThreadList and ChatView are now separate from the Sidebar flow */}
       {/* It's assumed that selecting a room in the Sidebar will then populate the ThreadList */}
       <div className="flex-1 flex flex-col h-screen ml-72">
-          {/* ThreadList는 메인룸에서만 표시 */}
-          {isMainRoom && (
-            <div className="w-80 border-r border-border flex flex-col">
-                <ThreadList />
-            </div>
-          )}
-
           {/* The main chat view takes the rest of the space */}
           <main className="flex-1 flex flex-col h-screen">
               <div className="flex-1 overflow-y-auto">
                   {threadId && roomId ? (
                       <ChatView key={threadId} threadId={threadId} />
                   ) : roomId ? (
-                      <MessageList roomId={roomId} createRoomMutation={createRoomMutation} />
+                      <MessageList roomId={roomId} createRoomMutation={createRoomMutation} interactiveReviewRoomMutation={interactiveReviewRoomMutation} />
                   ) : (
                       <div className="flex items-center justify-center h-full">
                           <div className="text-center">
