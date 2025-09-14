@@ -1,0 +1,121 @@
+# ===============================================
+# Centralized Prompt Management File
+# ===============================================
+# This file contains all prompts used by the application, structured for
+# versioning and easy management.
+
+# --- Review Prompts ---
+
+review_initial_analysis:
+  description: "The prompt for Round 1 (Initial Analysis) of the review process."
+  default_version: v1
+  versions:
+    v1:
+      template: |
+        Topic: {topic}
+        Instruction: {instruction}
+
+        Provide your independent analysis of the topic, **prioritizing the user's specific instruction above.**
+        - Be realistic and logical.
+        - Provide clear reasoning, evidence, pros/cons, and possible implications.
+        - Do not assume what other panelists will say.
+        - Your output must be in the specified JSON format.
+        - The JSON schema you must adhere to is:
+          {{
+            "round": 1,
+            "key_takeaway": "A brief summary of the main finding.",
+            "arguments": [
+              "Core argument 1 (with reasoning)",
+              "Core argument 2 (with reasoning)"
+            ],
+            "risks": ["Anticipated risk 1", "Potential risk 2"],
+            "opportunities": ["Discovered opportunity 1", "Potential opportunity 2"]
+          }}
+
+review_rebuttal:
+  description: "The prompt for Round 2 (Rebuttal) of the review process."
+  default_version: v1
+  versions:
+    v1:
+      template: |
+        Rebuttal Round.
+        Here are the summaries of the initial arguments:
+        {rebuttal_context}
+
+        Review these arguments carefully.
+        - If there are differences, analyze them and clarify or improve weak points.
+        - If they are mostly aligned, reinforce the shared perspective by pointing out missing factors, hidden risks, or practical details.
+        - **When you state a disagreement or make an addition, you must provide a brief reasoning for it.**
+        - Only state "the arguments are sufficient" if you believe no meaningful improvement is possible (this should be rare).
+        - Your output must be in the specified JSON format.
+        - The JSON schema you must adhere to is:
+          {{
+            "round": 2,
+            "agreements": [
+              "Summary of a round 1 argument you fully agree with"
+            ],
+            "disagreements": [
+              {{
+                "point": "The argument you want to challenge or refine",
+                "reasoning": "The logical flaw or why it's not realistic"
+              }}
+            ],
+            "additions": [
+              {{
+                "point": "A new consideration missed in round 1",
+                "reasoning": "Why this is important"
+              }}
+            ]
+          }}
+
+review_synthesis:
+  description: "The prompt for Round 3 (Synthesis) of the review process."
+  default_version: v1
+  versions:
+    v1:
+      template: |
+        Synthesis Round.
+        Based on all previous arguments from round 1 and 2, please synthesize them into your final, comprehensive position.
+        Provide actionable recommendations based on your conclusion.
+
+        {synthesis_context}
+
+        Your output must be in the specified JSON format.
+        - The JSON schema you must adhere to is:
+          {{
+            "round": 3,
+            "executive_summary": "A high-level summary of my final position, synthesizing all discussions.",
+            "conclusion": "The detailed, comprehensive conclusion supporting the summary.",
+            "recommendations": [
+              "Specific, actionable recommendation 1, based on the conclusion.",
+              "Specific, actionable recommendation 2, based on the conclusion."
+            ]
+          }}
+
+review_final_report:
+  description: "The prompt for generating the final consolidated report from all panelist's round 3 outputs."
+  default_version: v1
+  versions:
+    v1:
+      template: |
+        The following are the final reports from the AI panelists:
+        {panelist_reports}
+
+        Please create a consolidated final report.
+        - In the executive summary, clearly state the strongest points of consensus and any significant remaining disagreements among the panelists.
+        - Your output must be in the specified JSON format.
+        - The JSON schema you must adhere to is:
+          {{
+            "executive_summary": "The final summary, including key insights from the entire discussion.",
+            "strongest_consensus": [
+              "Key point 1 that panelists commonly agreed on.",
+              "Key point 2 that panelists commonly agreed on."
+            ],
+            "remaining_disagreements": [
+              "Significant disagreement 1, if any."
+            ],
+            "recommendations": [
+              "Consolidated final recommendation 1 (highest priority).",
+              "Consolidated final recommendation 2."
+            ]
+          }}

@@ -1,4 +1,4 @@
-name: Python CI
+name: CI/CD Pipeline
 
 on:
   push:
@@ -10,98 +10,126 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.12'
-    - name: Install dependencies
-      run: |
-        pip install -r requirements-dev.txt
-    - name: Run linters
-      run: |
-        flake8 app tests
-        pyright app
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install flake8 pyright
+      - name: Run linters
+        run: |
+          flake8 app tests
+          pyright app
+
+  migration-check:
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+      - name: Check for migration consistency
+        env:
+          # We need a dummy DB_ENCRYPTION_KEY for models to load
+          DB_ENCRYPTION_KEY: "test-key-for-ci-32-bytes-long"
+        run: |
+          export PYTHONPATH=$PWD
+          alembic check
+
+  test:
+    runs-on: ubuntu-latest
+    needs: lint
+    services:
+      test-db:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: test_origin_db
+        ports:
+          - 5434:5432
+        options: >-
+          --health-cmd "pg_isready -U test_user -d test_origin_db"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+      test-redis:
+        image: redis:7-alpine
+        ports:
+          - 6380:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+      - name: Install Python dependencies
+        run: pip install -r requirements-dev.txt
+      - name: Run Tests
+        env:
+          DATABASE_URL: postgresql://test_user:test_password@localhost:5434/test_origin_db
+          REDIS_URL: redis://localhost:6380/0
+          DB_ENCRYPTION_KEY: "test-key-for-ci-32-bytes-long"
+          AUTH_OPTIONAL: "True"
+          CELERY_TASK_ALWAYS_EAGER: "True"
+          OPENAI_API_KEY: "test-key-for-ci"
+          GEMINI_API_KEY: "test-key-for-ci"
+          ANTHROPIC_API_KEY: "test-key-for-ci"
+          PYTHONPATH: .
+        run: ./scripts/run_tests.sh
 
   build-frontend:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
-    - name: Set up Node.js
-      uses: actions/setup-node@v3
-      with:
-        node-version: '20'
-    - name: Install Frontend Dependencies and Build
-      run: |
-        cd app/frontend
-        npm ci
-        npm run build
-    - name: Upload Frontend Build Artifact
-      uses: actions/upload-artifact@v3
-      with:
-        name: frontend-dist
-        path: app/frontend/dist
+      - uses: actions/checkout@v3
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '20'
+      - name: Install Frontend Dependencies and Build
+        working-directory: ./app/frontend
+        run: |
+          npm ci
+          npm run build
+      - name: Upload Frontend Build Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: frontend-dist
+          path: app/frontend/dist
 
-  test-backend:
+  build-docker:
     runs-on: ubuntu-latest
-    needs: lint
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: user
-          POSTGRES_PASSWORD: password
-          POSTGRES_DB: origin_db_test
-        ports:
-          - 5432:5432
-        # Add a healthcheck to wait for the DB to be ready
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
+    needs: [test, build-frontend, migration-check]
+    if: github.ref == 'refs/heads/main'
     steps:
-    - uses: actions/checkout@v3
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.12'
-
-    - name: Install PostgreSQL client and pgvector
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y postgresql-client-16 postgresql-16-pgvector
-
-    - name: Install Python dependencies
-      run: |
-        pip install -r requirements-dev.txt
-        pip install -r requirements.txt
-
-    - name: Run Tests
-      env:
-        # Use the service container credentials
-        DATABASE_URL: postgresql://user:password@localhost:5432/origin_db_test
-        REDIS_URL: redis://localhost:6379
-        CELERY_BROKER_URL: redis://localhost:6379/0
-        CELERY_RESULT_BACKEND: redis://localhost:6379/0
-        AUTH_OPTIONAL: "True"
-        OPENAI_API_KEY: "test-key-for-ci"
-        GEMINI_API_KEY: "test-key-for-ci"
-        ANTHROPIC_API_KEY: "test-key-for-ci"
-        DB_ENCRYPTION_KEY: "test-key-for-ci-32-bytes-long"
-        PYTHONPATH: .
-      run: |
-        # Start celery worker in the background
-        celery -A app.celery_app worker -P gevent --loglevel=INFO &
-        sleep 5 # Give worker time to start
-        pytest
+      - uses: actions/checkout@v3
+      - name: Download Frontend Artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: frontend-dist
+          path: app/static
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Build and push
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: true
+          tags: your-dockerhub-repo/origin-project:latest

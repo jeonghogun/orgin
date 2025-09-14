@@ -77,11 +77,14 @@ def limit_typed(
 
 
 from app.services.redis_pubsub import redis_pubsub_manager
+from app.core.telemetry import setup_telemetry
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan management"""
     logger.info("Starting application...")
+    # Configure OpenTelemetry on startup
+    setup_telemetry()
     redis_pubsub_manager.start_listener()
     yield
     logger.info("Shutting down application...")
@@ -126,9 +129,10 @@ async def memory_usage_middleware(request: Request, call_next):
     return response
 
 # Add middleware
+# The origins should be a comma-separated string in the env, e.g., "http://localhost:5173,http://127.0.0.1:5173"
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.CORS_ALLOWED_ORIGINS.split(","),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

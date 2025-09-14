@@ -137,22 +137,38 @@ class StorageService:
         return rows_affected > 0
 
     def save_message(self, message: Message) -> None:
-        """Save an encrypted message to the database."""
-        embedding = None # TODO: Add embedding generation
-        query = """
+        """Save an encrypted message, update room stats, and dispatch embedding task."""
+        from app.tasks.embedding_tasks import generate_embedding_for_record
+
+        insert_query = """
             INSERT INTO messages (message_id, room_id, user_id, role, content, content_searchable, timestamp)
             VALUES (%s, %s, %s, %s, pgp_sym_encrypt(%s, %s), %s, %s)
         """
-        params = (
+        insert_params = (
             message.message_id, message.room_id, message.user_id, message.role,
             message.content, self.db_encryption_key, message.content, message.timestamp
         )
-        self.db.execute_update(query, params)
 
-        # Also, increment the message count for the room
         update_query = "UPDATE rooms SET message_count = message_count + 1, updated_at = %s WHERE room_id = %s"
         update_params = (int(time.time()), message.room_id)
-        self.db.execute_update(update_query, update_params)
+
+        try:
+            with self.db.transaction(query_type="write_message") as cur:
+                cur.execute(insert_query, insert_params)
+                cur.execute(update_query, update_params)
+
+            # Dispatch the embedding task after the transaction is successfully committed.
+            # Only generate embeddings for user messages to save costs/resources.
+            if message.role == "user":
+                generate_embedding_for_record.delay(
+                    record_id=message.message_id,
+                    table_name="messages",
+                    text_content=message.content
+                )
+        except Exception as e:
+            logger.error(f"Transaction failed for save_message on room {message.room_id}: {e}", exc_info=True)
+            # Re-raise the exception to allow higher-level error handling if needed
+            raise
 
     def get_messages(self, room_id: str) -> List[Message]:
         """Get and decrypt all messages for a room from the database."""
@@ -403,6 +419,31 @@ class StorageService:
 
         results = self.db.execute_query(query, params)
         return [ReviewMetrics(**row) for row in results]
+
+
+    def save_embedding(self, table_name: str, record_id: str, embedding: List[float]) -> None:
+        """
+        Saves a vector embedding for a specific record in a given table.
+        """
+        # A mapping of table names to their primary key column names
+        # This is a security measure to prevent arbitrary table updates.
+        allowed_tables = {
+            "messages": "message_id",
+            "attachment_chunks": "id",
+        }
+
+        if table_name not in allowed_tables:
+            logger.error(f"Attempted to save embedding to an unsupported table: {table_name}")
+            raise ValueError(f"Table '{table_name}' is not supported for embedding updates.")
+
+        pk_column = allowed_tables[table_name]
+
+        # Use f-string for table and column names as they are controlled by the allowlist,
+        # and use parameterization for the actual values to prevent SQL injection.
+        query = f"UPDATE {table_name} SET embedding = %s WHERE {pk_column} = %s"
+        params = (embedding, record_id)
+
+        self.db.execute_update(query, params)
 
 
 # Global storage service instance

@@ -24,41 +24,46 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    encryption_key = os.getenv("DB_ENCRYPTION_KEY")
-    if not encryption_key:
-        raise ValueError("DB_ENCRYPTION_KEY must be set in environment for this migration.")
-
-    # Add encrypted content column
-    op.add_column('messages', sa.Column('content_encrypted', sa.LargeBinary(), nullable=True))
+    bind = op.get_bind()
     
-    # Add searchable content column (for full-text search)
-    op.add_column('messages', sa.Column('content_searchable', sa.Text(), nullable=True))
+    with op.batch_alter_table('messages', schema=None) as batch_op:
+        batch_op.add_column(sa.Column('content_encrypted', sa.LargeBinary(), nullable=True))
+        batch_op.add_column(sa.Column('content_searchable', sa.Text(), nullable=True))
 
-    # Encrypt the content and copy to searchable column
-    stmt = sa.text("UPDATE messages SET content_encrypted = pgp_sym_encrypt(content, :key), content_searchable = content")
-    stmt = stmt.bindparams(sa.bindparam('key', encryption_key))
-    op.execute(stmt)
+    # Data migration only for PostgreSQL
+    if bind.dialect.name == 'postgresql':
+        encryption_key = os.getenv("DB_ENCRYPTION_KEY")
+        if not encryption_key:
+            raise ValueError("DB_ENCRYPTION_KEY must be set for this migration on PostgreSQL.")
 
-    # Drop original content column
-    op.drop_column('messages', 'content')
-    
-    # Rename encrypted column to content (for backward compatibility)
-    op.alter_column('messages', 'content_encrypted', new_column_name='content')
-    op.alter_column('messages', 'content', nullable=False)
-    op.alter_column('messages', 'content_searchable', nullable=False)
+        stmt = sa.text("UPDATE messages SET content_encrypted = pgp_sym_encrypt(content, :key), content_searchable = content")
+        stmt = stmt.bindparams(sa.bindparam('key', encryption_key))
+        op.execute(stmt)
+
+    with op.batch_alter_table('messages', schema=None) as batch_op:
+        batch_op.drop_column('content')
+        batch_op.alter_column('content_encrypted', new_column_name='content', existing_type=sa.LargeBinary(), nullable=False)
+        # In SQLite, the column might not have any data, so we can't make it non-nullable
+        if bind.dialect.name == 'postgresql':
+            batch_op.alter_column('content_searchable', existing_type=sa.Text(), nullable=False)
 
 
 def downgrade() -> None:
-    encryption_key = os.getenv("DB_ENCRYPTION_KEY")
-    if not encryption_key:
-        raise ValueError("DB_ENCRYPTION_KEY must be set in environment for this migration.")
+    bind = op.get_bind()
 
-    op.add_column('messages', sa.Column('content_decrypted', sa.Text(), nullable=True))
+    with op.batch_alter_table('messages', schema=None) as batch_op:
+        batch_op.add_column(sa.Column('content_decrypted', sa.Text(), nullable=True))
 
-    stmt = sa.text("UPDATE messages SET content_decrypted = pgp_sym_decrypt(content, :key)")
-    stmt = stmt.bindparams(sa.bindparam('key', encryption_key))
-    op.execute(stmt)
+    # Data migration only for PostgreSQL
+    if bind.dialect.name == 'postgresql':
+        encryption_key = os.getenv("DB_ENCRYPTION_KEY")
+        if not encryption_key:
+            raise ValueError("DB_ENCRYPTION_KEY must be set for this migration on PostgreSQL.")
 
-    op.drop_column('messages', 'content')
-    op.alter_column('messages', 'content_decrypted', new_column_name='content')
-    op.alter_column('messages', 'content', nullable=False)
+        stmt = sa.text("UPDATE messages SET content_decrypted = pgp_sym_decrypt(content, :key)")
+        stmt = stmt.bindparams(sa.bindparam('key', encryption_key))
+        op.execute(stmt)
+
+    with op.batch_alter_table('messages', schema=None) as batch_op:
+        batch_op.drop_column('content')
+        batch_op.alter_column('content_decrypted', new_column_name='content', existing_type=sa.Text(), nullable=False)
