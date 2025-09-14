@@ -6,3 +6,14 @@ trio-asyncio
 testing.postgresql
 gevent
 python-dotenv
+
+# --- Observability (OpenTelemetry) ---
+opentelemetry-distro
+opentelemetry-instrumentation-fastapi
+opentelemetry-instrumentation-celery
+opentelemetry-instrumentation-psycopg2
+opentelemetry-instrumentation-redis
+opentelemetry-exporter-otlp-proto-http
+
+# --- Prompt Management ---
+PyYAML

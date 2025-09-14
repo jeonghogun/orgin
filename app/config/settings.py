@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     API_PORT: int = 8000
     DEBUG: bool = True
     TESTING: bool = False
+    CORS_ALLOWED_ORIGINS: str = "http://localhost:8000,http://127.0.0.1:8000,http://localhost:5173,http://127.0.0.1:5173"
 
     # --- Authentication ---
     AUTH_OPTIONAL: bool = True
@@ -104,7 +105,8 @@ class Settings(BaseSettings):
     FIREBASE_SERVICE_ACCOUNT_PATH: Optional[str] = None
     FIREBASE_PROJECT_ID: Optional[str] = None
 
-    # --- APM Configuration ---
+    # --- APM / Observability Configuration ---
+    OTEL_EXPORTER_OTLP_ENDPOINT: Optional[str] = None # e.g., http://localhost:4318
     NEW_RELIC_LICENSE_KEY: Optional[str] = None
     NEW_RELIC_APP_NAME: str = "origin-api"
     DATADOG_API_KEY: Optional[str] = None

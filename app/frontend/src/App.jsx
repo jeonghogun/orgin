@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useParams, useNavigate, useLocation } from 'react-router-dom';
 import { QueryClient, QueryClientProvider, useMutation, useQueryClient, useQuery } from '@tanstack/react-query';
 import axios from 'axios';
+import toast from 'react-hot-toast';
 
 import SearchPanel from './components/conversation/SearchPanel';
 import { AppProvider } from './context/AppContext';
@@ -54,7 +55,7 @@ function AppContent() {
     },
     onError: (error) => {
       console.error('Failed to create thread:', error);
-      alert('Could not create a new conversation in this room.');
+      toast.error('Could not create a new conversation in this room.');
     }
   });
 
@@ -107,7 +108,7 @@ function AppContent() {
     },
     onError: (error) => {
       console.error('Failed to create room:', error);
-      alert('Error: ' + error.response?.data?.detail || 'Could not create room.');
+      toast.error(error.response?.data?.detail || 'Could not create room.');
     },
   });
 
@@ -138,7 +139,7 @@ function AppContent() {
     },
     onError: (error) => {
       console.error('Failed to create review room interactively:', error);
-      alert('Error: ' + error.response?.data?.detail || 'Could not create review room.');
+      toast.error(error.response?.data?.detail || 'Could not create review room.');
     },
   });
 

@@ -121,10 +121,27 @@ GOOGLE_CSE_ID=your_custom_search_engine_id
 ```
 
 ### 3. 애플리케이션 실행
+
+#### 기본 실행
 ```bash
 # 개발 모드 실행 (PYTHONPATH 설정 필수)
 export PYTHONPATH=$PWD
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+#### OpenTelemetry로 실행 (분산 추적 및 메트릭)
+OpenTelemetry 계측을 활성화하여 실행하려면, `opentelemetry-instrument` 래퍼를 사용합니다. 이 방식은 API, DB, Celery 등 다양한 호출을 자동으로 추적합니다.
+```bash
+# 의존성 설치
+pip install -r requirements-dev.txt
+
+# OpenTelemetry로 계측하여 실행 (모든 신호를 콘솔에 출력)
+export PYTHONPATH=$PWD
+opentelemetry-instrument \
+    --traces_exporter console \
+    --metrics_exporter console \
+    --logs_exporter console \
+    uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 ### 4. 브라우저 접속

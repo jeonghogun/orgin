@@ -1,8 +1,10 @@
-import React, { useEffect, useRef } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import React, { useEffect, useRef, useCallback } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 import Message from './Message';
 import ChatInput from './ChatInput';
+import useWebSocket from '../hooks/useWebSocket';
+import ConnectionStatusBanner from './common/ConnectionStatusBanner';
 
 const fetchMessages = async (roomId) => {
   if (!roomId) return [];
@@ -12,13 +14,31 @@ const fetchMessages = async (roomId) => {
 
 const MessageList = ({ roomId, createRoomMutation, interactiveReviewRoomMutation }) => {
   const messagesEndRef = useRef(null);
+  const queryClient = useQueryClient();
+
+  const handleNewMessage = useCallback((message) => {
+    // Update the query cache with the new message from WebSocket
+    queryClient.setQueryData(['messages', roomId], (oldData) => {
+      if (!oldData) return [message];
+      // Avoid duplicates
+      if (oldData.some(m => m.message_id === message.message_id)) {
+        return oldData;
+      }
+      return [...oldData, message];
+    });
+  }, [queryClient, roomId]);
+
+  // Construct WebSocket URL.
+  // The backend websocket endpoint is at /api/ws/reviews/{review_id}
+  // We will connect if a roomId is present. The backend's AUTH_OPTIONAL=True will allow connection.
+  const wsUrl = roomId ? `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/api/ws/reviews/${roomId}` : null;
+  const { connectionStatus } = useWebSocket(wsUrl, handleNewMessage, null); // Passing null for the token
+
 
   const { data: messages = [], isLoading } = useQuery({
     queryKey: ['messages', roomId],
     queryFn: () => fetchMessages(roomId),
     enabled: !!roomId,
-    // The streaming logic in ChatInput will update this query's cache,
-    // so we don't need to refetch as frequently.
     staleTime: 1000 * 60 * 5, // 5 minutes
   });
 
@@ -60,6 +80,7 @@ const MessageList = ({ roomId, createRoomMutation, interactiveReviewRoomMutation
 
   return (
     <div className="flex flex-col h-full">
+      <ConnectionStatusBanner status={connectionStatus} />
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {messages.map((message) => (
           <Message key={message.message_id} message={message} />

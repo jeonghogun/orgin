@@ -3,16 +3,19 @@ import time
 import json
 import redis
 from datetime import datetime
-from typing import List, Dict, Any, Tuple, Union, Optional
+from typing import List, Dict, Any, Tuple, Union, Optional, Type
 
 from celery import states
 from celery.exceptions import Ignore
+from pydantic import BaseModel, ValidationError
 
 from app.celery_app import celery_app
 from app.config.settings import settings
 from app.models.schemas import Message, WebSocketMessage
+from app.models.review_schemas import LLMReviewInitialAnalysis, LLMReviewRebuttal, LLMReviewSynthesis, LLMFinalReport
 from app.services.redis_pubsub import redis_pubsub_manager
 from app.services.llm_strategy import llm_strategy_service, ProviderPanelistConfig
+from app.services.prompt_service import prompt_service
 from app.utils.helpers import generate_id, get_current_timestamp
 from app.tasks.base_task import BaseTask
 from app.services.llm_service import LLMService
@@ -73,25 +76,37 @@ def _process_turn_results(
     review_room_id: str,
     round_num: int,
     results: List[Tuple[ProviderPanelistConfig, Union[Tuple[Any, Dict[str, Any]], BaseException]]],
-    all_previous_metrics: List[List[Dict[str, Any]]]
+    all_previous_metrics: List[List[Dict[str, Any]]],
+    validation_model: Type[BaseModel]
 ) -> Tuple[Dict[str, Any], List[Dict[str, Any]], List[ProviderPanelistConfig]]:
-    """Processes results from a single turn, saves messages, and collects metrics."""
+    """
+    Processes results from a single turn, validates against a Pydantic model,
+    saves messages, and collects metrics.
+    """
     turn_outputs, round_metrics, successful_panelists = {}, [], []
     for panelist_config, result in results:
         persona = panelist_config.persona
         if isinstance(result, BaseException):
-            logger.error(f"Panelist {persona} failed in round {round_num}: {result}")
+            logger.error(f"Panelist {persona} failed in round {round_num}: {result}", exc_info=result)
             round_metrics.append({"persona": persona, "success": False, "error": str(result), "provider": panelist_config.provider})
         else:
             content, metrics = result
             try:
-                turn_outputs[persona] = json.loads(content)
+                # First, parse the JSON string
+                data = json.loads(content)
+                # Then, validate the data against the provided Pydantic model
+                validated_data = validation_model.model_validate(data)
+                # Store the validated data as a dictionary
+                turn_outputs[persona] = validated_data.model_dump()
+
                 round_metrics.append(metrics)
                 successful_panelists.append(panelist_config)
+                # Save the original, validated JSON content to the database
                 _save_panelist_message(review_room_id, content, persona, round_num)
-            except json.JSONDecodeError:
-                logger.error(f"Panelist {persona} in round {round_num} returned invalid JSON: {content}")
-                round_metrics.append({"persona": persona, "success": False, "error": "Invalid JSON response", "provider": panelist_config.provider})
+            except (json.JSONDecodeError, ValidationError) as e:
+                error_message = f"Panelist {persona} in round {round_num} returned invalid or non-validating JSON. Error: {e}. Raw content: {content}"
+                logger.error(error_message)
+                round_metrics.append({"persona": persona, "success": False, "error": "Invalid or non-validating JSON response", "provider": panelist_config.provider})
 
     _check_review_budget(review_id, all_previous_metrics + [round_metrics])
     return turn_outputs, round_metrics, successful_panelists
@@ -113,30 +128,17 @@ def run_initial_panel_turn(self: BaseTask, review_id: str, review_room_id: str, 
         if panelists_override:
             panel_configs = [p for p in panel_configs if p.provider in panelists_override]
 
-        prompt = f"""Topic: {topic}
-Instruction: {instruction}
-
-Provide your independent analysis of the topic, **prioritizing the user's specific instruction above.**
-- Be realistic and logical.
-- Provide clear reasoning, evidence, pros/cons, and possible implications.
-- Do not assume what other panelists will say.
-- Your output must be in the specified JSON format.
-- The JSON schema you must adhere to is:
-  {{
-    "round": 1,
-    "key_takeaway": "A brief summary of the main finding.",
-    "arguments": [
-      "Core argument 1 (with reasoning)",
-      "Core argument 2 (with reasoning)"
-    ],
-    "risks": ["Anticipated risk 1", "Potential risk 2"],
-    "opportunities": ["Discovered opportunity 1", "Potential opportunity 2"]
-  }}
-"""
+        prompt = prompt_service.get_prompt(
+            "review_initial_analysis",
+            topic=topic,
+            instruction=instruction
+        )
 
         results = [run_panelist_turn(self.llm_service, p_config, prompt, trace_id) for p_config in panel_configs]
 
-        turn_outputs, round_metrics, successful_panelists = _process_turn_results(review_id, review_room_id, 1, results, [])
+        turn_outputs, round_metrics, successful_panelists = _process_turn_results(
+            review_id, review_room_id, 1, results, [], validation_model=LLMReviewInitialAnalysis
+        )
 
         redis_pubsub_manager.publish_sync(f"review_{review_id}", WebSocketMessage(type="status_update", review_id=review_id, payload={"status": "initial_turn_complete"}).model_dump_json())
         run_rebuttal_turn.delay(review_id, review_room_id, turn_outputs, [round_metrics], [p.model_dump() for p in successful_panelists], trace_id)
@@ -172,39 +174,15 @@ Opportunities:
 
         rebuttal_context = "\n\n---\n\n".join(round_1_summaries)
 
-        prompt = f"""Rebuttal Round.
-Here are the summaries of the initial arguments:
-{rebuttal_context}
-
-Review these arguments carefully.
-- If there are differences, analyze them and clarify or improve weak points.
-- If they are mostly aligned, reinforce the shared perspective by pointing out missing factors, hidden risks, or practical details.
-- **When you state a disagreement or make an addition, you must provide a brief reasoning for it.**
-- Only state "the arguments are sufficient" if you believe no meaningful improvement is possible (this should be rare).
-- Your output must be in the specified JSON format.
-- The JSON schema you must adhere to is:
-  {{
-    "round": 2,
-    "agreements": [
-      "Summary of a round 1 argument you fully agree with"
-    ],
-    "disagreements": [
-      {{
-        "point": "The argument you want to challenge or refine",
-        "reasoning": "The logical flaw or why it's not realistic"
-      }}
-    ],
-    "additions": [
-      {{
-        "point": "A new consideration missed in round 1",
-        "reasoning": "Why this is important"
-      }}
-    ]
-  }}
-"""
+        prompt = prompt_service.get_prompt(
+            "review_rebuttal",
+            rebuttal_context=rebuttal_context
+        )
         
         results = [run_panelist_turn(self.llm_service, p_config, prompt, f"{trace_id}-r2") for p_config in panel_configs]
-        turn_outputs, round_metrics, successful_panelists = _process_turn_results(review_id, review_room_id, 2, results, all_metrics)
+        turn_outputs, round_metrics, successful_panelists = _process_turn_results(
+            review_id, review_room_id, 2, results, all_metrics, validation_model=LLMReviewRebuttal
+        )
         
         all_metrics.append(round_metrics)
         redis_pubsub_manager.publish_sync(f"review_{review_id}", WebSocketMessage(type="status_update", review_id=review_id, payload={"status": "rebuttal_turn_complete"}).model_dump_json())
@@ -240,27 +218,15 @@ Additions:
         r2_context = "\n\n---\n\n".join(r2_context_parts)
 
         synthesis_context = f"Initial Arguments:\n{r1_context}\n\nRebuttal Arguments:\n{r2_context}"
-        prompt = f"""Synthesis Round.
-Based on all previous arguments from round 1 and 2, please synthesize them into your final, comprehensive position.
-Provide actionable recommendations based on your conclusion.
-
-{synthesis_context}
-
-Your output must be in the specified JSON format.
-- The JSON schema you must adhere to is:
-  {{
-    "round": 3,
-    "executive_summary": "A high-level summary of my final position, synthesizing all discussions.",
-    "conclusion": "The detailed, comprehensive conclusion supporting the summary.",
-    "recommendations": [
-      "Specific, actionable recommendation 1, based on the conclusion.",
-      "Specific, actionable recommendation 2, based on the conclusion."
-    ]
-  }}
-"""
+        prompt = prompt_service.get_prompt(
+            "review_synthesis",
+            synthesis_context=synthesis_context
+        )
 
         results = [run_panelist_turn(self.llm_service, p_config, prompt, f"{trace_id}-r3") for p_config in panel_configs]
-        turn_outputs, round_metrics, successful_panelists = _process_turn_results(review_id, review_room_id, 3, results, all_metrics)
+        turn_outputs, round_metrics, successful_panelists = _process_turn_results(
+            review_id, review_room_id, 3, results, all_metrics, validation_model=LLMReviewSynthesis
+        )
         
         all_metrics.append(round_metrics)
         redis_pubsub_manager.publish_sync(f"review_{review_id}", WebSocketMessage(type="status_update", review_id=review_id, payload={"status": "synthesis_turn_complete"}).model_dump_json())
@@ -280,28 +246,10 @@ def generate_consolidated_report(self: BaseTask, review_id: str, turn_3_outputs:
     try:
         system_prompt = "You are the Chief Editor. Your task is to synthesize final reports from multiple AI panelists into a single, cohesive, and actionable final report for a key decision-maker. Pay close attention to points of consensus and disagreement."
 
-        user_prompt = f"""The following are the final reports from the AI panelists:
-{json.dumps(list(turn_3_outputs.values()), indent=2)}
-
-Please create a consolidated final report.
-- In the executive summary, clearly state the strongest points of consensus and any significant remaining disagreements among the panelists.
-- Your output must be in the specified JSON format.
-- The JSON schema you must adhere to is:
-  {{
-    "executive_summary": "The final summary, including key insights from the entire discussion.",
-    "strongest_consensus": [
-      "Key point 1 that panelists commonly agreed on.",
-      "Key point 2 that panelists commonly agreed on."
-    ],
-    "remaining_disagreements": [
-      "Significant disagreement 1, if any."
-    ],
-    "recommendations": [
-      "Consolidated final recommendation 1 (highest priority).",
-      "Consolidated final recommendation 2."
-    ]
-  }}
-"""
+        user_prompt = prompt_service.get_prompt(
+            "review_final_report",
+            panelist_reports=json.dumps(list(turn_3_outputs.values()), indent=2)
+        )
         # Use a powerful model for the final synthesis
         final_report_str, _ = self.llm_service.invoke_sync(
             provider_name="openai",
@@ -312,8 +260,9 @@ Please create a consolidated final report.
             response_format="json"
         )
 
-        final_report_data = json.loads(final_report_str)
-        storage_service.save_final_report(review_id=review_id, report_data=final_report_data)
+        final_report_json = json.loads(final_report_str)
+        final_report_data = LLMFinalReport.model_validate(final_report_json)
+        storage_service.save_final_report(review_id=review_id, report_data=final_report_data.model_dump())
 
         if settings.METRICS_ENABLED:
             total_tokens = sum(m.get("total_tokens", 0) for r in all_metrics for m in r if m)
