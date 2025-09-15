@@ -72,7 +72,7 @@ class TestStorageServiceWithDB:
         )
 
         # Check that the database transaction was attempted
-        mock_db_service().transaction.assert_called_once_with(query_type="write_message")
+        mock_db_service.transaction.assert_called_once_with(query_type="write_message")
 
     def test_get_messages(self, storage_service, mock_db_service):
         """Test getting messages for a room."""

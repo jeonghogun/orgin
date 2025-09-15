@@ -42,17 +42,21 @@ class TestReviewTasks(unittest.TestCase):
         # Mock prompt service
         mock_prompt_service.get_prompt.return_value = "Test Prompt"
 
-        # Simulate that the 'claude' panelist fails, but 'openai' succeeds
-        mock_run_panelist_turn.side_effect = [
-            (openai_config, ("OpenAI Success", {"metric": 1})),  # First call for OpenAI succeeds
-            (claude_config, ValueError("Claude API Error")),      # Second call for Claude fails
-            # Third call is the fallback for the failed Claude panelist, now using OpenAI
-            (
-                # The fallback config should have the original persona but openai provider
-                ProviderPanelistConfig(provider='openai', persona='Skeptic', model='gpt-4o-mini', system_prompt=None, timeout_s=60, max_retries=0),
-                ("Fallback Success", {"metric": 2})
-            )
-        ]
+        # Define a robust side_effect function to prevent StopIteration on retries
+        def run_panelist_turn_side_effect(llm_service, p_config, prompt, request_id):
+            if p_config.provider == 'claude':
+                return (p_config, ValueError("Claude API Error"))
+            elif p_config.provider == 'openai':
+                if p_config.persona == 'Skeptic': # This is the fallback call
+                    return (p_config, ("Fallback Success", {"metric": 2}))
+                else: # This is the initial successful call
+                    return (p_config, ("OpenAI Success", {"metric": 1}))
+            raise Exception("Unexpected call to mock_run_panelist_turn")
+
+        mock_run_panelist_turn.side_effect = run_panelist_turn_side_effect
+
+        # Mock the return value of _process_turn_results to prevent unpack errors
+        mock_process_results.return_value = ({}, [], [])
 
         # --- Act ---
         run_initial_panel_turn.apply(

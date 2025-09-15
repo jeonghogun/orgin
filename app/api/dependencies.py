@@ -2,7 +2,7 @@
 Shared API Dependencies
 """
 
-from typing import Dict, Optional, Any, Callable
+from typing import Dict, Optional, Any, Callable, Type
 from fastapi import HTTPException, Request, Depends, WebSocket, WebSocketDisconnect, status
 from firebase_admin import auth
 
@@ -10,7 +10,6 @@ from app.config.settings import settings
 from app.services.storage_service import StorageService
 from app.services.database_service import get_database_service, DatabaseService
 from app.services.llm_service import LLMService
-from app.services.review_service import ReviewService
 from app.services.memory_service import MemoryService
 from app.services.rag_service import RAGService
 from app.services.intent_service import IntentService
@@ -35,7 +34,7 @@ _redis_client: Optional[redis.Redis] = None
 _secret_provider: Optional[SecretProvider] = None
 _storage_service: Optional[StorageService] = None
 _llm_service: Optional[LLMService] = None
-_review_service: Optional[ReviewService] = None
+_review_service: Optional["ReviewService"] = None
 _memory_service: Optional[MemoryService] = None
 _rag_service: Optional[RAGService] = None
 _intent_service: Optional[IntentService] = None
@@ -92,9 +91,11 @@ def get_storage_service() -> StorageService:
         _storage_service = StorageService(secret_provider=get_secret_provider())
     return _storage_service
 
-def get_review_service() -> ReviewService:
+def get_review_service() -> "ReviewService":
+    """Dependency to get the ReviewService instance, breaking circular import."""
     global _review_service
     if _review_service is None:
+        from app.services.review_service import ReviewService
         _review_service = ReviewService(storage_service=get_storage_service())
     return _review_service
 
