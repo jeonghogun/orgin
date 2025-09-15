@@ -48,7 +48,7 @@ def run_panelist_turn(
         logger.error(f"Failed to get response from {panelist_config.provider} for persona {panelist_config.persona}: {e}", exc_info=True)
         return panelist_config, e
 
-def _save_panelist_message(review_room_id: str, content: str, persona: str, round_num: int):
+def _save_panelist_message(review_room_id: str, content: str, persona: str, round_num: int) -> Message:
     """Saves a panelist's output as a message in the review room."""
     message = Message(
         message_id=generate_id(),
@@ -60,6 +60,7 @@ def _save_panelist_message(review_room_id: str, content: str, persona: str, roun
         metadata={"persona": persona, "round": round_num}
     )
     storage_service.save_message(message)
+    return message
 
 def _check_review_budget(review_id: str, all_metrics: List[List[Dict[str, Any]]]):
     """Checks if the review has exceeded its token budget."""
@@ -102,7 +103,16 @@ def _process_turn_results(
                 round_metrics.append(metrics)
                 successful_panelists.append(panelist_config)
                 # Save the original, validated JSON content to the database
-                _save_panelist_message(review_room_id, content, persona, round_num)
+                saved_message = _save_panelist_message(review_room_id, content, persona, round_num)
+                # Publish the new message event to the live stream
+                redis_pubsub_manager.publish_sync(
+                    f"review_{review_id}",
+                    WebSocketMessage(
+                        type="new_message",
+                        review_id=review_id,
+                        payload=saved_message.model_dump()
+                    ).model_dump_json()
+                )
             except (json.JSONDecodeError, ValidationError) as e:
                 error_message = f"Panelist {persona} in round {round_num} returned invalid or non-validating JSON. Error: {e}. Raw content: {content}"
                 logger.error(error_message)
@@ -134,10 +144,33 @@ def run_initial_panel_turn(self: BaseTask, review_id: str, review_room_id: str, 
             instruction=instruction
         )
 
-        results = [run_panelist_turn(self.llm_service, p_config, prompt, trace_id) for p_config in panel_configs]
+        initial_results = [run_panelist_turn(self.llm_service, p_config, prompt, trace_id) for p_config in panel_configs]
+
+        # Implement fallback logic as per README
+        final_results = []
+        openai_config = next((p for p in panel_configs if p.provider == 'openai'), None)
+
+        for p_config, result in initial_results:
+            if isinstance(result, BaseException) and p_config.provider != 'openai' and openai_config:
+                logger.warning(f"Panelist {p_config.persona} ({p_config.provider}) failed. Retrying with fallback provider OpenAI.")
+
+                fallback_config = ProviderPanelistConfig(
+                    provider='openai',
+                    persona=p_config.persona,
+                    model=openai_config.model,
+                    system_prompt=p_config.system_prompt or openai_config.system_prompt,
+                    timeout_s=openai_config.timeout_s,
+                    max_retries=0
+                )
+
+                fb_p_config, fb_result = run_panelist_turn(self.llm_service, fallback_config, prompt, f"{trace_id}-fallback")
+                final_results.append((fb_p_config, fb_result))
+            else:
+                final_results.append((p_config, result))
+
 
         turn_outputs, round_metrics, successful_panelists = _process_turn_results(
-            review_id, review_room_id, 1, results, [], validation_model=LLMReviewInitialAnalysis
+            review_id, review_room_id, 1, final_results, [], validation_model=LLMReviewInitialAnalysis
         )
 
         redis_pubsub_manager.publish_sync(f"review_{review_id}", WebSocketMessage(type="status_update", review_id=review_id, payload={"status": "initial_turn_complete"}).model_dump_json())
@@ -172,16 +205,61 @@ Opportunities:
 - {opportunities_str}"""
             round_1_summaries.append(summary)
 
-        rebuttal_context = "\n\n---\n\n".join(round_1_summaries)
+        # Build custom prompts for each panelist to align with README logic
+        all_results = []
+        for p_config in panel_configs:
+            # Get the panelist's own previous turn output
+            own_turn_output = turn_1_outputs.get(p_config.persona)
+            if not own_turn_output:
+                continue
 
-        prompt = prompt_service.get_prompt(
-            "review_rebuttal",
-            rebuttal_context=rebuttal_context
-        )
+            # Get summaries of competitors
+            competitor_summaries = [
+                summary for persona, summary in zip(turn_1_outputs.keys(), round_1_summaries)
+                if persona != p_config.persona
+            ]
+
+            # Construct the context as described in the README
+            rebuttal_context = f"""Your Round 1 analysis (full text):
+{json.dumps(own_turn_output, indent=2)}
+
+---
+Summaries of competing Round 1 analyses:
+{"\n\n---\n\n".join(competitor_summaries)}"""
+
+            prompt = prompt_service.get_prompt(
+                "review_rebuttal",
+                rebuttal_context=rebuttal_context
+            )
+
+            all_results.append(run_panelist_turn(self.llm_service, p_config, prompt, f"{trace_id}-r2-{p_config.provider}"))
+
+        initial_results = all_results
         
-        results = [run_panelist_turn(self.llm_service, p_config, prompt, f"{trace_id}-r2") for p_config in panel_configs]
+        # Implement fallback logic as per README
+        final_results = []
+        openai_config = next((p for p in panel_configs if p.provider == 'openai'), None)
+
+        for p_config, result in initial_results:
+            if isinstance(result, BaseException) and p_config.provider != 'openai' and openai_config:
+                logger.warning(f"Panelist {p_config.persona} ({p_config.provider}) failed in round 2. Retrying with fallback provider OpenAI.")
+
+                fallback_config = ProviderPanelistConfig(
+                    provider='openai',
+                    persona=p_config.persona,
+                    model=openai_config.model,
+                    system_prompt=p_config.system_prompt or openai_config.system_prompt,
+                    timeout_s=openai_config.timeout_s,
+                    max_retries=0
+                )
+
+                fb_p_config, fb_result = run_panelist_turn(self.llm_service, fallback_config, prompt, f"{trace_id}-r2-fallback")
+                final_results.append((fb_p_config, fb_result))
+            else:
+                final_results.append((p_config, result))
+
         turn_outputs, round_metrics, successful_panelists = _process_turn_results(
-            review_id, review_room_id, 2, results, all_metrics, validation_model=LLMReviewRebuttal
+            review_id, review_room_id, 2, final_results, all_metrics, validation_model=LLMReviewRebuttal
         )
         
         all_metrics.append(round_metrics)
@@ -217,15 +295,69 @@ Additions:
 {additions}""")
         r2_context = "\n\n---\n\n".join(r2_context_parts)
 
-        synthesis_context = f"Initial Arguments:\n{r1_context}\n\nRebuttal Arguments:\n{r2_context}"
-        prompt = prompt_service.get_prompt(
-            "review_synthesis",
-            synthesis_context=synthesis_context
-        )
+        all_results = []
+        for p_config in panel_configs:
+            persona = p_config.persona
+            own_r1 = turn_1_outputs.get(persona)
+            own_r2 = turn_2_outputs.get(persona)
+            if not own_r1 or not own_r2:
+                continue
 
-        results = [run_panelist_turn(self.llm_service, p_config, prompt, f"{trace_id}-r3") for p_config in panel_configs]
+            # Summarize competitors' Round 2 outputs
+            competitor_r2_context_parts = []
+            for p, output in turn_2_outputs.items():
+                if p == persona:
+                    continue
+                agreements = "\n".join(f"- {a}" for a in output.get("agreements", []))
+                disagreements = "\n".join(f"- Point: {d['point']}, Reasoning: {d['reasoning']}" for d in output.get("disagreements", []))
+                additions = "\n".join(f"- Point: {a['point']}, Reasoning: {a['reasoning']}" for a in output.get("additions", []))
+                competitor_r2_context_parts.append(f"""Summary of {p}'s Round 2 Arguments:
+Agreements: {agreements}
+Disagreements: {disagreements}
+Additions: {additions}""")
+
+            competitor_r2_context = "\n\n---\n\n".join(competitor_r2_context_parts)
+
+            synthesis_context = f"""Your own Round 1 and 2 arguments (full text):
+Round 1: {json.dumps(own_r1, indent=2)}
+Round 2: {json.dumps(own_r2, indent=2)}
+
+---
+Summaries of competing Round 2 analyses:
+{competitor_r2_context}"""
+
+            prompt = prompt_service.get_prompt(
+                "review_synthesis",
+                synthesis_context=synthesis_context
+            )
+            all_results.append(run_panelist_turn(self.llm_service, p_config, prompt, f"{trace_id}-r3-{p_config.provider}"))
+
+        initial_results = all_results
+
+        # Implement fallback logic as per README
+        final_results = []
+        openai_config = next((p for p in panel_configs if p.provider == 'openai'), None)
+
+        for p_config, result in initial_results:
+            if isinstance(result, BaseException) and p_config.provider != 'openai' and openai_config:
+                logger.warning(f"Panelist {p_config.persona} ({p_config.provider}) failed in round 3. Retrying with fallback provider OpenAI.")
+
+                fallback_config = ProviderPanelistConfig(
+                    provider='openai',
+                    persona=p_config.persona,
+                    model=openai_config.model,
+                    system_prompt=p_config.system_prompt or openai_config.system_prompt,
+                    timeout_s=openai_config.timeout_s,
+                    max_retries=0
+                )
+
+                fb_p_config, fb_result = run_panelist_turn(self.llm_service, fallback_config, prompt, f"{trace_id}-r3-fallback")
+                final_results.append((fb_p_config, fb_result))
+            else:
+                final_results.append((p_config, result))
+
         turn_outputs, round_metrics, successful_panelists = _process_turn_results(
-            review_id, review_room_id, 3, results, all_metrics, validation_model=LLMReviewSynthesis
+            review_id, review_room_id, 3, final_results, all_metrics, validation_model=LLMReviewSynthesis
         )
         
         all_metrics.append(round_metrics)

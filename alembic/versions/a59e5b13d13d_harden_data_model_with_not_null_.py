@@ -18,12 +18,26 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+from sqlalchemy.dialects import postgresql
+
 def upgrade() -> None:
     # Add NOT NULL constraints to columns that should not be empty
-    op.execute("ALTER TABLE rooms ALTER COLUMN message_count SET NOT NULL")
-    op.execute("ALTER TABLE memories ALTER COLUMN embedding SET NOT NULL")
-    op.execute("ALTER TABLE user_profiles ALTER COLUMN interests SET NOT NULL")
-    op.execute("ALTER TABLE user_profiles ALTER COLUMN interests SET DEFAULT '{}'")
+    with op.batch_alter_table('rooms', schema=None) as batch_op:
+        batch_op.alter_column('message_count',
+               existing_type=sa.Integer(),
+               nullable=False,
+               existing_server_default=sa.text('0'))
+
+    with op.batch_alter_table('memories', schema=None) as batch_op:
+        batch_op.alter_column('embedding',
+               existing_type=postgresql.VECTOR(1536),
+               nullable=False)
+
+    with op.batch_alter_table('user_profiles', schema=None) as batch_op:
+        batch_op.alter_column('interests',
+               existing_type=postgresql.ARRAY(sa.Text()),
+               nullable=False,
+               server_default='{}')
 
     # Add indexes to frequently queried foreign key columns
     op.create_index(op.f('idx_rooms_parent_id'), 'rooms', ['parent_id'], unique=False)
@@ -36,8 +50,19 @@ def downgrade() -> None:
     op.drop_index(op.f('idx_rooms_parent_id'), table_name='rooms')
 
     # Revert NOT NULL constraints
-    # Note: Reverting a NOT NULL constraint simply makes it nullable again.
-    op.execute("ALTER TABLE user_profiles ALTER COLUMN interests DROP NOT NULL")
-    op.execute("ALTER TABLE user_profiles ALTER COLUMN interests DROP DEFAULT")
-    op.execute("ALTER TABLE memories ALTER COLUMN embedding DROP NOT NULL")
-    op.execute("ALTER TABLE rooms ALTER COLUMN message_count DROP NOT NULL")
+    with op.batch_alter_table('user_profiles', schema=None) as batch_op:
+        batch_op.alter_column('interests',
+               existing_type=postgresql.ARRAY(sa.Text()),
+               nullable=True,
+               server_default=None)
+
+    with op.batch_alter_table('memories', schema=None) as batch_op:
+        batch_op.alter_column('embedding',
+               existing_type=postgresql.VECTOR(1536),
+               nullable=True)
+
+    with op.batch_alter_table('rooms', schema=None) as batch_op:
+        batch_op.alter_column('message_count',
+               existing_type=sa.Integer(),
+               nullable=True,
+               existing_server_default=sa.text('0'))

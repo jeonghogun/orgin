@@ -392,56 +392,26 @@ async def promote_memory_from_sub_room(
         raise AppError("INTERNAL_ERROR", "Failed to promote memories.")
 
 
+from app.services.review_service import get_review_service
+
 @router.post("/{parent_id}/create-review-room", response_model=CreateReviewRoomInteractiveResponse)
 async def create_review_room_interactive(
     parent_id: str,
     request: CreateReviewRoomInteractiveRequest,
     user_info: Dict[str, str] = AUTH_DEPENDENCY,
+    review_service: ReviewService = Depends(get_review_service),
 ):
-    """Interactively creates a review room."""
+    """
+    Interactively creates a review room by calling the review service.
+    This endpoint is now a thin wrapper around the service layer.
+    """
     user_id = user_info.get("user_id")
     if not user_id:
         raise InvalidRequestError("Invalid user information.")
 
-    parent_room = await asyncio.to_thread(storage_service.get_room, parent_id)
-    if not parent_room or parent_room.type != RoomType.SUB:
-        raise InvalidRequestError("Parent room must be a sub-room.")
-
-    conversation_service = get_conversation_service()
-    llm_service = get_llm_service()
-
-    # Get conversation history from the parent sub-room
-    threads = await conversation_service.get_threads_by_room(parent_id)
-    full_conversation = ""
-    for thread in threads:
-        messages = await conversation_service.get_all_messages_by_thread(thread.id)
-        for msg in messages:
-            full_conversation += f"{msg['role']}: {msg['content']}\n"
-
-    # Simple check for context sufficiency
-    # A more robust check would involve embeddings or LLM calls
-    context_sufficient = request.topic.lower() in full_conversation.lower()
-
-    if request.history and len(request.history) > 0:
-        context_sufficient = True # If user provided more info, assume it's enough
-
-    if context_sufficient:
-        # Create the review room
-        room_id = generate_id()
-        new_room = await asyncio.to_thread(
-            storage_service.create_room,
-            room_id=room_id,
-            name=request.topic,
-            owner_id=user_id,
-            room_type=RoomType.REVIEW,
-            parent_id=parent_id,
-        )
-        return CreateReviewRoomInteractiveResponse(status="created", room=new_room)
-    else:
-        # Ask a follow-up question
-        system_prompt = "You are an AI assistant helping a user create a 'review room'. The user has provided a topic, but more context is needed. Ask a clarifying question to understand what specific aspect of the topic they want to review."
-        user_prompt = f"The topic is '{request.topic}'. The conversation history of the parent room does not seem to contain enough information about it. What clarifying question should I ask the user?"
-
-        question, _ = await llm_service.invoke("openai", "gpt-4o", system_prompt, user_prompt, "question-gen")
-
-        return CreateReviewRoomInteractiveResponse(status="needs_more_context", question=question)
+    return await review_service.create_interactive_review(
+        parent_id=parent_id,
+        topic=request.topic,
+        user_id=user_id,
+        history=request.history,
+    )

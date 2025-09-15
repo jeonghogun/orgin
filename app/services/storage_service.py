@@ -136,6 +136,40 @@ class StorageService:
         rows_affected = self.db.execute_update(query, params)
         return rows_affected > 0
 
+    def add_message_version(self, message: Message) -> None:
+        """Adds an old version of a message to the versioning table."""
+        query = """
+            INSERT INTO message_versions (message_id, content, role)
+            VALUES (%s, %s, %s)
+        """
+        # Note: We save the raw (potentially encrypted) content here
+        params = (message.message_id, message.content, message.role)
+        self.db.execute_update(query, params)
+
+    def get_message_versions(self, message_id: str) -> List[Dict[str, Any]]:
+        """Gets all historical versions for a given message."""
+        query = """
+            SELECT version_id as id, message_id, content, role, created_at
+            FROM message_versions
+            WHERE message_id = %s
+            ORDER BY created_at ASC
+        """
+        params = (message_id,)
+        return self.db.execute_query(query, params)
+
+    def update_message_content(self, message_id: str, new_content: str, new_content_searchable: str) -> bool:
+        """Updates the content of an existing message."""
+        query = """
+            UPDATE messages
+            SET content = pgp_sym_encrypt(%s, %s),
+                content_searchable = %s,
+                timestamp = %s
+            WHERE message_id = %s
+        """
+        params = (new_content, self.db_encryption_key, new_content_searchable, get_current_timestamp(), message_id)
+        rows_affected = self.db.execute_update(query, params)
+        return rows_affected > 0
+
     def save_message(self, message: Message) -> None:
         """Save an encrypted message, update room stats, and dispatch embedding task."""
         from app.tasks.embedding_tasks import generate_embedding_for_record
@@ -169,6 +203,31 @@ class StorageService:
             logger.error(f"Transaction failed for save_message on room {message.room_id}: {e}", exc_info=True)
             # Re-raise the exception to allow higher-level error handling if needed
             raise
+
+    def get_message(self, message_id: str) -> Optional[Message]:
+        """Get a single message by its ID."""
+        try:
+            query = """
+                SELECT message_id, room_id, user_id, role,
+                       pgp_sym_decrypt(content, %s) as content,
+                       timestamp
+                FROM messages
+                WHERE message_id = %s
+            """
+            params = (self.db_encryption_key, message_id)
+            results: List[MessageRow] = self.db.execute_query(query, params)
+            if not results:
+                return None
+            return Message(**results[0])
+        except Exception as e:
+            logger.warning(f"Decryption failed for message {message_id}: {e}")
+            query = "SELECT message_id, room_id, user_id, role, content_searchable as content, timestamp FROM messages WHERE message_id = %s"
+            params = (message_id,)
+            results: List[MessageRow] = self.db.execute_query(query, params)
+            if not results:
+                return None
+            return Message(**results[0])
+
 
     def get_messages(self, room_id: str) -> List[Message]:
         """Get and decrypt all messages for a room from the database."""

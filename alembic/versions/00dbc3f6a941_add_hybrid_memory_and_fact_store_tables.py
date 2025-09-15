@@ -20,13 +20,16 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     # Add BM25 FTS columns to messages table (using searchable content)
-    op.execute("""
-        ALTER TABLE messages ADD COLUMN IF NOT EXISTS ts tsvector
-        GENERATED ALWAYS AS (to_tsvector('simple', coalesce(content_searchable, ''))) STORED;
-    """)
-    op.execute("""
-        CREATE INDEX IF NOT EXISTS idx_messages_ts ON messages USING GIN (ts);
-    """)
+    # This is PostgreSQL-specific, so we check the dialect.
+    bind = op.get_bind()
+    if bind.dialect.name == 'postgresql':
+        op.execute("""
+            ALTER TABLE messages ADD COLUMN IF NOT EXISTS ts tsvector
+            GENERATED ALWAYS AS (to_tsvector('simple', coalesce(content_searchable, ''))) STORED;
+        """)
+        op.execute("""
+            CREATE INDEX IF NOT EXISTS idx_messages_ts ON messages USING GIN (ts);
+        """)
 
     # Create new user_facts table
     op.create_table(
@@ -66,8 +69,11 @@ def downgrade() -> None:
     op.drop_index(op.f('idx_user_facts_user_kind_key'), table_name='user_facts')
     op.drop_table('user_facts')
 
-    op.drop_index('idx_messages_ts', table_name='messages', if_exists=True)
-    op.execute("ALTER TABLE messages DROP COLUMN IF EXISTS ts;")
+    # This is PostgreSQL-specific, so we check the dialect.
+    bind = op.get_bind()
+    if bind.dialect.name == 'postgresql':
+        op.drop_index('idx_messages_ts', table_name='messages', if_exists=True)
+        op.execute("ALTER TABLE messages DROP COLUMN IF EXISTS ts;")
 
     # The vector index might have been created by the initial migration, so we only drop if it exists.
     op.drop_index('idx_messages_embedding', table_name='messages', if_exists=True)

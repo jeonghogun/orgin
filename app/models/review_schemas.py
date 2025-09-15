@@ -51,3 +51,9 @@ class LLMFinalReport(BaseModel):
     strongest_consensus: List[str] = Field(..., description="Key points that panelists commonly agreed on.")
     remaining_disagreements: List[str] = Field(..., description="Significant disagreements that remained, if any.")
     recommendations: List[str] = Field(..., description="A list of consolidated final recommendations.")
+
+class LLMQuestionResponse(BaseModel):
+    """
+    Expected JSON structure for a generated question.
+    """
+    question: str = Field(..., description="The clarifying question to ask the user.")

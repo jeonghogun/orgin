@@ -1,6 +1,7 @@
 import React from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
+import toast from 'react-hot-toast';
 import LoadingSpinner from '../common/LoadingSpinner';
 import ErrorMessage from '../common/ErrorMessage';
 
@@ -24,10 +25,10 @@ const GuardrailSettings = () => {
     mutationFn: updateGuardrailSettings,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['guardrailSettings'] });
-      alert('Guardrail settings updated successfully!');
+      toast.success('Guardrail settings updated successfully!');
     },
     onError: (err) => {
-      alert(`Failed to update settings: ${err.response?.data?.detail || err.message}`);
+      toast.error(`Failed to update settings: ${err.response?.data?.detail || err.message}`);
     }
   });
 

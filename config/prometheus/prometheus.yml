@@ -1,0 +1,9 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'fastapi-app'
+    static_configs:
+      # When running with docker-compose, prometheus can resolve the 'api' service name.
+      # This assumes the main app is running via `docker-compose up` and is on the same network.
+      - targets: ['api:8000']

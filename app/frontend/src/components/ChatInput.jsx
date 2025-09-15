@@ -5,23 +5,46 @@ import { SSE } from 'sse.js';
 import { useAppContext } from '../context/AppContext';
 import { useRoomCreationRequest, clearRoomCreation, useReviewRoomCreation, addReviewRoomHistory, clearReviewRoomCreation } from '../store/useConversationStore';
 
-// Use stream endpoint with proper JSON response handling
+// Use fetch for true streaming response
 const streamMessageApi = async ({ roomId, content, onChunk, onIdReceived }) => {
-  try {
-    const response = await axios.post(`/api/rooms/${roomId}/messages/stream`, { content });
-    const data = response.data;
-    
-    if (data.success && data.data) {
-      // Handle the AI response
-      const aiResponse = data.data.ai_response;
-      if (aiResponse && aiResponse.content) {
-        // Send the full content as a single chunk
-        onChunk(aiResponse.content);
-        onIdReceived(aiResponse.message_id);
+  const response = await fetch(`/api/rooms/${roomId}/messages/stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content }),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json();
+    throw new Error(errorData.detail || 'Failed to start stream');
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop(); // Keep the last, potentially incomplete line
+
+    for (const line of lines) {
+      if (line.trim() === '') continue;
+      try {
+        const parsed = JSON.parse(line);
+        if (parsed.delta) {
+          onChunk(parsed.delta);
+        }
+        if (parsed.done) {
+          onIdReceived(parsed.message_id);
+          return; // Stream is finished
+        }
+      } catch (e) {
+        console.error('Failed to parse stream chunk:', line, e);
       }
     }
-  } catch (error) {
-    throw new Error('메시지 전송 중 오류가 발생했습니다: ' + (error.response?.data?.detail || error.message));
   }
 };
 
@@ -34,87 +57,70 @@ const uploadFileApi = async ({ roomId, file }) => {
   return data;
 };
 
-const ChatInput = ({ roomId, roomData, disabled = false, onCreateSubRoom, onCreateReviewRoom, createRoomMutation, interactiveReviewRoomMutation }) => {
-  const [message, setMessage] = useState('');
+import { useChatInputState } from '../hooks/useChatInputState';
+
+const ChatInput = ({ roomId, roomData, disabled = false, createRoomMutation, interactiveReviewRoomMutation }) => {
   const fileInputRef = useRef(null);
   const queryClient = useQueryClient();
   const { showError } = useAppContext();
-  const roomCreationRequest = useRoomCreationRequest();
-  const reviewRoomCreation = useReviewRoomCreation();
   
-  // 디버그용 로그
-  console.log('ChatInput - roomCreationRequest:', roomCreationRequest);
-  console.log('ChatInput - reviewRoomCreation:', reviewRoomCreation);
-  console.log('ChatInput - roomId:', roomId);
+  const {
+    mode,
+    inputValue,
+    placeholder,
+    startSubRoomCreation,
+    startReviewCreation,
+    handleInputChange,
+    resetState,
+  } = useChatInputState();
 
   const streamMutation = useMutation({
     mutationFn: streamMessageApi,
     onSuccess: () => {
-      // Final invalidation to fetch the true state from the server
       queryClient.invalidateQueries({ queryKey: ['messages', roomId] });
+      resetState();
     },
     onError: (err) => {
       showError(err.message);
-      // Invalidate to roll back any optimistic updates that weren't handled manually
       queryClient.invalidateQueries({ queryKey: ['messages', roomId] });
+      resetState();
     },
   });
 
   const uploadMutation = useMutation({
     mutationFn: uploadFileApi,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['messages', roomId] });
-    },
-    onError: (err) => {
-      showError(err.response?.data?.detail || '파일 업로드에 실패했습니다.');
-    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['messages', roomId] }),
+    onError: (err) => showError(err.response?.data?.detail || '파일 업로드에 실패했습니다.'),
   });
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (!message.trim() || !roomId || streamMutation.isPending || disabled) return;
+    if (!inputValue.trim() || !roomId || streamMutation.isPending || disabled) return;
 
-    // 룸 생성 요청이 활성화되어 있는지 확인
-    if (roomCreationRequest?.active && roomCreationRequest?.parentId === roomId) {
-      // 룸 생성 로직
-      if (createRoomMutation) {
-        createRoomMutation.mutate({
-          name: message.trim(),
-          type: roomCreationRequest.type,
-          parentId: roomId
+    switch (mode) {
+      case 'creating_sub_room':
+        createRoomMutation.mutate({ name: inputValue.trim(), type: 'sub', parentId: roomId });
+        resetState();
+        break;
+      case 'creating_review':
+        interactiveReviewRoomMutation.mutate({ parentId: roomId, topic: inputValue.trim(), history: [] });
+        resetState();
+        break;
+      default:
+        // Optimistic updates for streaming chat
+        const tempUserId = `temp-user-${Date.now()}`;
+        const tempAssistantId = `temp-assistant-${Date.now()}`;
+        queryClient.setQueryData(['messages', roomId], (old) => [...(old || []), { message_id: tempUserId, role: 'user', content: inputValue, timestamp: Math.floor(Date.now() / 1000) }]);
+        queryClient.setQueryData(['messages', roomId], (old) => [...(old || []), { message_id: tempAssistantId, role: 'assistant', content: '', timestamp: Math.floor(Date.now() / 1000), isStreaming: true }]);
+
+        streamMutation.mutate({
+          roomId,
+          content: inputValue,
+          onChunk: (chunk) => queryClient.setQueryData(['messages', roomId], (old) => old.map((m) => m.message_id === tempAssistantId ? { ...m, content: m.content + chunk } : m)),
+          onIdReceived: (finalId) => queryClient.setQueryData(['messages', roomId], (old) => old.map((m) => m.message_id === tempAssistantId ? { ...m, message_id: finalId, isStreaming: false } : m)),
         });
-      }
-      clearRoomCreation();
-      setMessage('');
-      return;
+        break;
     }
-
-    // 대화형 검토룸 생성 요청 확인
-    if (reviewRoomCreation?.active && reviewRoomCreation?.parentId === roomId) {
-      if (interactiveReviewRoomMutation) {
-        addReviewRoomHistory({ role: 'user', content: message.trim() });
-        const updatedHistory = [...reviewRoomCreation.history, { role: 'user', content: message.trim() }];
-
-        interactiveReviewRoomMutation.mutate({
-          parentId: reviewRoomCreation.parentId,
-          topic: reviewRoomCreation.topic,
-          history: updatedHistory,
-        });
-      }
-      // Do not clear the creation state here, wait for the response
-      setMessage('');
-      return;
-    }
-
-    // 일반 메시지 전송
-    streamMutation.mutate({
-      roomId,
-      content: message,
-      onChunk: () => {}, // No-op since we're not streaming
-      onIdReceived: () => {}, // No-op since we're not streaming
-    });
-
-    setMessage('');
   };
 
   const handleFileSelect = (e) => {
@@ -144,9 +150,9 @@ const ChatInput = ({ roomId, roomData, disabled = false, onCreateSubRoom, onCrea
           type="button"
           onClick={() => {
             if (roomData.type === 'main') {
-              onCreateSubRoom?.(roomId);
+              startSubRoomCreation(roomId);
             } else if (roomData.type === 'sub') {
-              onCreateReviewRoom?.(roomId);
+              startReviewCreation(roomId);
             }
           }}
           disabled={disabled || uploadMutation.isPending || streamMutation.isPending}

@@ -26,16 +26,20 @@ const MessageList = ({ roomId, currentRoom, createRoomMutation, interactiveRevie
   const messagesEndRef = useRef(null);
   const queryClient = useQueryClient();
 
+import toast from 'react-hot-toast';
+
+// ...
+
   const promoteMemoryMutation = useMutation({
     mutationFn: promoteMemory,
     onSuccess: (data) => {
-      alert(`Memory promoted successfully!\n\nSummary:\n${data.summary}`);
+      toast.success('Memory promoted successfully!');
       // Optionally, invalidate queries if the UI should reflect the new memory
       // queryClient.invalidateQueries(['facts', currentRoom.parent_id]);
     },
     onError: (error) => {
       console.error("Failed to promote memory:", error);
-      alert(`Error: ${error.response?.data?.detail || error.message}`);
+      toast.error(`Error: ${error.response?.data?.detail || error.message}`);
     },
   });
 

@@ -3,9 +3,11 @@ import ReactMarkdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import remarkGfm from 'remark-gfm';
+import DiffViewModal from './conversation/DiffViewModal';
 
 const Message = ({ message }) => {
   const [isHovered, setIsHovered] = useState(false);
+  const [showDiff, setShowDiff] = useState(false);
   const isUser = message.role === 'user';
 
   const handleCopy = () => {
@@ -69,14 +71,22 @@ const Message = ({ message }) => {
             {message.content}
           </ReactMarkdown>
           {isHovered && (
-             <button
+            <div className="absolute -top-3 -right-3 flex gap-1">
+              <button
+                onClick={() => setShowDiff(true)}
+                className="p-1 bg-gray-700 rounded-full text-white hover:bg-gray-600 transition-opacity"
+                title="View edit history"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+              </button>
+              <button
                 onClick={handleCopy}
-                className="absolute -top-2 -right-2 p-1 bg-gray-700 rounded-full text-white hover:bg-gray-600 transition-opacity opacity-0 group-hover:opacity-100"
-             >
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                </svg>
-             </button>
+                className="p-1 bg-gray-700 rounded-full text-white hover:bg-gray-600 transition-opacity"
+                title="Copy message"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+              </button>
+            </div>
           )}
         </div>
         <div className={`text-meta text-muted mt-1 ${isUser ? 'text-right' : 'text-left'}`}>
@@ -84,6 +94,7 @@ const Message = ({ message }) => {
         </div>
       </div>
       {isUser && <Avatar role="user" />}
+      {showDiff && <DiffViewModal messageId={message.message_id} onClose={() => setShowDiff(false)} />}
     </div>
   );
 };

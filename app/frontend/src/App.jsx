@@ -13,8 +13,10 @@ import { addThread, addMessage, startRoomCreation } from './store/useConversatio
 import { ROOM_TYPES } from './constants';
 
 // This component uses hooks that require Router context (like useNavigate)
+import GlobalSearchModal from './components/search/GlobalSearchModal';
+
 function AppContent() {
-  const [showSearch, setShowSearch] = useState(false);
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { roomId, threadId } = useParams();
@@ -66,7 +68,7 @@ function AppContent() {
   
 
 
-  const handleSearch = () => setShowSearch(true);
+  const handleSearch = () => setIsSearchOpen(true);
 
   // Copy/Paste functionality remains the same
   const handleCopy = () => {
@@ -89,6 +91,7 @@ function AppContent() {
   // Simplified shortcuts
   const shortcuts = {
     'Ctrl+N': handleNewThread,
+    'Meta+K': handleSearch, // Using Meta for Cmd key on Mac
     'Ctrl+K': handleSearch,
     'Ctrl+C': handleCopy,
     'Ctrl+V': handlePaste,
@@ -145,7 +148,7 @@ function AppContent() {
 
   return (
     <AppProvider value={{ handleNewThread, createRoomMutation, initiateRoomCreation, interactiveReviewRoomMutation }}>
-      {showSearch && <SearchPanel onClose={() => setShowSearch(false)} />}
+      {isSearchOpen && <GlobalSearchModal onClose={() => setIsSearchOpen(false)} />}
       <ErrorBoundary>
         <Routes>
           <Route path="/" element={<Main createRoomMutation={createRoomMutation} interactiveReviewRoomMutation={interactiveReviewRoomMutation} />} />
