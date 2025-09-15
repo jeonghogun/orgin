@@ -15,12 +15,13 @@ from sqlalchemy import (
     Boolean,
     ForeignKey,
     DateTime,
+    Date,
     func,
     BigInteger,
     Float,
     LargeBinary
 )
-from sqlalchemy.dialects.postgresql import JSONB, VECTOR, TSVECTOR
+from sqlalchemy.dialects.postgresql import JSONB, VECTOR, TSVECTOR, UUID
 from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
@@ -195,3 +196,39 @@ class ExportJob(Base):
     error_message = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+# --- Tables added during stabilization audit to sync with migrations ---
+
+class MessageVersion(Base):
+    __tablename__ = 'message_versions'
+    version_id = Column(Integer, primary_key=True, autoincrement=True)
+    message_id = Column(String(255), ForeignKey('messages.message_id', ondelete='CASCADE'), nullable=False, index=True)
+    content = Column(Text, nullable=False)
+    role = Column(String(50), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    message = relationship('Message', back_populates='versions')
+
+# Add the relationship to the Message model
+Message.versions = relationship('MessageVersion', order_by=MessageVersion.created_at, back_populates='message', cascade="all, delete-orphan")
+
+
+class UserFact(Base):
+    __tablename__ = 'user_facts'
+    id = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    user_id = Column(Text, nullable=False, index=True)
+    kind = Column(Text, nullable=False)
+    key = Column(Text, nullable=False)
+    value_json = Column(JSONB, nullable=False)
+    confidence = Column(Float, nullable=True)
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+class SummaryNote(Base):
+    __tablename__ = 'summary_notes'
+    id = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    room_id = Column(Text, nullable=False, index=True)
+    week_start = Column(Date, nullable=False)
+    text = Column(Text, nullable=False)
+    tokens_saved_estimate = Column(Integer, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())

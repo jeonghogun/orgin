@@ -7,7 +7,7 @@ from typing import Optional, List, Dict, Any
 
 from app.services.storage_service import StorageService
 from app.celery_app import celery_app
-from app.models.schemas import Room, ReviewMeta, CreateReviewRoomInteractiveResponse
+from app.models.schemas import Room, ReviewMeta, CreateReviewRoomInteractiveResponse, LLMQuestionResponse
 from app.models.enums import RoomType
 from app.utils.helpers import generate_id, get_current_timestamp
 from app.api.dependencies import get_conversation_service, get_llm_service

@@ -1,98 +1,60 @@
-# Project Status Report & Audit Summary
+# Project Status Report & Audit Summary (In Progress)
 
-**Date:** 2025-09-14
+**Date:** 2025-09-15
 **Auditor:** Jules (AI Software Engineer)
 
 ## 1. Executive Summary
 
-This document summarizes a comprehensive audit, stabilization, and feature completion pass conducted on the Origin Project v2.0.0 codebase. The primary goals were to improve stability, fix bugs, align the implementation with existing documentation, complete key incomplete features, and enhance security and test coverage.
+This document tracks the progress of a comprehensive audit and stabilization pass on the Origin Project v2.0.0 codebase. The primary goal is to verify the claims of previous reports, fix any outstanding or new bugs, and ensure the codebase is stable, consistent, and well-documented for future development.
 
-The project was evolved from a state of having several critical but incomplete features to a more robust, functional, and secure application. Key feature implementations include the end-to-end completion of the **real-time AI review panel** and **streaming chat responses**, which were previously non-functional.
+This report is a living document. It will be updated at the end of each audit round to reflect the latest findings and actions taken.
 
-Architecturally, the codebase was improved by fixing database migration incompatibilities, correcting flawed business logic in the core AI review process, removing dead code, and hardening security by patching a critical authentication vulnerability and tightening CORS policies.
+**Current Status:** Rounds 1, 2, and 3 of the audit are complete.
+*   **Data Layer:** Verified that database migrations are dialect-agnostic. Discovered a significant inconsistency where ORM models are out of sync with the schema, which will be fixed later.
+*   **API & Service Layer:** Verified all documented security patches and core business logic (AI fault-tolerance, token-saving). Fixed a circular import, refactored a confusing dependency pattern in the Admin API, and fixed all 4 failing unit tests. The unit test suite is now 100% passing.
+*   **Frontend Layer:** Verified through static code analysis that the real-time SSE and streaming chat features are implemented as documented. Confirmed that blocking `alert()` calls have been removed from the source code.
 
-The codebase is now significantly more stable, secure, functional, and aligned with its documented intentions. All major known UX flaws identified during the audit have been resolved.
+The project is now in a significantly more stable and verifiable state.
+
+---
 
 ## 2. Summary of Findings & Fixes by Round
 
-### Round 1: Data Integrity & Schema Audit
+### **Round 1: Data Integrity & Schema Audit (Completed)**
 
-*   **Finding 1 (Fixed):** A migration (`a59e5b13d13d`) used raw PostgreSQL `ALTER TABLE` statements, making it incompatible with SQLite.
-    *   **Fix:** The migration was rewritten using `op.batch_alter_table()` to ensure dialect compatibility.
-    *   **File:** `alembic/versions/a59e5b13d13d_harden_data_model_with_not_null_.py`
+*   **Finding 1 (Verified):** A previous fix to make migration `a59e5b13d13d` dialect-agnostic by using `op.batch_alter_table()` has been verified as correctly implemented.
+*   **Finding 2 (Verified):** A previous fix to make migration `00dbc3f6a941` compatible with non-PostgreSQL databases by wrapping `tsvector` logic in a dialect check has been verified as correctly implemented.
+*   **Finding 3 (NEW - To Be Fixed):** A manual audit of `app/models/orm_models.py` revealed it is significantly out of sync with the database schema. The ORM models for `MessageVersion`, `UserFact`, and `SummaryNote` are missing. This will be fixed before submission.
+*   **Finding 4 (Constraint):** The `alembic check` command cannot be run in the current environment due to the lack of a running database service.
 
-*   **Finding 2 (Fixed):** Another migration (`00dbc3f6a941`) used a PostgreSQL-specific `tsvector` column without checking the database dialect.
-    *   **Fix:** The migration logic was wrapped in a `if bind.dialect.name == 'postgresql':` block to ensure it only runs on PostgreSQL.
-    *   **File:** `alembic/versions/00dbc3f6a941_add_hybrid_memory_and_fact_store_tables.py`
+---
 
-*   **Finding 3 (Info):** The initial database migration (`37ecae34152b`) is written entirely in raw PostgreSQL, making it fundamentally incompatible with SQLite from the start. This was not fixed as it would require a complete rewrite of the migration history, but it is a known issue.
+### **Round 2: API, Service Logic, & Test Suite Audit (Completed)**
 
-*   **Finding 4 (Verified):** The application's use of database encryption (`pgp_sym_encrypt`/`decrypt`) was found to be robust and secure, both in the migration and service layers. Foreign key indexing was also found to be sufficient.
+*   **Finding 1 (Verified):** All documented security claims were verified:
+    *   `AUTH_OPTIONAL` defaults to `False` in `app/config/settings.py`.
+    *   Admin API router is protected by `require_role('admin')` in `app/api/routes/admin.py`.
+    *   CORS policy is hardened in `app/main.py`.
+*   **Finding 2 (Verified):** All documented core AI service logic claims in `app/tasks/review_tasks.py` were verified:
+    *   The fault-tolerance mechanism (fallback to OpenAI) is correctly implemented.
+    *   The token-saving summarization strategy is correctly implemented for rounds 2 and 3.
+*   **Finding 3 (Fixed):** Identified and fixed a code clarity issue in `app/api/routes/admin.py` where endpoints used a redundant `Depends(require_auth)` to fetch user info. Refactored to use `Depends(require_role('admin'))` for better semantics.
+*   **Finding 4 (Fixed):** The unit test suite was failing with 4 errors. The following fixes were implemented:
+    *   Resolved a circular import between `review_service.py` and `dependencies.py`.
+    *   Fixed `tests/unit/test_config.py` by providing a required environment variable (`DB_ENCRYPTION_KEY`) and correcting the module reload logic.
+    *   Fixed `tests/unit/services/test_storage_service.py` by correcting a typo in a mock assertion.
+    *   Fixed `tests/unit/tasks/test_review_tasks.py` by replacing a brittle mock `side_effect` list with a robust `side_effect` function to prevent unexpected Celery retries.
+*   **Outcome:** The unit test suite (`pytest tests/unit/`) is now **100% passing (37/37 passed)**.
 
-### Round 2: API Contract & Service Logic Audit
+---
 
-*   **Finding 1 (Fixed):** The AI review process did not implement the documented fault-tolerance feature, where a failing AI provider would be replaced by a default (OpenAI) provider. The failing provider was simply dropped.
-    *   **Fix:** Implemented fallback logic in the Celery tasks. If a non-OpenAI provider fails, its turn is re-run using the OpenAI provider, preserving the original persona.
-    *   **File:** `app/tasks/review_tasks.py`
+### **Round 3: Frontend/UX Interaction Verification (Completed)**
 
-*   **Finding 2 (Fixed):** The AI review process did not implement the documented token-saving summarization strategy. It was sending the full text of all previous turns to all panelists, rather than summaries of their competitors' arguments.
-    *   **Fix:** Refactored the prompt generation logic in rounds 2 and 3 to correctly construct a custom context for each panelist, aligning with the `README.md`'s description.
-    *   **File:** `app/tasks/review_tasks.py`
+*   **Finding 1 (Verified):** Static code analysis of `app/frontend/src/pages/Review.jsx` confirms the use of a `useEventSource` hook for Server-Sent Events.
+*   **Finding 2 (Verified):** Static code analysis of `app/frontend/src/components/ChatInput.jsx` confirms the use of the `fetch` API to handle streaming responses.
+*   **Finding 3 (Partially Verified):** `grep` and manual code review found no instances of `alert()` in the `app/frontend/src` directory. However, a bundled file in `app/static` still contains an `alert()` call. This is presumed to be a stale build artifact, but cannot be confirmed without running the frontend build process.
 
-*   **Finding 3 (Verified):** The use of Pydantic models to validate unpredictable JSON responses from LLMs was found to be an excellent and correctly implemented feature, enhancing system stability.
+---
 
-### Round 3: Frontend/UX Interaction & Feature Implementation
-
-*   **Finding 1 (Fixed):** The real-time review panel was a missing feature.
-    *   **Fix:** Implemented the full end-to-end feature. The backend now provides a true SSE stream from `/api/reviews/{review_id}/events`, Celery tasks publish progress to Redis, and the frontend `Review.jsx` page subscribes to and displays these events in real-time.
-
-*   **Finding 2 (Fixed):** Chat responses were not streamed, leading to poor UX.
-    *   **Fix:** Implemented end-to-end streaming. The `rag_service` and `/messages/stream` endpoint were refactored to support streaming. The frontend `ChatInput.jsx` was updated to use `fetch` to consume the stream and display tokens as they arrive.
-
-*   **Finding 3 (Fixed):** An old, unused "create review" API endpoint existed, causing code rot.
-    *   **Fix:** The dead endpoint was deleted from `app/api/routes/reviews.py`.
-
-*   **Finding 4 (Fixed):** The UI used blocking browser `alert()` calls for user feedback.
-    *   **Fix:** Replaced all instances of `alert()` across the frontend (primarily in admin components) with non-blocking `toast` notifications from `react-hot-toast`.
-
-### Round 4 & 5: Security, Configuration, & Observability Audit
-
-*   **Finding 1 (Fixed):** A critical security vulnerability was found where `AUTH_OPTIONAL` defaulted to `True`.
-    *   **Fix:** Changed the default value to `False` in `app/config/settings.py`.
-
-*   **Finding 2 (Fixed):** The entire Admin API was unprotected due to a commented-out authorization dependency.
-    *   **Fix:** Re-enabled the `require_role("admin")` dependency for the entire `/api/admin` router in `app/api/routes/admin.py`, securing all admin endpoints.
-
-*   **Finding 3 (Fixed):** The CORS policy was overly permissive (`allow_methods=["*"]`).
-    *   **Fix:** Hardened the policy in `app/main.py` to only allow specific, required HTTP methods and headers.
-
-*   **Finding 4 (Verified):** The application correctly implements ownership checks to prevent IDOR vulnerabilities. The OpenTelemetry setup is robust and correctly initialized.
-
-### Round 6: Test Suite Enhancement
-
-*   **Action 1 (Done):** Added a new test file (`tests/unit/test_config.py`) with tests to verify the `AUTH_OPTIONAL` setting's default and override behavior, preventing a regression of the security fix.
-*   **Action 2 (Done):** Added a new test file (`tests/unit/tasks/test_review_tasks.py`) with a comprehensive unit test for the fault-tolerance logic added to the AI review process.
-
-## 3. Key Features Implemented in Final Phase
-
-- **RAG Hybrid Search:** A new global search feature was implemented, combining keyword (BM25), semantic (vector), and time-decay ranking to provide highly relevant search results across all user data.
-- **Message Versioning & Diffing:** A complete message versioning system was built. Users can now edit messages, and all previous versions are stored. A new UI modal with a diff viewer allows users to compare any two versions of a message.
-- **A/B Prompting Framework:** The existing, but undocumented, support for A/B testing different prompt versions was verified and is now ready for use.
-
-## 4. Technical Debt Resolution Summary
-
-As part of this final phase, all major pieces of previously identified technical debt were resolved:
-- **Initial Migration Refactored:** The first Alembic migration has been completely rewritten to be dialect-agnostic.
-- **Review Creation Logic Consolidated:** The business logic for creating reviews has been centralized into the `ReviewService`.
-- **Frontend State Management Refactored:** The `ChatInput.jsx` component has been refactored to use a `useReducer` state machine pattern for improved maintainability.
-
-## 5. Final Project Status & MVP Readiness
-
-The project is now considered feature-complete according to its documentation and ready for an MVP launch. All major bugs, security vulnerabilities, and user experience flaws identified during the audit have been addressed. The codebase is stable, secure, and maintainable. All identified technical debt has been resolved.
-
-Furthermore, key operational readiness tasks have been completed:
-- **Performance Testing:** A `locustfile.py` has been created to enable load testing.
-- **Observability:** A local Prometheus/Grafana monitoring stack has been configured with a default dashboard.
-- **Deployment:** A comprehensive deployment guide, including SSL configuration and rollback procedures, has been created.
-
-The project is now in a state suitable for initial service deployment.
+### **Round 4: Documentation Overhaul (In Progress)**
+*This section will be updated as documentation is finalized.*
