@@ -32,89 +32,6 @@ from app.api.dependencies import get_redis_client
 
 IDEMPOTENCY_KEY_TTL = 60 * 60 * 24  # 24 hours
 
-@router.post("/rooms/{sub_room_id}/reviews", response_model=ReviewMeta)
-async def create_review_and_start_process(
-    sub_room_id: str,
-    review_request: CreateReviewRequest,
-    user_info: Dict[str, str] = AUTH_DEPENDENCY,
-    storage_service: StorageService = Depends(get_storage_service),
-    review_service: ReviewService = Depends(get_review_service),
-    redis_client: redis.Redis = Depends(get_redis_client),
-    Idempotency_Key: Optional[str] = Header(None, alias="Idempotency-Key"),
-):
-    """
-    Create a new review and immediately start the asynchronous review process.
-    This endpoint supports an Idempotency-Key header to prevent duplicate requests.
-    """
-    if Idempotency_Key:
-        cached_response = redis_client.get(f"idempotency:{Idempotency_Key}")
-        if cached_response:
-            logger.info(f"Idempotency key '{Idempotency_Key}' hit. Returning cached response.")
-            return JSONResponse(content=json.loads(cached_response), status_code=200)
-
-    # Verify sub-room exists and belongs to user
-    sub_room = storage_service.get_room(sub_room_id)
-    if not sub_room or sub_room.owner_id != user_info.get("user_id"):
-        raise HTTPException(status_code=404, detail="Sub-room not found or access denied.")
-    if sub_room.type != "sub":
-        raise HTTPException(status_code=400, detail="Reviews can only be created from sub-rooms.")
-
-    try:
-        # 1. Create the review room
-        review_room_id = generate_id()
-        review_room = Room(
-            room_id=review_room_id,
-            name=f"검토: {review_request.topic}",
-            owner_id=user_info["user_id"],
-            parent_id=sub_room_id,
-            type="review",
-            created_at=get_current_timestamp(),
-            updated_at=get_current_timestamp(),
-        )
-        storage_service.create_room(
-            room_id=review_room_id,
-            name=f"검토: {review_request.topic}",
-            owner_id=user_info["user_id"],
-            room_type="review",
-            parent_id=sub_room_id,
-        )
-        logger.info(f"Created review room {review_room_id} for sub-room {sub_room_id}")
-
-        # 2. Create the review metadata, linking it to the new room
-        review_id = generate_id()
-        review_meta = ReviewMeta(
-            review_id=review_id,
-            room_id=review_room_id,  # Link to the new review room
-            topic=review_request.topic,
-            instruction=review_request.instruction,
-            status="pending",
-            total_rounds=3,
-            created_at=get_current_timestamp(),
-        )
-        storage_service.save_review_meta(review_meta)
-        logger.info(f"Created review metadata {review_id} for room {review_room_id}")
-
-        # 3. Start the asynchronous review process
-        trace_id = str(uuid.uuid4())
-        logger.info(f"Starting review process for review {review_id} with trace_id: {trace_id}")
-        await review_service.start_review_process(
-            review_id=review_id,
-            review_room_id=review_room_id, # Pass the new room ID
-            topic=review_request.topic,
-            instruction=review_request.instruction,
-            panelists=review_request.panelists,
-            trace_id=trace_id,
-        )
-
-        if Idempotency_Key:
-            response_json = review_meta.model_dump_json()
-            redis_client.set(f"idempotency:{Idempotency_Key}", response_json, ex=IDEMPOTENCY_KEY_TTL)
-            logger.info(f"Cached response for idempotency key '{Idempotency_Key}'.")
-
-        return review_meta
-    except Exception as e:
-        logger.error(f"Error creating review: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to create review")
 
 
 @router.get("/reviews", response_model=List[ReviewMeta])
@@ -161,16 +78,47 @@ async def get_review(
     return review
 
 
-@router.get("/reviews/{review_id}/events", response_model=List[ReviewEvent])
-async def get_review_events(
+from sse_starlette.sse import EventSourceResponse
+from app.services.redis_pubsub import redis_pubsub_manager
+
+async def review_event_generator(review_id: str, request: Request):
+    """
+    Yields server-sent events for a specific review's progress.
+    Listens to a Redis Pub/Sub channel.
+    """
+    # First, send all historical events for this review
+    storage = get_storage_service()
+    historical_events = storage.get_review_events(review_id)
+    for event in historical_events:
+        yield dict(event="historical_event", data=json.dumps(event))
+
+    # Now, listen for live events from Redis Pub/Sub
+    async with redis_pubsub_manager.subscribe(f"review_{review_id}") as subscriber:
+        async for message in subscriber:
+            if await request.is_disconnected():
+                break
+            # Messages from redis_pubsub_manager are already JSON strings
+            yield dict(event="live_event", data=message)
+
+@router.get("/reviews/{review_id}/events")
+async def get_review_events_stream(
+    request: Request,
     review_id: str,
-    since: Optional[int] = None,
     user_info: Dict[str, str] = AUTH_DEPENDENCY,
-    storage_service: StorageService = Depends(get_storage_service),  # pyright: ignore[reportCallInDefaultInitializer]
+    storage_service: StorageService = Depends(get_storage_service),
 ):
-    """Get review progress events."""
-    events_data = storage_service.get_review_events(review_id, since)
-    return [ReviewEvent(**event) for event in events_data]
+    """
+    Returns a Server-Sent Events (SSE) stream of review progress.
+    """
+    # First, verify the user has access to this review.
+    review = storage_service.get_review_meta(review_id)
+    if not review:
+        raise HTTPException(status_code=404, detail="Review not found")
+    room = storage_service.get_room(review.room_id)
+    if not room or room.owner_id != user_info.get("user_id"):
+        raise HTTPException(status_code=403, detail="Access denied to review")
+
+    return EventSourceResponse(review_event_generator(review_id, request))
 
 
 @router.get("/reviews/{review_id}/report", response_class=JSONResponse)

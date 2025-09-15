@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
+import toast from 'react-hot-toast';
 import LoadingSpinner from '../common/LoadingSpinner';
 import ErrorMessage from '../common/ErrorMessage';
 
@@ -26,11 +27,11 @@ const PersonaManager = () => {
     mutationFn: rebuildPersona,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['personaJobs'] });
-      alert('Persona rebuild task enqueued!');
+            toast.success('Persona rebuild task enqueued!');
       setUserId('');
     },
     onError: (err) => {
-      alert(`Failed to start rebuild: ${err.response?.data?.detail || err.message}`);
+            toast.error(`Failed to start rebuild: ${err.response?.data?.detail || err.message}`);
     }
   });
 

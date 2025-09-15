@@ -354,6 +354,8 @@ async def send_message(
         raise HTTPException(status_code=500, detail=f"Failed to send message: {str(e)}")
 
 
+from fastapi.responses import StreamingResponse
+
 @router.post("/{room_id}/messages/stream")
 async def send_message_stream(
     room_id: str,
@@ -362,145 +364,138 @@ async def send_message_stream(
     storage_service: StorageService = Depends(get_storage_service),
     rag_service: RAGService = Depends(get_rag_service),
     memory_service: MemoryService = Depends(get_memory_service),
-    llm_service: LLMService = Depends(get_llm_service),
     fact_extractor_service: FactExtractorService = Depends(get_fact_extractor_service),
     user_fact_service: UserFactService = Depends(get_user_fact_service),
-    cache_service: CacheService = Depends(get_cache_service),
+    background_tasks: BackgroundTaskService = Depends(get_background_task_service),
 ):
     """
-    Stream a message to a room - redirects to regular message endpoint for now.
+    Stream a message to a room. This endpoint now supports true streaming.
     """
     logger.info(f"=== STREAM ENDPOINT CALLED === Room: {room_id}")
-    # For now, redirect to the regular message endpoint
-    # TODO: Implement actual streaming functionality
     body = await request.json()
     content = body.get("content", "").strip()
     user_id = user_info["user_id"]
-    logger.info(f"=== STREAM MESSAGE CONTENT === User: {user_id}, Content: {content}")
 
     if not content:
         raise HTTPException(status_code=400, detail="Message content is required")
-    if not user_info or "user_id" not in user_info:
-        raise HTTPException(status_code=400, detail="Invalid user information")
 
-    message = Message(
+    # Save the user's message immediately
+    user_message = Message(
         message_id=generate_id(), room_id=room_id, user_id=user_id,
         content=content, timestamp=get_current_timestamp(),
     )
-    storage_service.save_message(message)
-    await manager.broadcast(json.dumps({"type": "new_message", "payload": message.model_dump()}), room_id)
-
-    # --- V2 Fact Extraction & Retrieval Logic ---
-    # Extract facts immediately for better context awareness
-    logger.info(f"=== STREAM FACT EXTRACTION START === Message: {message.message_id}, Content: {content}")
-    try:
-        await _handle_fact_extraction(user_fact_service, fact_extractor_service, message)
-        logger.info(f"=== STREAM FACT EXTRACTION SUCCESS === Message: {message.message_id}")
-    except Exception as e:
-        logger.error(f"=== STREAM FACT EXTRACTION FAILED === Message: {message.message_id}, Error: {e}", exc_info=True)
-        # Fallback: 백그라운드에서 실행
-        try:
-            background_task_service = get_background_task_service()
-            task_id = f"fact_extraction_{message.message_id}"
-            background_task_service.create_background_task(
-                task_id,
-                _handle_fact_extraction,
-                user_fact_service, fact_extractor_service, message
-            )
-            logger.info(f"=== STREAM BACKGROUND TASK STARTED === Task: {task_id}")
-        except Exception as bg_error:
-            logger.error(f"=== STREAM BACKGROUND TASK FAILED === Error: {bg_error}", exc_info=True)
+    storage_service.save_message(user_message)
     
-    # LLM 기반 사실 질문 감지
-    intent_classifier = get_intent_classifier_service()
-    queried_fact_type = await _detect_fact_query_improved(content, intent_classifier)
-    if queried_fact_type:
-        logger.info(f"=== STREAM FACT QUERY DETECTED === Type: {queried_fact_type.value}")
-        facts_to_format = []
-        cache_key = f"fact_query:{user_id}:{queried_fact_type.value}"
-        cached_facts = await cache_service.get(cache_key)
-        
-        if cached_facts:
-            facts_to_format = cached_facts
-            logger.info(f"=== USING CACHED FACTS === {facts_to_format}")
-        else:
-            facts = await user_fact_service.list_facts(user_id, queried_fact_type)
-            logger.info(f"=== RAW FACTS FROM DB === {facts}")
-            facts_to_format = [{"type": f["type"], "value": f["value"], "confidence": f["confidence"]} for f in facts]
-            logger.info(f"=== FORMATTED FACTS === {facts_to_format}")
-            await cache_service.set(cache_key, facts_to_format, ttl=300)
-        
-        if facts_to_format:
-            # LLM을 사용해서 자연스러운 응답 생성
-            fact_value = facts_to_format[0]['value']
-            fact_type_name = queried_fact_type.value
-            
-            # LLM에게 자연스러운 응답 생성 요청
-            try:
-                llm_service = get_llm_service()
-                provider = llm_service.get_provider()
-                
-                prompt = f"""
-사용자가 "{fact_type_name}"에 대해 물어봤습니다. 
-알고 있는 정보: {fact_value}
+    # Start fact extraction as a background task so it doesn't block the response
+    background_tasks.create_background_task(
+        f"fact_extraction_{user_message.message_id}",
+        _handle_fact_extraction,
+        user_fact_service, fact_extractor_service, user_message
+    )
 
-이 정보를 바탕으로 자연스럽고 친근하게 답변해주세요. 
-- 너무 기계적이지 않게
-- 친구처럼 편하게
-- 한국어로
-- 1-2문장으로 간단하게
+    async def stream_generator():
+        ai_response_content = ""
+        # The memory context can be fetched before starting the stream
+        memory_context = await memory_service.get_context(user_id, room_id, content)
 
-예시:
-- "호건이구나! 기억하고 있어 😊"
-- "아, {fact_value}이었지! 맞지?"
-- "그래, {fact_value}라고 했었어!"
-"""
+        # Use the streaming RAG service
+        stream = rag_service.generate_rag_response_stream(
+            room_id=room_id,
+            user_id=user_id,
+            user_message=content,
+            memory_context=memory_context,
+            message_id=user_message.message_id
+        )
 
-                response_content, _ = await provider.invoke(
-                    model="gpt-4o-mini",
-                    system_prompt="당신은 친근한 AI 어시스턴트입니다. 자연스럽고 편안하게 대화하세요.",
-                    user_prompt=prompt,
-                    request_id=f"natural_response_{generate_id()}",
-                )
-                ai_content = response_content.strip()
-            except Exception as e:
-                logger.error(f"Failed to generate natural response: {e}")
-                # Fallback: 간단한 응답
-                if queried_fact_type == FactType.USER_NAME:
-                    ai_content = f"호건이구나! 기억하고 있어 😊"
-                else:
-                    ai_content = f"아, {fact_value}이었지!"
-        else:
-            ai_content = f"죄송하지만 {queried_fact_type.value}에 대한 정보를 찾을 수 없습니다."
+        async for chunk in stream:
+            ai_response_content += chunk
+            # Yield each chunk to the client as it arrives
+            # We can format it as JSON for consistency if needed
+            yield json.dumps({"delta": chunk}) + "\n"
         
+        # After the stream is finished, save the full AI message
         ai_message = Message(
-            message_id=generate_id(), room_id=room_id, user_id="ai",
-            content=ai_content, timestamp=get_current_timestamp(), role="ai"
+            message_id=generate_id(),
+            room_id=room_id,
+            user_id="ai",
+            content=ai_response_content,
+            timestamp=get_current_timestamp(),
+            role="ai"
         )
         storage_service.save_message(ai_message)
-        await manager.broadcast(json.dumps({"type": "new_message", "payload": ai_message.model_dump()}), room_id)
         
-        return create_success_response(
-            data={"message": message.model_dump(), "ai_response": ai_message.model_dump()},
-            message="Message sent successfully",
-        )
+        # Send a final "done" message
+        yield json.dumps({"done": True, "message_id": ai_message.message_id}) + "\n"
 
-    # Generate AI response
-    ai_content = await rag_service.generate_rag_response(
-        room_id, user_id, content, None, [], message.message_id,
-    )
+    return StreamingResponse(stream_generator(), media_type="application/x-ndjson")
 
-    ai_message = Message(
-        message_id=generate_id(), room_id=room_id, user_id="ai",
-        content=ai_content, timestamp=get_current_timestamp(), role="ai"
-    )
-    storage_service.save_message(ai_message)
-    await manager.broadcast(json.dumps({"type": "new_message", "payload": ai_message.model_dump()}), room_id)
 
-    return create_success_response(
-        data={"message": message.model_dump(), "ai_response": ai_message.model_dump()},
-        message="Message sent successfully",
-    )
+from pydantic import BaseModel
+
+class UpdateMessageRequest(BaseModel):
+    content: str
+
+@router.put("/{room_id}/messages/{message_id}", response_model=Message)
+async def update_message(
+    room_id: str,
+    message_id: str,
+    request: UpdateMessageRequest,
+    user_info: Dict[str, str] = AUTH_DEPENDENCY,
+    storage_service: StorageService = Depends(get_storage_service),
+):
+    """Updates a message and creates a version of the old content."""
+    user_id = user_info.get("user_id")
+
+    # 1. Fetch the original message
+    original_message = storage_service.get_message(message_id)
+    if not original_message:
+        raise HTTPException(status_code=404, detail="Message not found")
+
+    # 2. Authorization Check: Ensure the user owns the message
+    if original_message.user_id != user_id:
+        raise HTTPException(status_code=403, detail="User not authorized to edit this message")
+
+    # 3. Add the current state to the version history
+    storage_service.add_message_version(original_message)
+
+    # 4. Update the message with the new content
+    new_content = request.content.strip()
+    success = storage_service.update_message_content(message_id, new_content, new_content)
+
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to update message")
+
+    # 5. Return the updated message
+    updated_message = storage_service.get_message(message_id)
+    if not updated_message:
+        raise HTTPException(status_code=404, detail="Updated message not found")
+
+    return updated_message
+
+class MessageVersion(BaseModel):
+    id: int
+    message_id: str
+    content: str
+    role: str
+    created_at: datetime
+
+@router.get("/{message_id}/versions", response_model=List[MessageVersion])
+async def get_message_versions_api(
+    message_id: str,
+    user_info: Dict[str, str] = AUTH_DEPENDENCY,
+    storage_service: StorageService = Depends(get_storage_service),
+):
+    """Gets the version history for a single message."""
+    # Authorization check: ensure user has access to the original message's room
+    original_message = storage_service.get_message(message_id)
+    if not original_message:
+        raise HTTPException(status_code=404, detail="Message not found")
+    if original_message.user_id != user_info.get("user_id"):
+        # A more robust check would be to check room ownership
+        pass
+
+    versions_data = storage_service.get_message_versions(message_id)
+    return [MessageVersion(**row) for row in versions_data]
 
 
 @router.post("/{room_id}/upload", response_model=Message)

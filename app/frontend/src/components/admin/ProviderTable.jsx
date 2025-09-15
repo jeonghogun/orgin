@@ -1,6 +1,7 @@
 import React from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
+import toast from 'react-hot-toast';
 import LoadingSpinner from '../common/LoadingSpinner';
 import ErrorMessage from '../common/ErrorMessage';
 
@@ -24,10 +25,10 @@ const ProviderTable = () => {
     mutationFn: updateProvider,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['adminProviders'] });
-      alert('Provider updated successfully!');
+      toast.success('Provider updated successfully!');
     },
     onError: (err) => {
-      alert(`Failed to update provider: ${err.response?.data?.detail || err.message}`);
+      toast.error(`Failed to update provider: ${err.response?.data?.detail || err.message}`);
     }
   });
 

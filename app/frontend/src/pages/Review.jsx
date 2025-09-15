@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import RoomHeader from '../components/RoomHeader';
 import MessageList from '../components/MessageList';
@@ -6,19 +6,55 @@ import ChatInput from '../components/ChatInput';
 import { useQuery } from '@tanstack/react-query';
 import axios from 'axios';
 import { useAppContext } from '../context/AppContext';
+import useEventSource from '../hooks/useEventSource';
+import toast from 'react-hot-toast';
+import Message from '../components/Message'; // We need the Message component to render live messages
 
 const Review = ({ reviewId, isSplitView = false, createRoomMutation }) => {
   const { sidebarOpen } = useAppContext();
   const navigate = useNavigate();
+  const [liveMessages, setLiveMessages] = useState([]);
+  const [reviewStatus, setReviewStatus] = useState('loading');
 
   const { data: review, isLoading } = useQuery({
     queryKey: ['review', reviewId],
     queryFn: async () => {
       const response = await axios.get(`/api/reviews/${reviewId}`);
+      setReviewStatus(response.data.status);
       return response.data;
     },
     enabled: !!reviewId,
   });
+
+  const eventHandlers = useMemo(() => ({
+    live_event: (e) => {
+      try {
+        const eventData = JSON.parse(e.data);
+        if (eventData.type === 'status_update') {
+          setReviewStatus(eventData.payload.status);
+        } else if (eventData.type === 'new_message') {
+          setLiveMessages(prev => [...prev, eventData.payload]);
+        }
+      } catch (err) {
+        console.error("Failed to parse live event:", err);
+      }
+    },
+    historical_event: (e) => {
+        // This is not used anymore as MessageList fetches historical messages.
+        // Kept for potential future use.
+    },
+    error: (err) => {
+      console.error("SSE Error:", err);
+      toast.error("Connection to live review updates failed. Please refresh the page.");
+    },
+    done: () => {
+      setReviewStatus('completed');
+    }
+  }), [reviewId]);
+
+  const sseUrl = reviewId ? `/api/reviews/${reviewId}/events` : null;
+  useEventSource(sseUrl, eventHandlers);
+
 
   // ESC key to navigate back
   useEffect(() => {
@@ -45,7 +81,7 @@ const Review = ({ reviewId, isSplitView = false, createRoomMutation }) => {
       <div className="flex-shrink-0 z-10">
         <RoomHeader
           title={`Review: ${review?.topic || '...'}`}
-          subtitle={review?.instruction || 'AI Review Results'}
+          subtitle={`Status: ${reviewStatus}`}
           showBackButton={!isSplitView}
         />
       </div>
@@ -60,7 +96,13 @@ const Review = ({ reviewId, isSplitView = false, createRoomMutation }) => {
           </div>
         )}
 
+        {/* MessageList will show historical messages */}
         <MessageList roomId={review?.room_id} createRoomMutation={createRoomMutation} />
+
+        {/* Render live messages as they arrive */}
+        <div className="live-messages-container">
+            {liveMessages.map(msg => <Message key={msg.message_id} message={msg} />)}
+        </div>
       </div>
 
       <div 
@@ -69,7 +111,7 @@ const Review = ({ reviewId, isSplitView = false, createRoomMutation }) => {
           left: !isSplitView && sidebarOpen ? '280px' : '0px',
         }}
       >
-        <ChatInput roomId={review?.room_id} createRoomMutation={createRoomMutation} />
+        <ChatInput roomId={review?.room_id} createRoomMutation={createRoomMutation} disabled={reviewStatus !== 'completed'} />
       </div>
     </div>
   );

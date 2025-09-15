@@ -61,26 +61,22 @@ class RAGService:
 
     def _get_thread_chunks(self, thread_id: str) -> List[Dict[str, Any]]:
         """Get all text chunks for a thread with their embeddings."""
-        # For now, return empty list since meta column doesn't exist in test schema
-        # This functionality can be implemented later when attachment system is added
+        # This query joins through messages and attachments to find all chunks
+        # associated with a particular conversation thread.
+        # It assumes that attachments are linked to messages via the 'meta' JSONB field.
+        sql = """
+            SELECT ac.id, ac.attachment_id, ac.chunk_text, ac.embedding
+            FROM attachment_chunks ac
+            JOIN attachments a ON ac.attachment_id = a.id
+            JOIN conversation_messages cm ON a.id = (cm.meta->>'attachment_id')::text
+            WHERE cm.thread_id = %s;
+        """
+        params = (thread_id,)
         try:
-            # Check if attachment_chunks table exists
-            check_table_query = """
-                SELECT EXISTS (
-                    SELECT FROM information_schema.tables 
-                    WHERE table_name = 'attachment_chunks'
-                );
-            """
-            table_exists = self.db.execute_query(check_table_query, ())
-            
-            if not table_exists or not table_exists[0][0]:
-                logger.info("Attachment chunks table not found, returning empty list")
-                return []
-            
-            # If table exists, try to query it (but meta column doesn't exist)
-            return []
+            return self.db.execute_query(sql, params)
         except Exception as e:
-            logger.error(f"Failed to get thread chunks: {e}")
+            # This might fail if the meta field is not used as expected, which is fine.
+            logger.warning(f"Could not retrieve attachment chunks for thread {thread_id}, possibly due to schema mismatch or no attachments. Error: {e}")
             return []
 
     async def _hybrid_search(self, query: str, chunks_data: List[Dict[str, Any]], top_k: int) -> List[Dict[str, Any]]:
@@ -156,39 +152,33 @@ class RAGService:
         return dot_product / (magnitude1 * magnitude2)
 
 
+    async def _get_rag_prompt_and_context(self, user_message: str, room_id: str, memory_context: List[Dict[str, Any]]) -> Tuple[str, str]:
+        """Helper to build the RAG prompt and return the context string."""
+        rag_context = await self.get_context_from_attachments(user_message, room_id)
+
+        prompt_parts = []
+        if rag_context:
+            prompt_parts.append(f"Context from documents:\n{rag_context}")
+
+        if memory_context:
+            memory_text = "\n".join([f"- {item.get('content', '')}" for item in memory_context])
+            prompt_parts.append(f"Relevant memories:\n{memory_text}")
+
+        prompt_parts.append(f"User message: {user_message}")
+
+        system_prompt = """You are a helpful AI assistant. Use the provided context and memories to give accurate, helpful responses. If the context doesn't contain relevant information, say so clearly."""
+        user_prompt = "\n\n".join(prompt_parts)
+
+        return system_prompt, user_prompt
+
     async def generate_rag_response(
-        self, 
-        room_id: str, 
-        user_id: str, 
-        user_message: str, 
-        attachments: Optional[List[str]], 
-        memory_context: List[Dict[str, Any]], 
-        message_id: str
+        self, room_id: str, user_id: str, user_message: str,
+        memory_context: List[Dict[str, Any]], message_id: str
     ) -> str:
-        """
-        Generate AI response using RAG context and LLM.
-        """
+        """Generates a standard, non-streaming RAG response."""
         try:
-            # Get RAG context from attachments
-            rag_context = await self.get_context_from_attachments(user_message, room_id)
+            system_prompt, user_prompt = await self._get_rag_prompt_and_context(user_message, room_id, memory_context)
             
-            # Build prompt with context
-            prompt_parts = []
-            
-            if rag_context:
-                prompt_parts.append(f"Context from documents:\n{rag_context}")
-            
-            if memory_context:
-                memory_text = "\n".join([f"- {item.get('content', '')}" for item in memory_context])
-                prompt_parts.append(f"Relevant memories:\n{memory_text}")
-            
-            prompt_parts.append(f"User message: {user_message}")
-            
-            system_prompt = """You are a helpful AI assistant. Use the provided context and memories to give accurate, helpful responses. If the context doesn't contain relevant information, say so clearly."""
-            
-            user_prompt = "\n\n".join(prompt_parts)
-            
-            # Generate response using OpenAI
             response = await self.openai_client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
@@ -196,14 +186,39 @@ class RAGService:
                     {"role": "user", "content": user_prompt}
                 ],
                 max_tokens=1000,
-                temperature=0.7
+                temperature=0.7,
+                stream=False,
             )
-            
             return response.choices[0].message.content
-            
         except Exception as e:
             logger.error(f"Failed to generate RAG response: {e}")
             return "죄송합니다. 응답을 생성하는 중 오류가 발생했습니다."
+
+    async def generate_rag_response_stream(
+        self, room_id: str, user_id: str, user_message: str,
+        memory_context: List[Dict[str, Any]], message_id: str
+    ):
+        """Generates a streaming RAG response."""
+        try:
+            system_prompt, user_prompt = await self._get_rag_prompt_and_context(user_message, room_id, memory_context)
+
+            stream = await self.openai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                max_tokens=1000,
+                temperature=0.7,
+                stream=True,
+            )
+            async for chunk in stream:
+                content = chunk.choices[0].delta.content
+                if content:
+                    yield content
+        except Exception as e:
+            logger.error(f"Failed to generate streaming RAG response: {e}")
+            yield "죄송합니다. 응답을 생성하는 중 오류가 발생했습니다."
 
     async def search_hybrid(
         self, query: str, user_id: str, thread_id: Optional[str], limit: int
@@ -213,7 +228,7 @@ class RAGService:
         combining BM25, vector similarity, and time decay.
         """
         # 1. Get messages and attachments from the database
-        messages = self._get_thread_messages(user_id, thread_id)
+        messages = self._get_thread_messages(thread_id) if thread_id else []
         attachment_chunks = self._get_thread_chunks(thread_id) if thread_id else []
 
         # 2. Search both sources in parallel
@@ -260,21 +275,17 @@ class RAGService:
         return final_results
 
     def _get_thread_messages(
-        self, user_id: str, thread_id: Optional[str]
+        self, thread_id: str
     ) -> List[Dict[str, Any]]:
-        """Fetches all messages for a given thread or user from the database."""
-        if thread_id:
-            sql = "SELECT id, thread_id, content, role, created_at FROM messages WHERE thread_id = %s"
-            params = (thread_id,)
-        else:
-            # This assumes a `threads` table with a `user_id` column exists.
-            sql = """
-                SELECT m.id, m.thread_id, m.content, m.role, m.created_at
-                FROM messages m
-                JOIN threads t ON m.thread_id = t.id
-                WHERE t.user_id = %s
-            """
-            params = (user_id,)
+        """Fetches all messages for a given thread from the database."""
+        # Correctly fetches from conversation_messages table
+        sql = """
+            SELECT id, thread_id, content, role, created_at
+            FROM conversation_messages
+            WHERE thread_id = %s
+            ORDER BY created_at ASC
+        """
+        params = (thread_id,)
         return self.db.execute_query(sql, params)
 
     def _bm25_search_with_time_decay(

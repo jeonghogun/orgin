@@ -25,9 +25,14 @@ const ExportManager = () => {
     }
   }, []);
 
+import toast from 'react-hot-toast';
+
+// ... (rest of the imports)
+
+// ... (inside the component)
   const handleExport = async (format) => {
     if (!threadId.trim()) {
-      alert('Please enter a Thread ID.');
+      toast.error('Please enter a Thread ID.');
       return;
     }
     setError(null);

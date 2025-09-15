@@ -50,7 +50,8 @@ class Settings(BaseSettings):
     CORS_ALLOWED_ORIGINS: str = "http://localhost:8000,http://127.0.0.1:8000,http://localhost:5173,http://127.0.0.1:5173"
 
     # --- Authentication ---
-    AUTH_OPTIONAL: bool = True
+    # Defaulting to True is a security risk. Should be False by default.
+    AUTH_OPTIONAL: bool = False
     WS_CLIENT_ID_OPTIONAL: bool = True  # Added this field
 
     # --- LLM Configuration ---

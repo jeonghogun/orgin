@@ -1,0 +1,9 @@
+# Interaction Error Matrix
+
+This document tracks all major user interactions, their expected outcomes, and potential or observed failure modes. It serves as a checklist for ensuring frontend stability and a correct user experience.
+
+| Action | Screen/Route | Called API / Event Source | Original Issue | Fix / Mitigation | Verification Method |
+|---|---|---|---|---|---|
+| Observing a live AI review | `/reviews/{reviewId}` | `GET /api/reviews/{review_id}/events` (SSE) | The page was static and did not show review progress. The `/events` endpoint was a polling endpoint, not a real-time stream. | **Resolved.** The backend endpoint was converted to a true SSE stream. The frontend `Review.jsx` page was refactored to use the `useEventSource` hook to listen for and display live status updates and messages. | Local testing (as documented in `TEST_ENV_DESIGN.md`) will show the status and messages updating without a page refresh. |
+| Starting a new AI review | `/rooms/{sub_room_id}` | `POST /api/rooms/{parentId}/create-review-room` | An old, unused endpoint (`/api/reviews`) existed on the backend, creating code rot and confusion. | **Resolved.** The dead endpoint was deleted from `app/api/routes/reviews.py`. The frontend's usage of the correct, interactive endpoint was confirmed. | Local testing will show that starting a review continues to work, and attempting to call the old endpoint will result in a 404. |
+| Streaming chat response | Any chat view | `POST /api/rooms/{roomId}/messages/stream` | The AI's response was not streamed. The user had to wait for the full response to be generated. | **Resolved.** The backend endpoint now returns a `StreamingResponse`. The `rag_service` was updated to support streaming generation. The frontend `ChatInput.jsx` was refactored to use `fetch` and handle the streaming response, displaying tokens as they arrive. | Local testing will show the AI's response appearing token-by-token. |

@@ -134,8 +134,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ALLOWED_ORIGINS.split(","),
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Trace-ID", "Idempotency-Key"],
 )
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.state.limiter = limiter
