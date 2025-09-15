@@ -347,10 +347,49 @@ class CreateReviewRoomInteractiveRequest(BaseModel):
     topic: str
     history: Optional[List[Dict[str, str]]] = None
 
+class PromoteMemoryRequest(BaseModel):
+    sub_room_id: str
+    criteria_text: str = "General summary of key findings."
+
 class CreateReviewRoomInteractiveResponse(BaseModel):
     status: Literal["created", "needs_more_context"]
     question: Optional[str] = None
     room: Optional[Room] = None
+
+
+@router.post("/{room_id}/promote-memory", response_model=Dict[str, str])
+async def promote_memory_from_sub_room(
+    room_id: str, # This is the main_room_id
+    request: PromoteMemoryRequest,
+    user_info: Dict[str, str] = AUTH_DEPENDENCY,
+):
+    """
+    Promotes memories from a sub-room to its parent main room.
+    """
+    user_id = user_info.get("user_id")
+    memory_service = get_memory_service()
+
+    # Basic validation
+    main_room = await asyncio.to_thread(storage_service.get_room, room_id)
+    if not main_room or main_room.owner_id != user_id or main_room.type != RoomType.MAIN:
+        raise NotFoundError("main room", room_id)
+
+    sub_room = await asyncio.to_thread(storage_service.get_room, request.sub_room_id)
+    if not sub_room or sub_room.owner_id != user_id or sub_room.parent_id != room_id:
+        raise InvalidRequestError("Invalid sub_room_id or it does not belong to the specified main room.")
+
+    try:
+        summary = await memory_service.promote_memories(
+            sub_room_id=request.sub_room_id,
+            main_room_id=room_id,
+            user_id=user_id,
+            criteria_text=request.criteria_text,
+        )
+        return {"status": "success", "summary": summary}
+    except Exception as e:
+        logger.error(f"Memory promotion failed for user {user_id}, main_room {room_id}, sub_room {request.sub_room_id}: {e}", exc_info=True)
+        # In a real app, you'd want a more specific error, but this is a start
+        raise AppError("INTERNAL_ERROR", "Failed to promote memories.")
 
 
 @router.post("/{parent_id}/create-review-room", response_model=CreateReviewRoomInteractiveResponse)

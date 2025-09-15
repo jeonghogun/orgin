@@ -14,7 +14,7 @@ class TestLoadScenarios:
     rather than strict time-based assertions.
     """
 
-    def test_multiple_messages_in_sequence(self, client):
+    async def test_multiple_messages_in_sequence(self, authenticated_client):
         """Test sending multiple messages to the same room sequentially."""
         room_id = "sequential-room"
 
@@ -35,7 +35,7 @@ class TestLoadScenarios:
         )
 
         # Create room
-        response = client.post("/api/rooms", json={"name": "Test", "type": "main"})
+        response = authenticated_client.post("/api/rooms", json={"name": "Test", "type": "main"})
         assert response.status_code == 200
 
         # Mock storage for getting and saving messages
@@ -51,7 +51,7 @@ class TestLoadScenarios:
 
         # Send multiple messages
         for i in range(5):
-            response = client.post(
+            response = authenticated_client.post(
                 f"/api/rooms/{room_id}/messages",
                 json={"content": f"Test message {i}"},
             )
@@ -62,13 +62,13 @@ class TestLoadScenarios:
         assert mock_storage_service.save_message.call_count >= 10
         app.dependency_overrides = {}
 
-    def test_error_requests_do_not_break_server(self, client):
+    async def test_error_requests_do_not_break_server(self, authenticated_client):
         """
         Test that sending invalid requests does not prevent subsequent
         valid requests from being processed.
         """
         # Send a valid request to ensure the server is responsive
-        response = client.get("/health")
+        response = authenticated_client.get("/health")
         assert response.status_code == 200
         assert "status" in response.json()
         assert response.json()["status"] == "healthy"

@@ -1,6 +1,7 @@
 """
 Service layer for handling conversation logic, using raw SQL pattern.
 """
+import asyncio
 import json
 import logging
 import time

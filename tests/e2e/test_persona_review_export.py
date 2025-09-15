@@ -4,34 +4,34 @@ Persona Generation -> Review -> Export
 """
 import pytest
 import json
-from unittest.mock import AsyncMock
+"""
+End-to-end test for the core user journey:
+Persona Generation -> Review -> Export
+"""
+import pytest
+import json
+from unittest.mock import AsyncMock, MagicMock
 from fastapi.testclient import TestClient
 
 from app.main import app
 from app.services.llm_service import LLMService, LLMProvider
+from app.core.secrets import SecretProvider
 from tests.conftest import USER_ID, mock_llm_invoke
 from app.tasks.persona_tasks import generate_user_persona
 
-@pytest.fixture
-def mock_secret_provider():
-    from unittest.mock import MagicMock
-    provider = MagicMock()
-    provider.get.return_value = "test_key"
-    return provider
-
 @pytest.mark.anyio
-async def test_persona_review_export_e2e(authenticated_client: TestClient, db_session, mock_secret_provider):
+async def test_persona_review_export_e2e(authenticated_client: TestClient):
     """
     Tests the full user journey from seeding data to exporting the final report.
     """
     # 1. Mock the LLM Service to avoid real API calls
+    mock_llm_service = MagicMock(spec=LLMService)
     mock_provider = AsyncMock(spec=LLMProvider)
     mock_provider.invoke.side_effect = mock_llm_invoke
+    mock_llm_service.get_provider.return_value = mock_provider
 
-    mock_llm_service = LLMService()
-    mock_llm_service.get_provider = lambda provider_name="openai": mock_provider
-
-    app.dependency_overrides[LLMService] = lambda: mock_llm_service
+    from app.services.llm_service import get_llm_service
+    app.dependency_overrides[get_llm_service] = lambda: mock_llm_service
 
     # === A) Create Main/Sub rooms; seed messages in Main ===
     # Create Main room

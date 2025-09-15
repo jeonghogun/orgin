@@ -58,16 +58,21 @@ class TestStorageServiceWithDB:
         room = storage_service.get_room("non-existent")
         assert room is None
 
-    def test_save_message(self, storage_service, mock_db_service):
-        """Test saving a message calls the database twice (insert and update)."""
+    @patch('app.tasks.embedding_tasks.generate_embedding_for_record.delay')
+    def test_save_message(self, mock_delay, storage_service, mock_db_service):
+        """Test saving a message calls the database and dispatches embedding task."""
         msg = Message(message_id="msg-db", room_id="room-db", user_id="user-db", content="Hello DB", timestamp=123, role="user")
         storage_service.save_message(msg)
-        
-        assert mock_db_service.execute_update.call_count == 2
-        first_call_query = mock_db_service.execute_update.call_args_list[0].args[0]
-        assert "INSERT INTO messages" in first_call_query
-        second_call_query = mock_db_service.execute_update.call_args_list[1].args[0]
-        assert "UPDATE rooms SET message_count" in second_call_query
+
+        # Check that the embedding task was called correctly
+        mock_delay.assert_called_once_with(
+            record_id="msg-db",
+            table_name="messages",
+            text_content="Hello DB"
+        )
+
+        # Check that the database transaction was attempted
+        mock_db_service().transaction.assert_called_once_with(query_type="write_message")
 
     def test_get_messages(self, storage_service, mock_db_service):
         """Test getting messages for a room."""
