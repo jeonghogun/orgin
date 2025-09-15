@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
+import toast from 'react-hot-toast';
 
 const POLLING_INTERVAL = 2000; // 2 seconds
 
@@ -24,8 +25,6 @@ const ExportManager = () => {
       setJob(null);
     }
   }, []);
-
-import toast from 'react-hot-toast';
 
 // ... (rest of the imports)
 
