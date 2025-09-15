@@ -38,9 +38,9 @@ const Main = ({ createRoomMutation, interactiveReviewRoomMutation }) => {
           <main className="flex-1 flex flex-col h-screen">
               <div className="flex-1 overflow-y-auto">
                   {threadId && roomId ? (
-                      <ChatView key={threadId} threadId={threadId} />
+                      <ChatView key={threadId} threadId={threadId} currentRoom={currentRoom} />
                   ) : roomId ? (
-                      <MessageList roomId={roomId} createRoomMutation={createRoomMutation} interactiveReviewRoomMutation={interactiveReviewRoomMutation} />
+                      <MessageList roomId={roomId} currentRoom={currentRoom} createRoomMutation={createRoomMutation} interactiveReviewRoomMutation={interactiveReviewRoomMutation} />
                   ) : (
                       <div className="flex items-center justify-center h-full">
                           <div className="text-center">

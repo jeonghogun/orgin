@@ -1,10 +1,12 @@
 import React, { useEffect, useRef, useCallback } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import axios from 'axios';
 import Message from './Message';
 import ChatInput from './ChatInput';
 import useWebSocket from '../hooks/useWebSocket';
 import ConnectionStatusBanner from './common/ConnectionStatusBanner';
+import { ROOM_TYPES } from '../constants';
+
 
 const fetchMessages = async (roomId) => {
   if (!roomId) return [];
@@ -12,9 +14,30 @@ const fetchMessages = async (roomId) => {
   return data || [];
 };
 
-const MessageList = ({ roomId, createRoomMutation, interactiveReviewRoomMutation }) => {
+const promoteMemory = async ({ mainRoomId, subRoomId }) => {
+  const { data } = await axios.post(`/api/rooms/${mainRoomId}/promote-memory`, {
+    sub_room_id: subRoomId,
+    criteria_text: "Promote key learnings from this sub-room discussion.",
+  });
+  return data;
+};
+
+const MessageList = ({ roomId, currentRoom, createRoomMutation, interactiveReviewRoomMutation }) => {
   const messagesEndRef = useRef(null);
   const queryClient = useQueryClient();
+
+  const promoteMemoryMutation = useMutation({
+    mutationFn: promoteMemory,
+    onSuccess: (data) => {
+      alert(`Memory promoted successfully!\n\nSummary:\n${data.summary}`);
+      // Optionally, invalidate queries if the UI should reflect the new memory
+      // queryClient.invalidateQueries(['facts', currentRoom.parent_id]);
+    },
+    onError: (error) => {
+      console.error("Failed to promote memory:", error);
+      alert(`Error: ${error.response?.data?.detail || error.message}`);
+    },
+  });
 
   const handleNewMessage = useCallback((message) => {
     // Update the query cache with the new message from WebSocket
@@ -80,6 +103,25 @@ const MessageList = ({ roomId, createRoomMutation, interactiveReviewRoomMutation
 
   return (
     <div className="flex flex-col h-full">
+      {currentRoom?.type === ROOM_TYPES.SUB && (
+        <div className="flex items-center justify-between p-2 border-b border-border bg-bg-alt">
+          <span className="text-sm text-muted">This is a sub-room. Learnings can be promoted to the main room.</span>
+          <button
+            onClick={() => {
+              if (currentRoom.parent_id) {
+                promoteMemoryMutation.mutate({
+                  mainRoomId: currentRoom.parent_id,
+                  subRoomId: currentRoom.room_id,
+                });
+              }
+            }}
+            disabled={promoteMemoryMutation.isPending}
+            className="px-3 py-1 text-sm bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50"
+          >
+            {promoteMemoryMutation.isPending ? 'Promoting...' : 'Promote Learnings to Main Room'}
+          </button>
+        </div>
+      )}
       <ConnectionStatusBanner status={connectionStatus} />
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {messages.map((message) => (

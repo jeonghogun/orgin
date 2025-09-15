@@ -7,6 +7,11 @@ import json
 import math
 import asyncio
 from datetime import datetime, timezone
+import logging
+import json
+import math
+import asyncio
+from datetime import datetime, timezone
 from typing import List, Optional, Tuple, Dict, Any
 
 from app.models.schemas import Message
@@ -18,6 +23,8 @@ from app.services.hybrid_search_service import get_hybrid_search_service
 from app.core.secrets import SecretProvider
 from app.utils.helpers import generate_id, get_current_timestamp
 from app.config.settings import settings
+from app.services.conversation_service import get_conversation_service
+from app.services.fact_types import FactType
 
 logger = logging.getLogger(__name__)
 
@@ -101,8 +108,83 @@ class MemoryService:
         # ... implementation unchanged ...
         pass
     async def promote_memories(self, sub_room_id: str, main_room_id: str, user_id: str, criteria_text: str) -> str:
-        # ... implementation unchanged ...
-        pass
+        """
+        Summarizes a sub-room's conversation and promotes the summary as a new
+        fact to the main room's memory.
+        """
+        conversation_service = get_conversation_service()
+        user_fact_service = self.user_fact_service # Already a dependency
+
+        # 1. Get all messages from the sub-room
+        full_conversation = ""
+        try:
+            # Note: The data model seems to have a single thread per sub-room.
+            # If multiple threads were possible, this logic would need to be adjusted.
+            threads = await conversation_service.get_threads_by_room(room_id=sub_room_id)
+            if not threads:
+                logger.info(f"No threads found in sub-room {sub_room_id} for promotion.")
+                return "No content to promote."
+
+            for thread in threads:
+                messages = await conversation_service.get_all_messages_by_thread(thread.id)
+                for msg in messages:
+                    # Ensure msg is a dictionary and has the expected keys
+                    if isinstance(msg, dict):
+                        full_conversation += f"{msg.get('role', 'unknown')}: {msg.get('content', '')}\n"
+        except Exception as e:
+            logger.error(f"Error fetching conversation from sub-room {sub_room_id}: {e}", exc_info=True)
+            # Re-raise as a custom exception or handle gracefully
+            raise RuntimeError(f"Failed to fetch conversation for promotion: {e}")
+
+        if not full_conversation.strip():
+            logger.info(f"Sub-room {sub_room_id} has no message content to promote.")
+            return "No content to promote."
+
+        # 2. Summarize the conversation using an LLM
+        system_prompt = (
+            "You are an AI assistant tasked with summarizing a conversation from a sub-project. "
+            "Your summary should capture the key findings, decisions, and important facts that are "
+            "worth saving to long-term memory. Focus on the aspects related to the user's goal."
+        )
+        user_prompt = f"User's Goal: '{criteria_text}'\n\nConversation to Summarize:\n---\n{full_conversation}"
+
+        try:
+            summary, _ = await self.llm_service.invoke(
+                provider="openai",
+                model=settings.SMART_MODEL,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                context="memory-promotion-summary"
+            )
+        except Exception as e:
+            logger.error(f"LLM invocation failed during memory promotion for sub-room {sub_room_id}: {e}", exc_info=True)
+            raise RuntimeError(f"Failed to generate summary for promotion: {e}")
+
+
+        if not summary or not summary.strip():
+            logger.warning(f"LLM failed to generate a summary for sub-room {sub_room_id}.")
+            return "Failed to generate a summary."
+
+        # 3. Save the summary as a new fact in the main room
+        fact_to_save = {
+            "type": FactType.PROMOTED_SUMMARY.value,
+            "value": summary,
+            "confidence": 0.99 # High confidence as it's user-initiated
+        }
+
+        # The sub_room_id serves as the source reference
+        # The main_room_id is where the fact is logically stored
+        await user_fact_service.save_fact(
+            user_id=user_id,
+            fact=fact_to_save,
+            normalized_value=summary, # Using full summary for potential future matching
+            source_message_id=sub_room_id, # Using sub_room_id as the source identifier
+            sensitivity="medium",
+            room_id=main_room_id
+        )
+
+        logger.info(f"Successfully promoted summary from sub-room {sub_room_id} to main-room {main_room_id} for user {user_id}.")
+        return summary
     async def archive_old_memories(self, room_id: str):
         # ... implementation unchanged ...
         pass

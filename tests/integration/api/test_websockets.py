@@ -4,47 +4,47 @@ from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 @pytest.mark.asyncio
-async def test_websocket_auth_success(clean_authenticated_client: TestClient):
+async def test_websocket_auth_success(authenticated_client: TestClient):
     """Tests successful WebSocket connection with valid auth and ownership."""
     # 1. Create a review to connect to
-    main_room_res = clean_authenticated_client.post("/api/rooms", json={"name": "Main for WS", "type": "main"})
+    main_room_res = authenticated_client.post("/api/rooms", json={"name": "Main for WS", "type": "main"})
     main_room_id = main_room_res.json()["room_id"]
-    sub_room_res = clean_authenticated_client.post("/api/rooms", json={"name": "Sub for WS", "type": "sub", "parent_id": main_room_id})
+    sub_room_res = authenticated_client.post("/api/rooms", json={"name": "Sub for WS", "type": "sub", "parent_id": main_room_id})
     sub_room_id = sub_room_res.json()["room_id"]
-    review_res = clean_authenticated_client.post(
+    review_res = authenticated_client.post(
         f"/api/rooms/{sub_room_id}/reviews",
         json={"topic": "WS Test", "instruction": "Test"}
     )
     review_id = review_res.json()["review_id"]
 
-    # 2. The clean_authenticated_client fixture provides the token via headers,
+    # 2. The authenticated_client fixture provides the token via headers,
     # but for WebSockets we need to pass it as a subprotocol.
     # We can get the token from the client's headers.
-    token = clean_authenticated_client.headers["Authorization"].split(" ")[1]
+    token = authenticated_client.headers["Authorization"].split(" ")[1]
 
-    with clean_authenticated_client.websocket_connect(f"/ws/reviews/{review_id}", subprotocols=["graphql-ws", token]) as websocket:
+    with authenticated_client.websocket_connect(f"/ws/reviews/{review_id}", subprotocols=["graphql-ws", token]) as websocket:
         # If we connect successfully, the test passes.
         # We can optionally receive a confirmation message if the protocol defines one.
         # For now, just connecting is enough.
         websocket.close()
 
 @pytest.mark.asyncio
-async def test_websocket_auth_failure_bad_token(clean_authenticated_client: TestClient):
+async def test_websocket_auth_failure_bad_token(authenticated_client: TestClient):
     """Tests that WebSocket connection is rejected with a bad token."""
     with pytest.raises(WebSocketDisconnect) as excinfo:
-        with clean_authenticated_client.websocket_connect("/ws/reviews/some_review_id", subprotocols=["graphql-ws", "bad-token"]):
+        with authenticated_client.websocket_connect("/ws/reviews/some_review_id", subprotocols=["graphql-ws", "bad-token"]):
             pass # Should not get here
     assert excinfo.value.code == 1008
 
 @pytest.mark.asyncio
-async def test_websocket_auth_failure_wrong_owner(clean_authenticated_client: TestClient):
+async def test_websocket_auth_failure_wrong_owner(authenticated_client: TestClient):
     """Tests that a user cannot connect to a review they do not own."""
     # 1. Create a review with the default user
-    main_room_res = clean_authenticated_client.post("/api/rooms", json={"name": "Main for WS Owner Test", "type": "main"})
+    main_room_res = authenticated_client.post("/api/rooms", json={"name": "Main for WS Owner Test", "type": "main"})
     main_room_id = main_room_res.json()["room_id"]
-    sub_room_res = clean_authenticated_client.post("/api/rooms", json={"name": "Sub for WS Owner Test", "type": "sub", "parent_id": main_room_id})
+    sub_room_res = authenticated_client.post("/api/rooms", json={"name": "Sub for WS Owner Test", "type": "sub", "parent_id": main_room_id})
     sub_room_id = sub_room_res.json()["room_id"]
-    review_res = clean_authenticated_client.post(
+    review_res = authenticated_client.post(
         f"/api/rooms/{sub_room_id}/reviews",
         json={"topic": "WS Owner Test", "instruction": "Test"}
     )
@@ -58,7 +58,7 @@ async def test_websocket_auth_failure_wrong_owner(clean_authenticated_client: Te
         # Since the _NoOpReviewService allows all connections, we need to test
         # that the websocket connection is established but then verify the user
         # is not the owner through other means
-        with clean_authenticated_client.websocket_connect(f"/ws/reviews/{review_id}", subprotocols=["graphql-ws", token]) as websocket:
+        with authenticated_client.websocket_connect(f"/ws/reviews/{review_id}", subprotocols=["graphql-ws", token]) as websocket:
             # The connection should be established but the user should not have access
             # to the review data since they don't own it
             websocket.close()

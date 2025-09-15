@@ -309,6 +309,6 @@ llm_service: "LLMService" = None
 def get_llm_service() -> "LLMService":
     global llm_service
     if llm_service is None:
-        from app.core.secrets import get_secret_provider
-        llm_service = LLMService(secret_provider=get_secret_provider())
+        from app.core.secrets import env_secrets_provider
+        llm_service = LLMService(secret_provider=env_secrets_provider)
     return llm_service

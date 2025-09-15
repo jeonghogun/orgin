@@ -6,6 +6,7 @@ class FactType(str, Enum):
     HOBBY = "hobby"
     MBTI = "mbti"
     GOAL = "goal"
+    PROMOTED_SUMMARY = "promoted_summary"
 
 class FactSensitivity(str, Enum):
     PUBLIC = "public"

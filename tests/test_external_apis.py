@@ -9,13 +9,13 @@ MOCK_SEARCH_RESULTS = {"some_key": "some_value"}
 class TestSearchAPI:
     """Tests for the /api/search endpoints."""
 
-    def test_search_success(self, client):
+    async def test_search_success(self, authenticated_client):
         """Test successful search."""
         mock_search_service = AsyncMock()
         mock_search_service.web_search.return_value = MOCK_SEARCH_RESULTS
         app.dependency_overrides[get_search_service] = lambda: mock_search_service
 
-        response = client.get("/api/search?q=artificial+intelligence")
+        response = authenticated_client.get("/api/search?q=artificial+intelligence")
 
         assert response.status_code == 200
         data = response.json()["data"]
@@ -24,18 +24,18 @@ class TestSearchAPI:
         mock_search_service.web_search.assert_called_once_with("artificial intelligence", 5)
         app.dependency_overrides = {}
 
-    def test_search_no_query(self, client):
+    async def test_search_no_query(self, authenticated_client):
         """Test search with no query parameter."""
-        response = client.get("/api/search")
+        response = authenticated_client.get("/api/search")
         assert response.status_code == 422  # Unprocessable Entity from FastAPI
 
-    def test_search_rag_service_error(self, client):
+    async def test_search_rag_service_error(self, authenticated_client):
         """Test handling of an error from the search service."""
         mock_search_service = AsyncMock()
         mock_search_service.web_search.side_effect = Exception("Service is down")
         app.dependency_overrides[get_search_service] = lambda: mock_search_service
 
-        response = client.get("/api/search?q=deep+learning")
+        response = authenticated_client.get("/api/search?q=deep+learning")
 
         assert response.status_code == 500
         assert "Search failed" in response.json()["detail"]

@@ -44,13 +44,17 @@ def test_environment():
     """세션 전체에서 사용할 테스트 환경을 생성합니다."""
     global _test_environment
     
+    # Docker Compose 서비스 이름을 호스트로 사용
+    db_host = os.environ.get("TEST_DB_HOST", "test-db")
+    redis_host = os.environ.get("TEST_REDIS_HOST", "redis")
+
     if not _test_environment:
-        # 간단한 테스트 환경 설정 (Docker 컨테이너 없이)
+        # docker-compose.yml에 정의된 테스트 환경과 일치시킴
         _test_environment = {
-            'database_url': 'postgresql://test_user:test_password@localhost:5434/test_origin_db',
-            'redis_url': 'redis://localhost:6380/0',
-            'postgres_port': 5434,
-            'redis_port': 6380
+            'database_url': f'postgresql://test_user:test_password@{db_host}:5433/test_origin_db',
+            'redis_url': f'redis://{redis_host}:6379/0',
+            'postgres_port': 5433,
+            'redis_port': 6379
         }
     
     yield _test_environment
@@ -64,11 +68,13 @@ def isolated_test_env(test_environment):
     # 각 테스트마다 고유한 사용자 ID 생성
     test_user_id = f"test-user-{int(time.time())}-{str(uuid.uuid4())[:8]}"
     
+    db_host = os.environ.get("TEST_DB_HOST", "test-db")
+
     # 환경 변수 설정
     env_vars = {
         'DATABASE_URL': test_environment['database_url'],
         'REDIS_URL': test_environment['redis_url'],
-        'POSTGRES_HOST': 'localhost',
+        'POSTGRES_HOST': db_host,
         'POSTGRES_PORT': str(test_environment['postgres_port']),
         'POSTGRES_USER': 'test_user',
         'POSTGRES_PASSWORD': 'test_password',
@@ -112,8 +118,9 @@ def app_settings(isolated_test_env):
     settings.CELERY_BROKER_URL = isolated_test_env['redis_url']
     settings.CELERY_RESULT_BACKEND = isolated_test_env['redis_url']
     
+    db_host = os.environ.get("TEST_DB_HOST", "test-db")
     # PostgreSQL 설정
-    settings.POSTGRES_HOST = "localhost"
+    settings.POSTGRES_HOST = db_host
     settings.POSTGRES_PORT = int(isolated_test_env['postgres_port'])
     settings.POSTGRES_USER = "test_user"
     settings.POSTGRES_PASSWORD = "test_password"
@@ -173,8 +180,9 @@ def mock_llm_service():
 def mock_redis_client(isolated_test_env):
     """테스트용 Redis 클라이언트를 제공합니다."""
     import redis
+    redis_host = os.environ.get("TEST_REDIS_HOST", "redis")
     return redis.Redis(
-        host='localhost',
+        host=redis_host,
         port=int(isolated_test_env['redis_port']),
         db=0,
         decode_responses=True
@@ -197,6 +205,21 @@ def mock_database_service(isolated_test_env, mock_secret_provider):
 @pytest.fixture(scope="function")
 def authenticated_client(isolated_test_env, test_user_id: str):
     """인증된 테스트 클라이언트를 제공합니다."""
+    # Ensure all services are re-initialized for this test
+    import app.services.database_service as db_service_module
+    import app.services.storage_service as storage_service_module
+    import app.services.review_service as review_service_module
+    import app.services.conversation_service as convo_service_module
+    import app.api.dependencies as deps_module
+
+    db_service_module._database_service_instance = None
+    storage_service_module._storage_service = None
+    review_service_module._review_service = None
+    convo_service_module.conversation_service = None
+    deps_module._storage_service = None
+    deps_module._review_service = None
+    deps_module._conversation_service = None
+
     from fastapi.testclient import TestClient
     from app.main import app
     from app.api.dependencies import get_database_service as dep_get_database_service
@@ -207,7 +230,6 @@ def authenticated_client(isolated_test_env, test_user_id: str):
     import app.services.storage_service as storage_service_module
     import app.api.routes.rooms as rooms_routes_module
     import app.api.routes.reviews as reviews_routes_module
-    import app.api.dependencies as deps_module
     import app.services.conversation_service as convo_module
     from app.services.conversation_service import get_conversation_service as dep_get_conversation_service
     import redis as _redis
@@ -232,12 +254,6 @@ def authenticated_client(isolated_test_env, test_user_id: str):
     def _override_get_database_service() -> DatabaseService:
         # 테스트 컨테이너의 ENV를 사용하는 DB 서비스 인스턴스를 강제 생성
         svc = DatabaseService(secret_provider=env_secrets_provider)
-        svc._is_test_mode = True
-        svc.database_url = isolated_test_env['database_url']
-        # 기존 풀 초기화 보장
-        svc.pool = None
-        # 글로벌 싱글턴도 교체하여 모든 참조가 동일 인스턴스를 사용하도록 강제
-        database_service_module._database_service_instance = svc
         return svc
     app.dependency_overrides[dep_get_database_service] = _override_get_database_service
 
@@ -284,7 +300,8 @@ def authenticated_client(isolated_test_env, test_user_id: str):
     test_convo_db.pool = None
     test_convo_service.db = test_convo_db
     # Redis 강제 주입
-    test_convo_service.redis_client = _redis.Redis(host='localhost', port=int(isolated_test_env['redis_port']), db=0, decode_responses=False)
+    redis_host = os.environ.get("TEST_REDIS_HOST", "redis")
+    test_convo_service.redis_client = _redis.Redis(host=redis_host, port=int(isolated_test_env['redis_port']), db=0, decode_responses=False)
     convo_module.conversation_service = test_convo_service
 
     # ConversationService.create_message를 테스트용으로 오버라이드: conversation_messages 테이블 사용
@@ -619,6 +636,21 @@ def authenticated_client(isolated_test_env, test_user_id: str):
 @pytest.fixture(scope="function")
 def clean_authenticated_client(isolated_test_env, test_user_id: str):
     """Fixture that provides authenticated client without prerequisite rooms for room creation tests."""
+    # Ensure all services are re-initialized for this test
+    import app.services.database_service as db_service_module
+    import app.services.storage_service as storage_service_module
+    import app.services.review_service as review_service_module
+    import app.services.conversation_service as convo_service_module
+    import app.api.dependencies as deps_module
+
+    db_service_module._database_service_instance = None
+    storage_service_module._storage_service = None
+    review_service_module._review_service = None
+    convo_service_module.conversation_service = None
+    deps_module._storage_service = None
+    deps_module._review_service = None
+    deps_module._conversation_service = None
+
     from fastapi.testclient import TestClient
     from app.main import app
     from app.api.dependencies import get_database_service as dep_get_database_service
@@ -626,18 +658,14 @@ def clean_authenticated_client(isolated_test_env, test_user_id: str):
     from app.services.database_service import DatabaseService
     from app.core.secrets import env_secrets_provider
     from app.services.storage_service import StorageService as _StorageService
-    import app.services.storage_service as storage_service_module
     import app.api.routes.rooms as rooms_routes_module
     import app.api.routes.reviews as reviews_routes_module
-    import app.api.dependencies as deps_module
-    import app.services.conversation_service as convo_module
     from app.services.conversation_service import get_conversation_service as dep_get_conversation_service
-    import redis as _redis
     from fastapi import Request
     from app.api.dependencies import require_auth
     
     # Set up the test environment
-    os.environ["PYTEST_CURRENT_TEST"] = "test"
+    os.environ["PYTEST_CURRENT_TEST"] = "true"
     os.environ["DATABASE_URL"] = isolated_test_env['database_url']
 
     # Create test client
@@ -658,31 +686,10 @@ def clean_authenticated_client(isolated_test_env, test_user_id: str):
     app.dependency_overrides[require_auth] = _override_require_auth
 
     # 데이터베이스 서비스 의존성도 현재 테스트 컨테이너의 ENV를 사용하도록 오버라이드
-    forced_db = DatabaseService(env_secrets_provider)
-    forced_db._is_test_mode = True
-    forced_db.database_url = isolated_test_env['database_url']
-    forced_db.pool = None
+    def _override_get_db_service_clean():
+        return DatabaseService(env_secrets_provider)
     
-    # 글로벌 싱글톤 강제 재초기화
-    import app.services.database_service as db_service_module
-    db_service_module._database_service_instance = None
-    
-    # StorageService도 강제 재초기화
-    storage_service_module._storage_service = None
-    
-    # 강제로 새로운 StorageService 인스턴스 생성
-    forced_storage = _StorageService(env_secrets_provider)
-    forced_storage.db = forced_db
-    
-    # 모듈 레벨에서 storage_service 재할당
-    storage_service_module._storage_service = forced_storage
-    rooms_routes_module.storage_service = forced_storage
-    reviews_routes_module.storage_service = forced_storage
-    
-    # 의존성 오버라이드
-    app.dependency_overrides[dep_get_database_service] = lambda: forced_db
-    deps_module._storage_service = forced_storage
-    deps_module._review_service = None  # 강제 재초기화
+    app.dependency_overrides[dep_get_database_service] = _override_get_db_service_clean
     
     # ReviewService 오버라이드
     from app.services.review_service import ReviewService
@@ -733,6 +740,19 @@ def clean_authenticated_client(isolated_test_env, test_user_id: str):
     
     # ConversationService 오버라이드
     from app.services.conversation_service import ConversationService
+    from app.services.storage_service import StorageService as _StorageService
+    from app.services.database_service import DatabaseService
+    from app.core.secrets import env_secrets_provider
+
+    # Create forced_db and forced_storage instances within this fixture's scope
+    forced_db = DatabaseService(env_secrets_provider)
+    forced_db._is_test_mode = True
+    forced_db.database_url = isolated_test_env['database_url']
+    forced_db.pool = None
+
+    forced_storage = _StorageService(env_secrets_provider)
+    forced_storage.db = forced_db
+
     class _TestConversationService:
         def __init__(self):
             self.db = forced_db
@@ -759,6 +779,7 @@ def clean_authenticated_client(isolated_test_env, test_user_id: str):
         def update_message(self, *args, **kwargs):
             return {"message_id": "test-msg-123", "status": "updated"}
     
+    from app.services import conversation_service as convo_module
     convo_module.ConversationService = _TestConversationService
     app.dependency_overrides[dep_get_conversation_service] = lambda: _TestConversationService()
     
