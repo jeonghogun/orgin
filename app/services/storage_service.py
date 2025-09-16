@@ -194,11 +194,15 @@ class StorageService:
             # Dispatch the embedding task after the transaction is successfully committed.
             # Only generate embeddings for user messages to save costs/resources.
             if message.role == "user":
-                generate_embedding_for_record.delay(
-                    record_id=message.message_id,
-                    table_name="messages",
-                    text_content=message.content
-                )
+                try:
+                    generate_embedding_for_record.delay(
+                        record_id=message.message_id,
+                        table_name="messages",
+                        text_content=message.content
+                    )
+                except Exception as celery_error:
+                    logger.warning(f"Failed to dispatch embedding task for message {message.message_id}: {celery_error}")
+                    # Continue without embedding generation
         except Exception as e:
             logger.error(f"Transaction failed for save_message on room {message.room_id}: {e}", exc_info=True)
             # Re-raise the exception to allow higher-level error handling if needed

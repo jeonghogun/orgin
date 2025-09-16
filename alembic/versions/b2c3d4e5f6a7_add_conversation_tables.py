@@ -10,6 +10,12 @@ from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.types import UserDefinedType
+import pgvector
+
+class VectorType(UserDefinedType):
+    def get_col_spec(self, **kw):
+        return "VECTOR(1536)"
 
 # revision identifiers, used by Alembic.
 revision: str = 'b2c3d4e5f6a7'
@@ -71,7 +77,7 @@ def upgrade() -> None:
         sa.Column('id', sa.String(), nullable=False),
         sa.Column('attachment_id', sa.String(), nullable=False),
         sa.Column('chunk_text', sa.Text(), nullable=False),
-        sa.Column('embedding', postgresql.VECTOR(1536), nullable=True), # Assuming OpenAI ada-002 size
+        sa.Column('embedding', VectorType(), nullable=True), # Assuming OpenAI ada-002 size
         sa.ForeignKeyConstraint(['attachment_id'], ['attachments.id'], name=op.f('fk_attachment_chunks_attachment_id_attachments'), ondelete='CASCADE'),
         sa.PrimaryKeyConstraint('id')
     )

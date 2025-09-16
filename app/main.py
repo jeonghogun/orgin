@@ -198,8 +198,42 @@ uploads_dir = "uploads"
 os.makedirs(uploads_dir, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")
 
-# Frontend static files are now served by Nginx.
-# The StaticFiles mount for the root path has been removed.
+# Simple test endpoint
+@app.get("/test")
+async def test_endpoint() -> Dict[str, Any]:
+    """Simple test endpoint"""
+    return {
+        "message": "Test endpoint working!",
+        "timestamp": get_current_timestamp()
+    }
+
+# Mount static files for frontend
+frontend_path = "app/frontend/dist" if os.path.exists("app/frontend/dist") else "static"
+if os.path.exists(frontend_path):
+    app.mount("/static", StaticFiles(directory=frontend_path), name="static")
+    app.mount("/assets", StaticFiles(directory=os.path.join(frontend_path, "assets")), name="assets")
+    
+    # Serve frontend index.html for all non-API routes
+    @app.get("/{full_path:path}")
+    async def serve_frontend(full_path: str):
+        # If it's an API route, let it pass through
+        if (full_path.startswith("api/") or 
+            full_path.startswith("docs") or 
+            full_path.startswith("openapi.json") or
+            full_path.startswith("static/") or
+            full_path.startswith("assets/") or
+            full_path.startswith("uploads/") or
+            full_path in ["test", "health"]):
+            raise HTTPException(status_code=404, detail="Not Found")
+        
+        # Serve index.html for all other routes (SPA routing)
+        index_path = os.path.join(frontend_path, "index.html")
+        if os.path.exists(index_path):
+            with open(index_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            return Response(content=content, media_type="text/html")
+        else:
+            raise HTTPException(status_code=404, detail="Frontend not found")
 
 
 # Health check endpoint

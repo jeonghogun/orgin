@@ -7,6 +7,7 @@ import time
 import uuid
 import shutil
 import json
+from datetime import datetime
 from typing import Dict, Optional, List
 from fastapi import APIRouter, HTTPException, Request, Depends, File, UploadFile
 
@@ -329,8 +330,9 @@ async def send_message(
             )
             ai_content = "어떤 대화를 상위 룸으로 올릴까요? '어제 대화 전부' 또는 'AI 윤리에 대한 내용만'과 같이 구체적으로 말씀해주세요."
         else: # Fallback to general RAG response
+            memory_context = await memory_service.get_context(room_id, user_id)
             ai_content = await rag_service.generate_rag_response(
-                room_id, user_id, content, intent, entities, message.message_id,
+                room_id, user_id, content, memory_context, message.message_id,
             )
 
         ai_message = Message(
@@ -396,7 +398,7 @@ async def send_message_stream(
     async def stream_generator():
         ai_response_content = ""
         # The memory context can be fetched before starting the stream
-        memory_context = await memory_service.get_context(user_id, room_id, content)
+        memory_context = await memory_service.get_context(room_id, user_id)
 
         # Use the streaming RAG service
         stream = rag_service.generate_rag_response_stream(

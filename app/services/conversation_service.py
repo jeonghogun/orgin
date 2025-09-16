@@ -18,10 +18,13 @@ logger = logging.getLogger(__name__)
 class ConversationService:
     def __init__(self):
         self.db: DatabaseService = get_database_service()
-        self.redis_client = redis.from_url(settings.REDIS_URL)
+        self.redis_client = redis.from_url(settings.REDIS_URL) if settings.REDIS_URL else None
 
     def increment_token_usage(self, user_id: str, token_count: int) -> int:
         """Increments a user's token usage for the day in Redis."""
+        if not self.redis_client:
+            logger.info(f"Token usage tracking skipped (Redis not available)")
+            return 0
         today = time.strftime("%Y-%m-%d")
         key = f"usage:{user_id}:{today}"
 
@@ -34,6 +37,9 @@ class ConversationService:
 
     def get_today_usage(self, user_id: str) -> int:
         """Gets a user's token usage for the day from Redis."""
+        if not self.redis_client:
+            logger.info(f"Token usage tracking skipped (Redis not available)")
+            return 0
         today = time.strftime("%Y-%m-%d")
         key = f"usage:{user_id}:{today}"
         usage = self.redis_client.get(key)

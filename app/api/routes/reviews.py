@@ -6,7 +6,7 @@ import logging
 import uuid
 import json
 from typing import Dict, List, Optional, Any
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import JSONResponse
 
 from app.services.storage_service import StorageService

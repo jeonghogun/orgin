@@ -8,12 +8,15 @@ from app.config.settings import settings
 logger = logging.getLogger(__name__)
 
 class CacheService:
-    def __init__(self, redis_client: redis.Redis):
+    def __init__(self, redis_client: Optional[redis.Redis]):
         self.redis = redis_client
         self.default_ttl = 300  # 5 minutes
 
     async def get(self, key: str) -> Optional[Any]:
         """Get data from cache."""
+        if not self.redis:
+            logger.info(f"Cache MISS for key: {key} (Redis not available)")
+            return None
         try:
             data = await self.redis.get(key)
             if data:
@@ -27,6 +30,9 @@ class CacheService:
 
     async def set(self, key: str, value: Any, ttl: Optional[int] = None) -> bool:
         """Set data in cache with a TTL."""
+        if not self.redis:
+            logger.info(f"Cache SET skipped for key: {key} (Redis not available)")
+            return False
         try:
             ttl = ttl or self.default_ttl
             # Use model_dump for Pydantic models before json.dumps
@@ -46,6 +52,9 @@ class CacheService:
 
     async def delete(self, key: str) -> bool:
         """Delete data from cache."""
+        if not self.redis:
+            logger.info(f"Cache DELETE skipped for key: {key} (Redis not available)")
+            return False
         try:
             await self.redis.delete(key)
             logger.info(f"Cache DELETE for key: {key}")
@@ -56,16 +65,16 @@ class CacheService:
 
 _redis_client: Optional[redis.Redis] = None
 
-async def get_redis_client() -> redis.Redis:
+async def get_redis_client() -> Optional[redis.Redis]:
     """Get a singleton Redis client instance."""
     global _redis_client
-    if _redis_client is None:
+    if _redis_client is None and settings.REDIS_URL:
         try:
             # Ensure the client is created with decode_responses=True for string operations
             _redis_client = redis.from_url(settings.REDIS_URL, encoding="utf-8", decode_responses=True)
         except Exception as e:
             logger.error(f"Failed to create Redis client for cache: {e}")
-            raise
+            _redis_client = None
     return _redis_client
 
 async def get_cache_service() -> CacheService:

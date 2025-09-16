@@ -6,6 +6,7 @@ import ChatInput from './ChatInput';
 import useWebSocket from '../hooks/useWebSocket';
 import ConnectionStatusBanner from './common/ConnectionStatusBanner';
 import { ROOM_TYPES } from '../constants';
+import toast from 'react-hot-toast';
 
 
 const fetchMessages = async (roomId) => {
@@ -25,10 +26,6 @@ const promoteMemory = async ({ mainRoomId, subRoomId }) => {
 const MessageList = ({ roomId, currentRoom, createRoomMutation, interactiveReviewRoomMutation }) => {
   const messagesEndRef = useRef(null);
   const queryClient = useQueryClient();
-
-import toast from 'react-hot-toast';
-
-// ...
 
   const promoteMemoryMutation = useMutation({
     mutationFn: promoteMemory,
@@ -56,9 +53,9 @@ import toast from 'react-hot-toast';
   }, [queryClient, roomId]);
 
   // Construct WebSocket URL.
-  // The backend websocket endpoint is at /api/ws/reviews/{review_id}
+  // The backend websocket endpoint is at /ws/rooms/{room_id} for room messages
   // We will connect if a roomId is present. The backend's AUTH_OPTIONAL=True will allow connection.
-  const wsUrl = roomId ? `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/api/ws/reviews/${roomId}` : null;
+  const wsUrl = roomId ? `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws/rooms/${roomId}` : null;
   const { connectionStatus } = useWebSocket(wsUrl, handleNewMessage, null); // Passing null for the token
 
 

@@ -94,9 +94,9 @@ class Settings(BaseSettings):
     VITE_WS_BASE_URL: Optional[str] = None
 
     # --- Redis & Celery ---
-    REDIS_URL: str = "redis://redis:6379"  # Docker environment default
-    CELERY_BROKER_URL: str = "redis://redis:6379/0"
-    CELERY_RESULT_BACKEND: str = "redis://redis:6379/0"
+    REDIS_URL: Optional[str] = None  # Will be set from environment
+    CELERY_BROKER_URL: Optional[str] = None  # Will be set from environment
+    CELERY_RESULT_BACKEND: Optional[str] = None  # Will be set from environment
 
     # --- External APIs ---
     GOOGLE_API_KEY: Optional[str] = None

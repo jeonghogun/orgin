@@ -13,6 +13,7 @@ from app.api.dependencies import (
     AUTH_DEPENDENCY,
     get_rag_service,
     get_intent_service,
+    get_memory_service,
 )
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,7 @@ async def rag_query(
     user_info: Dict[str, str] = AUTH_DEPENDENCY,
     rag_service: RAGService = Depends(get_rag_service),  # pyright: ignore[reportCallInDefaultInitializer]
     intent_service: IntentService = Depends(get_intent_service),  # pyright: ignore[reportCallInDefaultInitializer]
+    memory_service = Depends(get_memory_service),  # pyright: ignore[reportCallInDefaultInitializer]
 ) -> Dict[str, Any]:
     """RAG 기반 질의응답"""
     try:
@@ -45,8 +47,9 @@ async def rag_query(
         entities = intent_result.get("entities", {})
 
         # RAG 응답 생성
+        memory_context = await memory_service.get_context(room_id, user_info["user_id"])
         response = await rag_service.generate_rag_response(
-            room_id, user_info["user_id"], query, intent, entities, "rag_query"
+            room_id, user_info["user_id"], query, memory_context, "rag_query"
         )
 
         return create_success_response(

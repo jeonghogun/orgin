@@ -124,3 +124,14 @@ class ReviewService:
                 question = "죄송합니다. 주제에 대해 조금 더 자세히 설명해주시겠어요?" # Fallback question
 
             return CreateReviewRoomInteractiveResponse(status="needs_more_context", question=question)
+
+
+# Global service instance
+review_service: ReviewService = None
+
+def get_review_service() -> ReviewService:
+    global review_service
+    if review_service is None:
+        from app.services.storage_service import get_storage_service
+        review_service = ReviewService(storage_service=get_storage_service())
+    return review_service

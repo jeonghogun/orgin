@@ -2,6 +2,7 @@ import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
 from app.api.dependencies import get_storage_service, require_auth_ws
 from app.services.storage_service import StorageService
+from app.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,8 @@ async def websocket_room_endpoint(websocket: WebSocket, room_id: str):
     try:
         user_id = await require_auth_ws(websocket)
         room = storage_service.get_room(room_id)
-        if not room or room.owner_id != user_id:
+        # Skip ownership check if AUTH_OPTIONAL is enabled
+        if not settings.AUTH_OPTIONAL and (not room or room.owner_id != user_id):
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             logger.warning(f"Auth failed for WS to room {room_id}: User {user_id} does not own room.")
             return
@@ -66,7 +68,8 @@ async def websocket_review_endpoint(websocket: WebSocket, review_id: str):
     try:
         user_id = await require_auth_ws(websocket)
         review = storage_service.get_review_meta(review_id)
-        if not review:
+        # Skip ownership check if AUTH_OPTIONAL is enabled
+        if not settings.AUTH_OPTIONAL and not review:
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             logger.warning(f"Auth failed for WS to review {review_id}: Review not found.")
             return

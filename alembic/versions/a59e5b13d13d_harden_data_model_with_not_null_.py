@@ -9,6 +9,13 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
+from sqlalchemy.types import UserDefinedType
+import pgvector
+
+class VectorType(UserDefinedType):
+    def get_col_spec(self, **kw):
+        return "VECTOR(1536)"
 
 
 # revision identifiers, used by Alembic.
@@ -30,7 +37,7 @@ def upgrade() -> None:
 
     with op.batch_alter_table('memories', schema=None) as batch_op:
         batch_op.alter_column('embedding',
-               existing_type=postgresql.VECTOR(1536),
+               existing_type=VectorType(),
                nullable=False)
 
     with op.batch_alter_table('user_profiles', schema=None) as batch_op:
@@ -58,7 +65,7 @@ def downgrade() -> None:
 
     with op.batch_alter_table('memories', schema=None) as batch_op:
         batch_op.alter_column('embedding',
-               existing_type=postgresql.VECTOR(1536),
+               existing_type=VectorType(),
                nullable=True)
 
     with op.batch_alter_table('rooms', schema=None) as batch_op:

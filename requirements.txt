@@ -41,3 +41,9 @@ aiohttp
 # Fact System V2 Dependencies
 prometheus-client
 uuid6
+
+# OpenTelemetry Dependencies
+opentelemetry-api
+opentelemetry-sdk
+opentelemetry-instrumentation-logging
+opentelemetry-exporter-otlp

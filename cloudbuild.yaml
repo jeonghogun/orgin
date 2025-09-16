@@ -1,0 +1,35 @@
+steps:
+  # Build the container image
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'gcr.io/$PROJECT_ID/origin-app:$BUILD_ID', '.']
+  
+  # Push the container image to Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/origin-app:$BUILD_ID']
+  
+  # Deploy container image to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'origin-app'
+      - '--image'
+      - 'gcr.io/$PROJECT_ID/origin-app:$BUILD_ID'
+      - '--region'
+      - 'asia-northeast3'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+      - '--port'
+      - '8000'
+      - '--memory'
+      - '1Gi'
+      - '--cpu'
+      - '1'
+      - '--max-instances'
+      - '10'
+      - '--set-env-vars'
+      - 'GCP_PROJECT_ID=$PROJECT_ID,CLOUD_STORAGE_BUCKET_NAME=origin-project-16f88-origin-storage-1758043718,SECRET_MANAGER_ENABLED=true,AUTH_OPTIONAL=true'
+      - '--set-secrets'
+      - 'DATABASE_URL=DATABASE_URL:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest,ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest,DB_ENCRYPTION_KEY=DB_ENCRYPTION_KEY:latest,CLOUD_SQL_PASSWORD=CLOUD_SQL_PASSWORD:latest'

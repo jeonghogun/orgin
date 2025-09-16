@@ -14,6 +14,12 @@ from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.types import UserDefinedType
+import pgvector
+
+class VectorType(UserDefinedType):
+    def get_col_spec(self, **kw):
+        return "VECTOR(1536)"
 
 # revision identifiers, used by Alembic.
 revision: str = '37ecae34152b'
@@ -52,7 +58,7 @@ def upgrade() -> None:
         sa.Column('role', sa.String(50), nullable=False),
         sa.Column('content', sa.Text(), nullable=False),
         sa.Column('timestamp', sa.BigInteger(), nullable=False),
-        sa.Column('embedding', postgresql.VECTOR(1536), nullable=True) if is_postgres else sa.Column('embedding', sa.Text(), nullable=True),
+        sa.Column('embedding', VectorType(), nullable=True) if is_postgres else sa.Column('embedding', sa.Text(), nullable=True),
         sa.ForeignKeyConstraint(['room_id'], ['rooms.room_id'], ondelete='CASCADE'),
         sa.PrimaryKeyConstraint('message_id')
     )
@@ -90,7 +96,7 @@ def upgrade() -> None:
         sa.Column('room_id', sa.String(255), nullable=False),
         sa.Column('key', sa.Text(), nullable=False),
         sa.Column('value', sa.Text(), nullable=False),
-        sa.Column('embedding', postgresql.VECTOR(1536), nullable=True) if is_postgres else sa.Column('embedding', sa.Text(), nullable=True),
+        sa.Column('embedding', VectorType(), nullable=True) if is_postgres else sa.Column('embedding', sa.Text(), nullable=True),
         sa.Column('importance', sa.Float(), nullable=True, server_default='1.0'),
         sa.Column('expires_at', sa.BigInteger(), nullable=True),
         sa.Column('created_at', sa.BigInteger(), nullable=False),

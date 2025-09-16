@@ -74,6 +74,9 @@ const ChatInput = ({ roomId, roomData, disabled = false, createRoomMutation, int
     resetState,
   } = useChatInputState();
 
+  const roomCreationRequest = useRoomCreationRequest();
+  const reviewRoomCreation = useReviewRoomCreation();
+
   const streamMutation = useMutation({
     mutationFn: streamMessageApi,
     onSuccess: () => {
@@ -176,8 +179,8 @@ const ChatInput = ({ roomId, roomData, disabled = false, createRoomMutation, int
       <form onSubmit={handleSubmit} className="flex-1 relative">
         <textarea
           key={`textarea-${roomId}-${roomCreationRequest?.active ? 'active' : 'inactive'}`}
-          value={message}
-          onChange={(e) => setMessage(e.target.value)}
+          value={inputValue}
+          onChange={handleInputChange}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault();
@@ -199,7 +202,7 @@ const ChatInput = ({ roomId, roomData, disabled = false, createRoomMutation, int
         />
         <button
           type="submit"
-          disabled={!message.trim() || !roomId || streamMutation.isPending || uploadMutation.isPending || disabled}
+          disabled={!inputValue.trim() || !roomId || streamMutation.isPending || uploadMutation.isPending || disabled}
           className="absolute right-3 top-1/2 -translate-y-1/2 p-2 bg-accent hover:bg-accent-hover text-white rounded-md transition-colors duration-150 focus-ring disabled:opacity-50 disabled:cursor-not-allowed"
         >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 2L11 13M22 2L15 22L11 13M22 2L2 9L11 13"/></svg>

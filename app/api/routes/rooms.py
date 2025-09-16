@@ -392,7 +392,7 @@ async def promote_memory_from_sub_room(
         raise AppError("INTERNAL_ERROR", "Failed to promote memories.")
 
 
-from app.services.review_service import get_review_service
+from app.services.review_service import get_review_service, ReviewService
 
 @router.post("/{parent_id}/create-review-room", response_model=CreateReviewRoomInteractiveResponse)
 async def create_review_room_interactive(
