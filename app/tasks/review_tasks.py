@@ -15,6 +15,7 @@ from app.models.schemas import Message, WebSocketMessage
 from app.models.review_schemas import LLMReviewInitialAnalysis, LLMReviewRebuttal, LLMReviewSynthesis, LLMFinalReport
 from app.services.redis_pubsub import redis_pubsub_manager
 from app.services.llm_strategy import llm_strategy_service, ProviderPanelistConfig
+from app.services.review_templates import build_final_report_message
 from app.services.prompt_service import prompt_service
 from app.utils.helpers import generate_id, get_current_timestamp
 from app.tasks.base_task import BaseTask
@@ -173,6 +174,8 @@ def run_initial_panel_turn(self: BaseTask, review_id: str, review_room_id: str, 
             review_id, review_room_id, 1, final_results, [], validation_model=LLMReviewInitialAnalysis
         )
 
+        storage_service.update_review(review_id, {"current_round": 1})
+
         redis_pubsub_manager.publish_sync(f"review_{review_id}", WebSocketMessage(type="status_update", review_id=review_id, payload={"status": "initial_turn_complete"}).model_dump_json())
         run_rebuttal_turn.delay(review_id, review_room_id, turn_outputs, [round_metrics], [p.model_dump() for p in successful_panelists], trace_id)
     except BudgetExceededError as e:
@@ -263,6 +266,8 @@ Summaries of competing Round 1 analyses:
         turn_outputs, round_metrics, successful_panelists = _process_turn_results(
             review_id, review_room_id, 2, final_results, all_metrics, validation_model=LLMReviewRebuttal
         )
+
+        storage_service.update_review(review_id, {"current_round": 2})
         
         all_metrics.append(round_metrics)
         redis_pubsub_manager.publish_sync(f"review_{review_id}", WebSocketMessage(type="status_update", review_id=review_id, payload={"status": "rebuttal_turn_complete"}).model_dump_json())
@@ -361,6 +366,8 @@ Summaries of competing Round 2 analyses:
         turn_outputs, round_metrics, successful_panelists = _process_turn_results(
             review_id, review_room_id, 3, final_results, all_metrics, validation_model=LLMReviewSynthesis
         )
+
+        storage_service.update_review(review_id, {"current_round": 3})
         
         all_metrics.append(round_metrics)
         redis_pubsub_manager.publish_sync(f"review_{review_id}", WebSocketMessage(type="status_update", review_id=review_id, payload={"status": "synthesis_turn_complete"}).model_dump_json())
@@ -397,6 +404,39 @@ def generate_consolidated_report(self: BaseTask, review_id: str, turn_3_outputs:
         final_report_json = json.loads(final_report_str)
         final_report_data = LLMFinalReport.model_validate(final_report_json)
         storage_service.save_final_report(review_id=review_id, report_data=final_report_data.model_dump())
+
+        review_meta = storage_service.get_review_meta(review_id)
+        if review_meta:
+            final_message_content = build_final_report_message(
+                review_meta.topic,
+                final_report_data.model_dump(),
+            )
+            try:
+                message = Message(
+                    message_id=generate_id(),
+                    room_id=review_meta.room_id,
+                    user_id="observer",
+                    role="assistant",
+                    content=final_message_content,
+                    timestamp=get_current_timestamp(),
+                )
+                storage_service.save_message(message)
+            except Exception as save_error:
+                logger.error(
+                    "Failed to persist final observer summary for review %s: %s",
+                    review_id,
+                    save_error,
+                    exc_info=True,
+                )
+            else:
+                redis_pubsub_manager.publish_sync(
+                    f"review_{review_id}",
+                    WebSocketMessage(
+                        type="new_message",
+                        review_id=review_id,
+                        payload=message.model_dump(),
+                    ).model_dump_json(),
+                )
 
         if settings.METRICS_ENABLED:
             total_tokens = sum(m.get("total_tokens", 0) for r in all_metrics for m in r if m)

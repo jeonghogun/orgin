@@ -241,6 +241,11 @@ class LLMService:
             return self.providers[default_provider]
         return self.providers[provider_name]
 
+    def get_available_providers(self) -> List[str]:
+        """Return a list of provider identifiers that are ready to serve requests."""
+        self._initialize_providers()
+        return list(self.providers.keys())
+
     # --- ASYNC METHODS for FastAPI ---
     async def invoke(self, model: str, system_prompt: str, user_prompt: str, request_id: str, response_format: str = "text", provider_name: str = "openai") -> Tuple[str, Dict[str, Any]]:
         return await self.invoke_with_retry(provider_name, model, system_prompt, user_prompt, request_id, response_format)
