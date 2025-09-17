@@ -146,6 +146,17 @@ class DatabaseService:
             cur.execute(query, params)
             return cur.rowcount
 
+    def execute_returning(
+        self, query: str, params: Optional[Tuple[Any, ...]] = None
+    ) -> List[Dict[str, Any]]:
+        """Execute a query that mutates data but also returns rows."""
+        with self.transaction(query_type="write") as cur:
+            cur.execute(query, params)
+            if cur.description:
+                columns = [desc[0] for desc in cur.description]
+                return [dict(zip(columns, row)) for row in cur.fetchall()]
+            return []
+
     def get_messages_for_promotion(self, room_id: str) -> List[Message]:
         """Get and decrypt all messages for a room from the database."""
         query = """

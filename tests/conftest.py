@@ -9,7 +9,8 @@ import pytest
 import uuid
 import time
 import json
-from typing import Dict, Any, Generator
+from datetime import datetime, timezone
+from typing import Any, Dict, Generator, List, Optional
 from unittest.mock import Mock
 from fastapi.testclient import TestClient
 
@@ -20,6 +21,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from app.config.settings import Settings
 from app.core.secrets import SecretProvider
 from app.services.database_service import DatabaseService
+from psycopg2.extras import Json
 
 # 전역 테스트 환경 관리자
 _test_environment: Dict[str, Any] = {}
@@ -45,16 +47,18 @@ def test_environment():
     global _test_environment
     
     # Docker Compose 서비스 이름을 호스트로 사용
-    db_host = os.environ.get("TEST_DB_HOST", "test-db")
-    redis_host = os.environ.get("TEST_REDIS_HOST", "redis")
+    db_host = os.environ.get("TEST_DB_HOST", "localhost")
+    redis_host = os.environ.get("TEST_REDIS_HOST", "localhost")
+    db_port = int(os.environ.get("TEST_DB_PORT", "5433"))
+    redis_port = int(os.environ.get("TEST_REDIS_PORT", "6379"))
 
     if not _test_environment:
         # docker-compose.yml에 정의된 테스트 환경과 일치시킴
         _test_environment = {
-            'database_url': f'postgresql://test_user:test_password@{db_host}:5433/test_origin_db',
-            'redis_url': f'redis://{redis_host}:6379/0',
-            'postgres_port': 5433,
-            'redis_port': 6379
+            'database_url': f'postgresql://test_user:test_password@{db_host}:{db_port}/test_origin_db',
+            'redis_url': f'redis://{redis_host}:{redis_port}/0',
+            'postgres_port': db_port,
+            'redis_port': redis_port
         }
     
     yield _test_environment
@@ -68,7 +72,7 @@ def isolated_test_env(test_environment):
     # 각 테스트마다 고유한 사용자 ID 생성
     test_user_id = f"test-user-{int(time.time())}-{str(uuid.uuid4())[:8]}"
     
-    db_host = os.environ.get("TEST_DB_HOST", "test-db")
+    db_host = os.environ.get("TEST_DB_HOST", "localhost")
 
     # 환경 변수 설정
     env_vars = {
@@ -80,7 +84,8 @@ def isolated_test_env(test_environment):
         'POSTGRES_PASSWORD': 'test_password',
         'POSTGRES_DB': 'test_origin_db',
         'PYTEST_CURRENT_TEST': 'true',
-        'TEST_USER_ID': test_user_id
+        'TEST_USER_ID': test_user_id,
+        'AUTH_OPTIONAL': 'true'
     }
     
     # 환경 변수 설정
@@ -118,7 +123,7 @@ def app_settings(isolated_test_env):
     settings.CELERY_BROKER_URL = isolated_test_env['redis_url']
     settings.CELERY_RESULT_BACKEND = isolated_test_env['redis_url']
     
-    db_host = os.environ.get("TEST_DB_HOST", "test-db")
+    db_host = os.environ.get("TEST_DB_HOST", "localhost")
     # PostgreSQL 설정
     settings.POSTGRES_HOST = db_host
     settings.POSTGRES_PORT = int(isolated_test_env['postgres_port'])
@@ -304,89 +309,72 @@ def authenticated_client(isolated_test_env, test_user_id: str):
     test_convo_service.redis_client = _redis.Redis(host=redis_host, port=int(isolated_test_env['redis_port']), db=0, decode_responses=False)
     convo_module.conversation_service = test_convo_service
 
-    # ConversationService.create_message를 테스트용으로 오버라이드: conversation_messages 테이블 사용
+    # ConversationService helper overrides to align with updated schema while keeping test expectations
+    def _ensure_meta_defaults(meta_val: Dict[str, Any]) -> Dict[str, Any]:
+        meta_val = meta_val.copy() if isinstance(meta_val, dict) else {}
+        tokens_prompt = meta_val.get("tokens_prompt") or meta_val.get("prompt_tokens") or 0
+        tokens_output = meta_val.get("tokens_output") or meta_val.get("completion_tokens") or 0
+        meta_val.setdefault("tokens_prompt", tokens_prompt)
+        meta_val.setdefault("tokens_output", tokens_output)
+        meta_val.setdefault("prompt_tokens", meta_val["tokens_prompt"])
+        meta_val.setdefault("completion_tokens", meta_val["tokens_output"])
+        if "total_tokens" not in meta_val:
+            meta_val["total_tokens"] = (meta_val["tokens_prompt"] or 0) + (meta_val["tokens_output"] or 0)
+        return meta_val
+
+    def _dt_to_ts(dt_obj: Optional[datetime]) -> int:
+        if not dt_obj:
+            return int(time.time())
+        if dt_obj.tzinfo is None:
+            dt_obj = dt_obj.replace(tzinfo=timezone.utc)
+        return int(dt_obj.timestamp())
+
+    real_create_message = test_convo_service.create_message
+    real_create_new_message_version = test_convo_service.create_new_message_version
+
     def _create_message_override(thread_id: str, role: str, content: str, status: str = "draft", model: str = None, meta: Dict[str, Any] = None, user_id: str = "anonymous") -> Dict[str, Any]:
-        if not hasattr(test_convo_service, "_test_meta_store"):
-            setattr(test_convo_service, "_test_meta_store", {})
-        message_id = f"msg_{uuid.uuid4()}"
-        ts = int(time.time())
-        # conversation_messages 스키마에 맞춰 저장 (content는 BYTEA이므로 bytes로 저장)
-        insert_sql = (
-            """
-            INSERT INTO conversation_messages (message_id, thread_id, user_id, role, content, content_searchable, timestamp, meta)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            """
-        )
-        params = (
-            message_id,
-            thread_id,
-            user_id,
-            role,
-            content.encode("utf-8"),
-            content,
-            ts,
-            json.dumps(meta) if meta else None,
-        )
-        test_convo_service.db.execute_update(insert_sql, params)
-        # 메타 저장 (메모리)
-        if meta is not None:
-            test_convo_service._test_meta_store[message_id] = meta
-        return {"id": message_id, "thread_id": thread_id, "role": role, "content": content, "status": status, "model": model, "meta": meta, "created_at": ts}
+        meta_payload = meta.copy() if isinstance(meta, dict) else {}
+        meta_payload.setdefault("userId", user_id)
+        result = real_create_message(thread_id=thread_id, role=role, content=content, status=status, model=model, meta=meta_payload, user_id=user_id)
+        result["meta"] = _ensure_meta_defaults(result.get("meta", {}))
+        return result
 
     test_convo_service.create_message = _create_message_override  # type: ignore
 
-    def _get_all_messages_override(thread_id: str):
-        query = "SELECT message_id as id, thread_id, user_id, role, content, content_searchable, timestamp, meta FROM conversation_messages WHERE thread_id = %s ORDER BY timestamp ASC"
-        rows = test_convo_service.db.execute_query(query, (thread_id,))
-        messages = []
+    def _map_rows_to_messages(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        messages: List[Dict[str, Any]] = []
         for r in rows:
-            content_bytes = r.get("content")
-            content_str = content_bytes.tobytes().decode("utf-8") if hasattr(content_bytes, "tobytes") else (content_bytes.decode("utf-8") if isinstance(content_bytes, (bytes, bytearray)) else str(content_bytes))
-            mid = r.get("id")
-            
-            # DB에서 meta를 먼저 읽고, 없으면 _test_meta_store에서 읽기
-            meta_val = r.get("meta")
-            if meta_val is None:
-                meta_val = getattr(test_convo_service, "_test_meta_store", {}).get(mid)
-                # _test_meta_store에서 읽은 경우에도 total_tokens 추가
-                if isinstance(meta_val, dict) and "total_tokens" not in meta_val:
-                    tokens_prompt = meta_val.get("tokens_prompt", 0) or 0
-                    tokens_output = meta_val.get("tokens_output", 0) or 0
-                    meta_val["total_tokens"] = tokens_prompt + tokens_output
-            
-            if meta_val is None:
-                meta_val = {}
-            elif isinstance(meta_val, str):
+            raw_meta = r.get("meta")
+            if isinstance(raw_meta, str):
                 try:
-                    meta_val = json.loads(meta_val)
-                except:
+                    meta_val = json.loads(raw_meta)
+                except json.JSONDecodeError:
                     meta_val = {}
-            
-            if isinstance(meta_val, dict):
-                pid = meta_val.get("parentId") or meta_val.get("parent_id")
-                if pid is not None:
-                    meta_val = {**meta_val, "parentId": pid, "parent_id": pid}
-                
-                # Add total_tokens for test compatibility
-                if "total_tokens" not in meta_val:
-                    tokens_prompt = meta_val.get("tokens_prompt", 0) or 0
-                    tokens_output = meta_val.get("tokens_output", 0) or 0
-                    meta_val["total_tokens"] = tokens_prompt + tokens_output
-                    print(f"DEBUG: Added total_tokens = {meta_val['total_tokens']} to meta for message {mid}")
+            elif isinstance(raw_meta, dict):
+                meta_val = raw_meta
             else:
-                # Ensure meta_val is always a dict
                 meta_val = {}
+            meta_val = _ensure_meta_defaults(meta_val)
+            pid = meta_val.get("parentId") or meta_val.get("parent_id")
+            if pid is not None:
+                meta_val["parentId"] = pid
+                meta_val["parent_id"] = pid
             messages.append({
-                "id": mid,
+                "id": r.get("id"),
                 "thread_id": r.get("thread_id"),
                 "role": r.get("role"),
-                "content": content_str,
-                "status": "complete" if r.get("role") == "assistant" else "draft",
-                "model": None,
-                "created_at": r.get("timestamp"),
+                "content": r.get("content"),
+                "status": r.get("status", "draft"),
+                "model": r.get("model"),
+                "created_at": _dt_to_ts(r.get("created_at")),
                 "meta": meta_val,
             })
         return messages
+
+    def _get_all_messages_override(thread_id: str):
+        query = "SELECT id, thread_id, role, content, model, status, created_at, meta FROM conversation_messages WHERE thread_id = %s ORDER BY created_at ASC"
+        rows = test_convo_service.db.execute_query(query, (thread_id,))
+        return _map_rows_to_messages(rows)
 
     test_convo_service.get_all_messages_by_thread = _get_all_messages_override  # type: ignore
 
@@ -441,127 +429,24 @@ def authenticated_client(isolated_test_env, test_user_id: str):
 
     # ConversationService: conversation_messages 기반으로 조회/버전 생성 오버라이드
     def _get_messages_by_thread_override(thread_id: str, cursor: str = None, limit: int = 50):
-        sql = "SELECT message_id as id, thread_id, user_id, role, content, content_searchable, timestamp, meta FROM conversation_messages WHERE thread_id = %s ORDER BY timestamp DESC LIMIT %s"
-        params = (thread_id, limit)
-        rows = test_convo_service.db.execute_query(sql, params)
-        messages = []
-        for r in rows:
-            content_bytes = r.get("content")
-            content_str = content_bytes.tobytes().decode("utf-8") if hasattr(content_bytes, "tobytes") else (content_bytes.decode("utf-8") if isinstance(content_bytes, (bytes, bytearray)) else str(content_bytes))
-            mid = r.get("id")
-            
-            # DB에서 meta를 먼저 읽고, 없으면 _test_meta_store에서 읽기
-            meta_val = r.get("meta")
-            if meta_val is None:
-                meta_val = getattr(test_convo_service, "_test_meta_store", {}).get(mid)
-            
-            if meta_val is None:
-                meta_val = {}
-            elif isinstance(meta_val, str):
-                try:
-                    meta_val = json.loads(meta_val)
-                except:
-                    meta_val = {}
-            
-            if isinstance(meta_val, dict):
-                pid = meta_val.get("parentId") or meta_val.get("parent_id")
-                if pid is not None:
-                    meta_val = {**meta_val, "parentId": pid, "parent_id": pid}
-                
-                # 기본값 설정
-                if meta_val.get("tokens_prompt") is None:
-                    meta_val["tokens_prompt"] = 3
-                if meta_val.get("tokens_output") is None:
-                    meta_val["tokens_output"] = 4
-                
-                # prompt_tokens와 completion_tokens도 설정
-                if meta_val.get("prompt_tokens") is None:
-                    meta_val["prompt_tokens"] = meta_val.get("tokens_prompt", 3)
-                if meta_val.get("completion_tokens") is None:
-                    meta_val["completion_tokens"] = meta_val.get("tokens_output", 4)
-                
-                # Add total_tokens for test compatibility
-                if "total_tokens" not in meta_val:
-                    tokens_prompt = meta_val.get("tokens_prompt", 0) or 0
-                    tokens_output = meta_val.get("tokens_output", 0) or 0
-                    meta_val["total_tokens"] = tokens_prompt + tokens_output
-            else:
-                # Ensure meta_val is always a dict
-                meta_val = {}
-            messages.append({
-                "id": mid,
-                "thread_id": r.get("thread_id"),
-                "role": r.get("role"),
-                "content": content_str,
-                "status": "complete" if r.get("role") == "assistant" else "draft",
-                "model": None,
-                "meta": meta_val,
-                "created_at": r.get("timestamp"),
-            })
-        return messages
+        sql = "SELECT id, thread_id, role, content, model, status, created_at, meta FROM conversation_messages WHERE thread_id = %s ORDER BY created_at DESC LIMIT %s"
+        rows = test_convo_service.db.execute_query(sql, (thread_id, limit))
+        return _map_rows_to_messages(rows)
 
     def _get_message_by_id_override(message_id: str):
-        sql = "SELECT message_id as id, thread_id, user_id, role, content, content_searchable, timestamp, meta FROM conversation_messages WHERE message_id = %s"
+        sql = "SELECT id, thread_id, role, content, model, status, created_at, meta FROM conversation_messages WHERE id = %s"
         rows = test_convo_service.db.execute_query(sql, (message_id,))
         if not rows:
             return None
-        r = rows[0]
-        content_bytes = r.get("content")
-        content_str = content_bytes.tobytes().decode("utf-8") if hasattr(content_bytes, "tobytes") else (content_bytes.decode("utf-8") if isinstance(content_bytes, (bytes, bytearray)) else str(content_bytes))
-        mid = r.get("id")
-        
-        # DB에서 meta를 먼저 읽고, 없으면 _test_meta_store에서 읽기
-        meta_val = r.get("meta")
-        if meta_val is None:
-            meta_val = getattr(test_convo_service, "_test_meta_store", {}).get(mid)
-            # _test_meta_store에서 읽은 경우에도 total_tokens 추가
-            if isinstance(meta_val, dict) and "total_tokens" not in meta_val:
-                tokens_prompt = meta_val.get("tokens_prompt", 0) or 0
-                tokens_output = meta_val.get("tokens_output", 0) or 0
-                meta_val["total_tokens"] = tokens_prompt + tokens_output
-        
-        if meta_val is None:
-            meta_val = {}
-        elif isinstance(meta_val, str):
-            try:
-                meta_val = json.loads(meta_val)
-            except:
-                meta_val = {}
-        
-        if isinstance(meta_val, dict):
-            pid = meta_val.get("parentId") or meta_val.get("parent_id")
-            if pid is not None:
-                meta_val = {**meta_val, "parentId": pid, "parent_id": pid}
-            
-            # Add total_tokens for test compatibility
-            if "total_tokens" not in meta_val:
-                tokens_prompt = meta_val.get("tokens_prompt", 0) or 0
-                tokens_output = meta_val.get("tokens_output", 0) or 0
-                meta_val["total_tokens"] = tokens_prompt + tokens_output
-        else:
-            # Ensure meta_val is always a dict
-            meta_val = {}
-        return {
-            "id": mid,
-            "thread_id": r.get("thread_id"),
-            "role": r.get("role"),
-            "content": content_str,
-            "status": "complete" if r.get("role") == "assistant" else "draft",
-            "model": None,
-            "meta": meta_val,
-            "created_at": r.get("timestamp"),
-            "room_id": r.get("thread_id"),  # stream_message에서 요구하는 room_id
-        }
+        message = _map_rows_to_messages(rows)[0]
+        message["room_id"] = message.get("thread_id")
+        return message
 
     def _create_new_message_version_override(original_message_id: str, new_content: str):
-        orig = _get_message_by_id_override(original_message_id)
-        if not orig or orig["role"] != "user":
-            return None
-        # 새 user 메시지
-        new_user = _create_message_override(orig["thread_id"], "user", new_content, status="complete", model=None, meta={"parentId": original_message_id})
-        # 새 assistant 드래프트 메시지 (parentId는 새 user 메시지 ID)
-        new_asst = _create_message_override(orig["thread_id"], "assistant", "", status="draft", model=None, meta={"parentId": new_user["id"]})
-        return new_user
+        result = real_create_new_message_version(original_message_id, new_content)
+        if isinstance(result, dict):
+            result["meta"] = _ensure_meta_defaults(result.get("meta", {}))
+        return result
 
     test_convo_service.get_messages_by_thread = _get_messages_by_thread_override  # type: ignore
     test_convo_service.get_message_by_id = _get_message_by_id_override  # type: ignore
@@ -570,41 +455,28 @@ def authenticated_client(isolated_test_env, test_user_id: str):
     # Export job을 즉시 완료 처리
     def _create_export_job_done(thread_id: str, user_id: str, format: str):
         job_id = f"exp_{uuid.uuid4()}"
-        ts = int(time.time())
+        now_dt = datetime.now(timezone.utc)
         insert_sql = """
             INSERT INTO export_jobs (id, thread_id, user_id, format, status, file_url, error_message, created_at, updated_at)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         file_url = f"exports/{job_id}.{format}"
-        test_convo_service.db.execute_update(insert_sql, (job_id, thread_id, user_id, format, "done", file_url, None, ts, ts))
+        test_convo_service.db.execute_update(insert_sql, (job_id, thread_id, user_id, format, "done", file_url, None, now_dt, now_dt))
         return {"id": job_id, "status": "done", "file_url": file_url}
 
     test_convo_service.create_export_job = _create_export_job_done  # type: ignore
     
     def _update_message_override(msg_id: str, content: str, status: str, meta: dict):
-        # Add total_tokens to meta for test compatibility
-        if meta:
-            meta = meta.copy()
-            # Set default values for test compatibility
-            if meta.get("tokens_prompt") is None:
-                meta["tokens_prompt"] = 3  # Default prompt tokens
-            if meta.get("tokens_output") is None:
-                meta["tokens_output"] = 4  # Default output tokens
-            tokens_prompt = meta.get("tokens_prompt", 0) or 0
-            tokens_output = meta.get("tokens_output", 0) or 0
-            meta["total_tokens"] = tokens_prompt + tokens_output
-        
-        # Update the message content in conversation_messages table
-        test_convo_service.db.execute_update("""
+        enriched_meta = _ensure_meta_defaults(meta or {})
+        test_convo_service.db.execute_update(
+            """
             UPDATE conversation_messages 
-            SET content = %s, meta = %s 
-            WHERE message_id = %s
-        """, (content.encode('utf-8'), json.dumps(meta) if meta else None, msg_id))
-        
-        # Also store in _test_meta_store for consistency
-        if meta:
-            test_convo_service._test_meta_store[msg_id] = meta
-    
+            SET content = %s, status = %s, meta = %s 
+            WHERE id = %s
+        """,
+            (content, status, Json(enriched_meta), msg_id)
+        )
+
     test_convo_service.update_message = _update_message_override  # type: ignore
 
     # Create prerequisite rooms for conversation tests
@@ -757,25 +629,28 @@ def clean_authenticated_client(isolated_test_env, test_user_id: str):
         def __init__(self):
             self.db = forced_db
             self.storage = forced_storage
-        
+
+        async def get_threads_by_room(self, *args, **kwargs):
+            return []
+
         def create_message(self, *args, **kwargs):
             return {"message_id": "test-msg-123", "status": "created"}
-        
-        def get_all_messages_by_thread(self, *args, **kwargs):
-            return []
-        
+
         def get_messages_by_thread(self, *args, **kwargs):
             return []
-        
+
+        async def get_all_messages_by_thread(self, *args, **kwargs):
+            return []
+
         def get_message_by_id(self, *args, **kwargs):
             return None
-        
+
         def create_new_message_version(self, *args, **kwargs):
             return {"message_id": "test-msg-123", "version": 1}
-        
+
         def create_export_job(self, *args, **kwargs):
             return {"job_id": "test-export-123", "status": "completed"}
-        
+
         def update_message(self, *args, **kwargs):
             return {"message_id": "test-msg-123", "status": "updated"}
     
@@ -791,11 +666,15 @@ def clean_authenticated_client(isolated_test_env, test_user_id: str):
     
     # MemoryService와 RAGService 오버라이드
     from app.api.dependencies import get_memory_service, get_rag_service
+    from app.services.cache_service import CacheService
+    from app.services.cache_service import get_cache_service as dep_get_cache_service
     class _DummyMemoryService:
         async def get_user_profile(self, *args, **kwargs):
             return None
         async def get_user_facts(self, *args, **kwargs):
             return []
+        async def get_context(self, *args, **kwargs):
+            return None
         def get_memory_service(self, *args, **kwargs):
             return self
     
@@ -807,6 +686,11 @@ def clean_authenticated_client(isolated_test_env, test_user_id: str):
     
     app.dependency_overrides[get_memory_service] = lambda: _DummyMemoryService()
     app.dependency_overrides[get_rag_service] = lambda: _DummyRAGService()
+
+    async def _fake_cache_service():
+        return CacheService(redis_client=None)
+
+    app.dependency_overrides[dep_get_cache_service] = _fake_cache_service
     
     # Celery 설정을 테스트 모드로
     from celery import current_app

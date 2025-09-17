@@ -3,7 +3,7 @@ import json
 import logging
 import math
 from datetime import datetime, timezone
-from typing import List, Optional, Dict, Any, Tuple
+from typing import List, Optional, Dict, Any, Tuple, Union
 
 import openai
 from rank_bm25 import BM25Okapi
@@ -11,6 +11,7 @@ from app.config.settings import settings
 from app.services.database_service import DatabaseService, get_database_service
 from app.services.hybrid_search_service import get_hybrid_search_service
 from app.utils.helpers import generate_id
+from app.models.memory_schemas import ConversationContext
 
 logger = logging.getLogger(__name__)
 
@@ -152,7 +153,7 @@ class RAGService:
         return dot_product / (magnitude1 * magnitude2)
 
 
-    async def _get_rag_prompt_and_context(self, user_message: str, room_id: str, memory_context: List[Dict[str, Any]]) -> Tuple[str, str]:
+    async def _get_rag_prompt_and_context(self, user_message: str, room_id: str, memory_context: Union[List[Dict[str, Any]], ConversationContext, None]) -> Tuple[str, str]:
         """Helper to build the RAG prompt and return the context string."""
         rag_context = await self.get_context_from_attachments(user_message, room_id)
 
@@ -160,9 +161,21 @@ class RAGService:
         if rag_context:
             prompt_parts.append(f"Context from documents:\n{rag_context}")
 
-        if memory_context:
-            memory_text = "\n".join([f"- {item.get('content', '')}" for item in memory_context])
-            prompt_parts.append(f"Relevant memories:\n{memory_text}")
+        if isinstance(memory_context, ConversationContext):
+            memory_lines: List[str] = []
+            if memory_context.summary:
+                memory_lines.append(memory_context.summary)
+            if memory_context.key_topics:
+                memory_lines.extend(memory_context.key_topics)
+            if memory_context.sentiment and memory_context.sentiment != "neutral":
+                memory_lines.append(f"Sentiment: {memory_context.sentiment}")
+            if memory_lines:
+                formatted = "\n".join(f"- {line}" for line in memory_lines if line)
+                prompt_parts.append(f"Relevant memories:\n{formatted}")
+        elif isinstance(memory_context, list) and memory_context:
+            memory_text = "\n".join([f"- {item.get('content', '')}" for item in memory_context if item.get('content')])
+            if memory_text.strip():
+                prompt_parts.append(f"Relevant memories:\n{memory_text}")
 
         prompt_parts.append(f"User message: {user_message}")
 
@@ -173,7 +186,7 @@ class RAGService:
 
     async def generate_rag_response(
         self, room_id: str, user_id: str, user_message: str,
-        memory_context: List[Dict[str, Any]], message_id: str
+        memory_context: Union[List[Dict[str, Any]], ConversationContext, None], message_id: str
     ) -> str:
         """Generates a standard, non-streaming RAG response."""
         try:
@@ -196,7 +209,7 @@ class RAGService:
 
     async def generate_rag_response_stream(
         self, room_id: str, user_id: str, user_message: str,
-        memory_context: List[Dict[str, Any]], message_id: str
+        memory_context: Union[List[Dict[str, Any]], ConversationContext, None], message_id: str
     ):
         """Generates a streaming RAG response."""
         try:

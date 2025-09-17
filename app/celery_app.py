@@ -15,7 +15,7 @@ celery_app = Celery(
     "tasks",
     broker=settings.REDIS_URL,
     backend=settings.REDIS_URL,
-    include=["app.tasks.review_tasks", "app.tasks.persona_tasks"],
+    include=["app.tasks.review_tasks", "app.tasks.persona_tasks", "app.tasks.fact_tasks", "app.tasks.memory_tasks", "app.tasks.kpi_tasks", "app.tasks.embedding_tasks"],
     Task=ContextTask,  # Use the custom task class
 )
 

@@ -68,16 +68,15 @@ CREATE INDEX IF NOT EXISTS idx_memories_user_id ON memories(user_id);
 CREATE INDEX IF NOT EXISTS idx_memories_embedding ON memories USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
 CREATE INDEX IF NOT EXISTS idx_messages_embedding ON messages USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
 
--- Create conversation_threads table
 CREATE TABLE IF NOT EXISTS conversation_threads (
     id VARCHAR(255) PRIMARY KEY,
-    room_id VARCHAR(255) NOT NULL REFERENCES rooms(room_id) ON DELETE CASCADE,
+    sub_room_id VARCHAR(255) NOT NULL REFERENCES rooms(room_id) ON DELETE CASCADE,
     user_id VARCHAR(255) NOT NULL,
-    title VARCHAR(500),
-    pinned BOOLEAN DEFAULT FALSE,
-    archived BOOLEAN DEFAULT FALSE,
-    created_at BIGINT NOT NULL,
-    updated_at BIGINT NOT NULL
+    title VARCHAR(500) NOT NULL,
+    pinned BOOLEAN NOT NULL DEFAULT FALSE,
+    archived BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- Create user_profiles table
@@ -93,55 +92,62 @@ CREATE TABLE IF NOT EXISTS user_profiles (
     auto_fact_extraction_enabled BOOLEAN NOT NULL DEFAULT TRUE
 );
 
--- Create conversation_messages table
 CREATE TABLE IF NOT EXISTS conversation_messages (
-    message_id VARCHAR(255) PRIMARY KEY,
+    id VARCHAR(255) PRIMARY KEY,
     thread_id VARCHAR(255) NOT NULL REFERENCES conversation_threads(id) ON DELETE CASCADE,
-    user_id VARCHAR(255) NOT NULL,
     role VARCHAR(50) NOT NULL,
-    content BYTEA NOT NULL,
-    content_searchable TEXT NOT NULL,
-    timestamp BIGINT NOT NULL,
-    embedding VECTOR(1536),
-    meta TEXT,
-    ts TSVECTOR GENERATED ALWAYS AS (to_tsvector('simple', COALESCE(content_searchable, ''))) STORED
+    content TEXT NOT NULL,
+    model VARCHAR(255),
+    status VARCHAR(50) NOT NULL DEFAULT 'draft',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    meta JSONB,
+    content_tsvector TSVECTOR
 );
 
--- Create attachments table
 CREATE TABLE IF NOT EXISTS attachments (
-    attachment_id VARCHAR(255) PRIMARY KEY,
-    thread_id VARCHAR(255) NOT NULL REFERENCES conversation_threads(id) ON DELETE CASCADE,
-    filename VARCHAR(500) NOT NULL,
-    content_type VARCHAR(100) NOT NULL,
-    file_size BIGINT NOT NULL,
-    file_path VARCHAR(1000) NOT NULL,
-    created_at BIGINT NOT NULL
+    id VARCHAR(255) PRIMARY KEY,
+    kind VARCHAR(50) NOT NULL,
+    name VARCHAR(500) NOT NULL,
+    mime VARCHAR(100) NOT NULL,
+    size BIGINT NOT NULL,
+    url VARCHAR(1000) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Create additional indexes
 CREATE INDEX IF NOT EXISTS idx_reviews_room_id ON reviews(room_id);
-CREATE INDEX IF NOT EXISTS idx_conversation_threads_room_id ON conversation_threads(room_id);
+CREATE INDEX IF NOT EXISTS idx_conversation_threads_sub_room_id ON conversation_threads(sub_room_id);
 CREATE INDEX IF NOT EXISTS idx_conversation_threads_created_at ON conversation_threads(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_conversation_threads_pinned_archived ON conversation_threads(pinned, archived);
 CREATE INDEX IF NOT EXISTS idx_user_profiles_user_id ON user_profiles(user_id);
 CREATE INDEX IF NOT EXISTS idx_conversation_messages_thread_id ON conversation_messages(thread_id);
-CREATE INDEX IF NOT EXISTS idx_conversation_messages_ts ON conversation_messages USING gin(ts);
-CREATE INDEX IF NOT EXISTS idx_attachments_thread_id ON attachments(thread_id);
+CREATE INDEX IF NOT EXISTS idx_conversation_messages_created_at ON conversation_messages(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_conversation_messages_content_tsvector ON conversation_messages USING GIN (content_tsvector);
 
--- Create export_jobs table for async export flow
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger WHERE tgname = 'tsvector_update'
+    ) THEN
+        CREATE TRIGGER tsvector_update BEFORE INSERT OR UPDATE
+        ON conversation_messages FOR EACH ROW EXECUTE PROCEDURE
+        tsvector_update_trigger(content_tsvector, 'pg_catalog.english', content);
+    END IF;
+END$$;
+
 CREATE TABLE IF NOT EXISTS export_jobs (
     id VARCHAR(255) PRIMARY KEY,
     thread_id VARCHAR(255) NOT NULL REFERENCES conversation_threads(id) ON DELETE CASCADE,
     user_id VARCHAR(255) NOT NULL,
     format VARCHAR(20) NOT NULL,
-    status VARCHAR(50) NOT NULL,
+    status VARCHAR(50) NOT NULL DEFAULT 'queued',
     file_url TEXT,
     error_message TEXT,
-    created_at BIGINT NOT NULL,
-    updated_at BIGINT NOT NULL
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_export_jobs_thread_id ON export_jobs(thread_id);
+CREATE INDEX IF NOT EXISTS idx_export_jobs_user_id ON export_jobs(user_id);
 
 -- Create review_metrics table
 CREATE TABLE IF NOT EXISTS review_metrics (

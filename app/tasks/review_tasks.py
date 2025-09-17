@@ -220,12 +220,14 @@ Opportunities:
             ]
 
             # Construct the context as described in the README
+            competitor_separator = "\n\n---\n\n"
+            competitor_section = competitor_separator.join(competitor_summaries)
             rebuttal_context = f"""Your Round 1 analysis (full text):
 {json.dumps(own_turn_output, indent=2)}
 
 ---
 Summaries of competing Round 1 analyses:
-{"\n\n---\n\n".join(competitor_summaries)}"""
+{competitor_section}"""
 
             prompt = prompt_service.get_prompt(
                 "review_rebuttal",

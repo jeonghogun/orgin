@@ -2,6 +2,7 @@
 Shared API Dependencies
 """
 
+import logging
 from typing import Dict, Optional, Any, Callable, Type
 from fastapi import HTTPException, Request, Depends, WebSocket, WebSocketDisconnect, status
 from firebase_admin import auth
@@ -24,6 +25,9 @@ from app.services.intent_classifier_service import IntentClassifierService
 from app.services.background_task_service import BackgroundTaskService
 from app.core.secrets import SecretProvider, env_secrets_provider
 import redis
+
+
+logger = logging.getLogger(__name__)
 
 
 # --- Service Singletons ---
@@ -149,14 +153,29 @@ def get_redis_client() -> redis.Redis:
     """Dependency to get the Redis client instance."""
     global _redis_client
     if _redis_client is None:
-        _redis_client = redis.from_url(settings.REDIS_URL)
+        redis_url = settings.REDIS_URL
+        if not redis_url:
+            logger.warning("REDIS_URL is not configured; cache features are disabled.")
+            _redis_client = None
+        else:
+            try:
+                _redis_client = redis.from_url(redis_url)
+            except Exception as redis_error:
+                logger.warning(
+                    "Failed to initialize Redis client from %s: %s",
+                    redis_url,
+                    redis_error,
+                    exc_info=True,
+                )
+                _redis_client = None
     return _redis_client
 
 def get_cache_service() -> CacheService:
     """Dependency to get the CacheService instance."""
     global _cache_service
     if _cache_service is None:
-        _cache_service = CacheService(redis_client=get_redis_client())
+        redis_client = get_redis_client()
+        _cache_service = CacheService(redis_client=redis_client)
     return _cache_service
 
 

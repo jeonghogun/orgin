@@ -1,7 +1,10 @@
+import asyncio
+from datetime import datetime, timezone
+from unittest.mock import MagicMock
+
 import pytest
 import unittest
-from unittest.mock import MagicMock
-import asyncio
+
 from app.services.conversation_service import ConversationService
 from app.models.conversation_schemas import ConversationThreadCreate
 
@@ -10,6 +13,7 @@ def mock_db_service():
     db = MagicMock()
     db.execute_query = MagicMock()
     db.execute_update = MagicMock()
+    db.execute_returning = MagicMock()
     return db
 
 @pytest.fixture
@@ -24,15 +28,27 @@ def conversation_service(monkeypatch, mock_db_service, mock_redis_client):
 
 def test_create_thread(conversation_service, mock_db_service):
     thread_data = ConversationThreadCreate(title="Test Thread")
+    now_dt = datetime.now(timezone.utc)
+    mock_db_service.execute_returning.return_value = [{
+        "id": "thr_abc",
+        "sub_room_id": "sub123",
+        "user_id": "user456",
+        "title": "Test Thread",
+        "pinned": False,
+        "archived": False,
+        "created_at": now_dt,
+        "updated_at": now_dt,
+    }]
+
     result = conversation_service.create_thread(room_id="sub123", user_id="user456", thread_data=thread_data)
 
-    mock_db_service.execute_update.assert_called_once()
-    args, _ = mock_db_service.execute_update.call_args
-    query, params = args[0], args[1]
+    mock_db_service.execute_returning.assert_called_once()
+    insert_args, _ = mock_db_service.execute_returning.call_args
+    insert_query, insert_params = insert_args[0], insert_args[1]
 
-    assert "INSERT INTO conversation_threads" in query
-    assert params[1] == "sub123"
-    # Note: user_id is not stored in the threads table in the current implementation, but we check the parameter passing
+    assert "INSERT INTO conversation_threads" in insert_query
+    assert insert_params[1] == "sub123"
+    mock_db_service.execute_update.assert_called_once()
     assert result.title == "Test Thread"
 
 def test_get_threads_by_room_with_filters(conversation_service, mock_db_service):
@@ -45,8 +61,8 @@ def test_get_threads_by_room_with_filters(conversation_service, mock_db_service)
     query, params = args[0], args[1]
 
     assert "ILIKE %s" in query
-    assert "is_pinned = %s" in query
-    assert "is_archived = %s" in query
+    assert "pinned = %s" in query
+    assert "archived = %s" in query
     assert params == ("sub123", "%search%", True, False)
 
 def test_increment_token_usage(conversation_service, mock_redis_client):
@@ -83,6 +99,17 @@ def test_create_message(conversation_service, mock_db_service):
     """
     Test that create_message constructs the correct SQL query.
     """
+    now_dt = datetime.now(timezone.utc)
+    mock_db_service.execute_returning.return_value = [{
+        "id": "msg_123",
+        "thread_id": "thr_123",
+        "role": "user",
+        "content": "Hello",
+        "model": "gpt-4o",
+        "status": "complete",
+        "created_at": now_dt,
+        "meta": {"some": "data"}
+    }]
     result = conversation_service.create_message(
         thread_id="thr_123",
         role="user",
@@ -92,16 +119,14 @@ def test_create_message(conversation_service, mock_db_service):
         meta={"some": "data"}
     )
 
-    mock_db_service.execute_update.assert_called()
-    # First call is to INSERT, second is to UPDATE thread timestamp
-    args, _ = mock_db_service.execute_update.call_args_list[0]
-    query, params = args[0], args[1]
+    mock_db_service.execute_returning.assert_called()
+    call_args, _ = mock_db_service.execute_returning.call_args
+    insert_query, params = call_args[0], call_args[1]
 
-    assert "INSERT INTO conversation_messages" in query
-    assert "message_id, thread_id, user_id, role, content, content_searchable, timestamp, meta" in query
+    assert "INSERT INTO conversation_messages" in insert_query
+    assert "(id, thread_id, role, content, model, status, meta)" in insert_query
     assert params[1] == "thr_123"
-    assert params[2] == "anonymous"
-    assert params[3] == "user"
-    assert params[4] == "Hello"
-    assert params[7] == '{"some": "data"}'
+    assert params[2] == "user"
+    assert params[3] == "Hello"
+    mock_db_service.execute_update.assert_called()
     assert result["thread_id"] == "thr_123"

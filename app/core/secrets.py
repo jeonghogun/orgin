@@ -23,3 +23,8 @@ class EnvSecrets(SecretProvider):
 
 # Default provider instance
 env_secrets_provider = EnvSecrets()
+
+
+def get_secret_provider() -> SecretProvider:
+    """Return the global secret provider instance."""
+    return env_secrets_provider

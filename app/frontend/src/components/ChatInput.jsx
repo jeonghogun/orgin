@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 import { SSE } from 'sse.js';
 import { useAppContext } from '../context/AppContext';
-import { useRoomCreationRequest, clearRoomCreation, useReviewRoomCreation, addReviewRoomHistory, clearReviewRoomCreation } from '../store/useConversationStore';
+import { useRoomCreationRequest, clearRoomCreation, useReviewRoomCreation } from '../store/useConversationStore';
 
 // Use fetch for true streaming response
 const streamMessageApi = async ({ roomId, content, onChunk, onIdReceived }) => {
@@ -58,11 +58,13 @@ const uploadFileApi = async ({ roomId, file }) => {
 };
 
 import { useChatInputState } from '../hooks/useChatInputState';
+import { ROOM_TYPES } from '../constants';
 
 const ChatInput = ({ roomId, roomData, disabled = false, createRoomMutation, interactiveReviewRoomMutation }) => {
   const fileInputRef = useRef(null);
   const queryClient = useQueryClient();
   const { showError } = useAppContext();
+  const [isComposing, setIsComposing] = useState(false);
   
   const {
     mode,
@@ -99,6 +101,33 @@ const ChatInput = ({ roomId, roomData, disabled = false, createRoomMutation, int
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!inputValue.trim() || !roomId || streamMutation.isPending || disabled) return;
+
+    // Global room-creation flow triggered from the sidebar
+    if (roomCreationRequest?.active && roomCreationRequest.parentId === roomId) {
+      const trimmed = inputValue.trim();
+      if (!trimmed) return;
+
+      if (roomCreationRequest.type === ROOM_TYPES.SUB) {
+        createRoomMutation.mutate({
+          name: trimmed,
+          type: ROOM_TYPES.SUB,
+          parentId: roomCreationRequest.parentId,
+        });
+      } else if (roomCreationRequest.type === ROOM_TYPES.REVIEW) {
+        interactiveReviewRoomMutation.mutate({
+          parentId: roomCreationRequest.parentId,
+          topic: trimmed,
+          history: [
+            { role: 'assistant', content: roomCreationRequest.promptText },
+            { role: 'user', content: trimmed },
+          ],
+        });
+      }
+
+      clearRoomCreation();
+      resetState();
+      return;
+    }
 
     switch (mode) {
       case 'creating_sub_room':
@@ -182,11 +211,16 @@ const ChatInput = ({ roomId, roomData, disabled = false, createRoomMutation, int
           value={inputValue}
           onChange={handleInputChange}
           onKeyDown={(e) => {
+            if (isComposing) {
+              return;
+            }
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault();
               handleSubmit(e);
             }
           }}
+          onCompositionStart={() => setIsComposing(true)}
+          onCompositionEnd={() => setIsComposing(false)}
           placeholder={(() => {
             const isSubRoomCreationActive = roomCreationRequest?.active && roomCreationRequest?.parentId === roomId;
             const isReviewRoomCreationActive = reviewRoomCreation?.active && reviewRoomCreation?.parentId === roomId;

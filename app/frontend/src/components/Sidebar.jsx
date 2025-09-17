@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ROOM_TYPES } from '../constants';
-import { useRoomCreationRequest, startRoomCreation, addMessage, startReviewRoomCreation } from '../store/useConversationStore';
+import { startRoomCreation } from '../store/useConversationStore';
 import { useAppContext } from '../context/AppContext';
 import RenameRoomModal from './modals/RenameRoomModal';
 import DeleteConfirmationModal from './modals/DeleteConfirmationModal';
@@ -56,21 +56,14 @@ const RoomItem = memo(({ room, level, parentRoom = null, onRenameClick, onDelete
   const [isMenuOpen, setMenuOpen] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
 
-  const isReviewRoom = room.type === ROOM_TYPES.REVIEW || level === 2;
+  const isReviewRoom = room.type === ROOM_TYPES.REVIEW;
   const indent = level * 12;
 
-  const isActive = isReviewRoom
-    ? activeRoomId === parentRoom?.room_id
-    : activeRoomId === room.room_id;
+  const isActive = activeRoomId === room.room_id;
 
   const getLinkDestination = useCallback(() => {
-    if (isReviewRoom && parentRoom) {
-      return window.innerWidth >= 1024
-        ? `/rooms/${parentRoom.room_id}/reviews/${room.room_id}`
-        : `/reviews/${room.room_id}`;
-    }
     return `/rooms/${room.room_id}`;
-  }, [isReviewRoom, parentRoom, room.room_id]);
+  }, [room.room_id]);
 
   const onRoomSelect = useCallback(() => handleRoomSelect(room.room_id), [handleRoomSelect, room.room_id]);
 
@@ -136,7 +129,9 @@ const RoomItem = memo(({ room, level, parentRoom = null, onRenameClick, onDelete
             )}
           </div>
           <span className={`flex-1 text-body truncate ${isReviewRoom ? 'text-muted' : 'text-text'}`}>
-            {isReviewRoom ? `검토: ${room.name}` : room.name}
+            {isReviewRoom
+              ? (room.name?.startsWith('검토') ? room.name : `검토: ${room.name}`)
+              : room.name}
           </span>
 
           {isHovered && (
@@ -244,33 +239,32 @@ const Sidebar = memo(() => {
   const handleCreateSubRoom = useCallback((parentId) => {
     const promptText = "어떤 세부룸을 만들까요?";
     startRoomCreation(parentId, ROOM_TYPES.SUB, promptText);
-    
-    // AI 메시지 추가
-    addMessage(parentId, {
-      id: `ai_prompt_${Date.now()}`,
-      role: 'assistant',
-      content: promptText,
-      status: 'complete',
-      created_at: Math.floor(Date.now() / 1000),
-    });
-  }, [startRoomCreation, addMessage]);
+    queryClient.setQueryData(['messages', parentId], (old = []) => [
+      ...old,
+      {
+        message_id: `ai_prompt_${Date.now()}`,
+        room_id: parentId,
+        role: 'assistant',
+        content: promptText,
+        timestamp: Math.floor(Date.now() / 1000),
+      }
+    ]);
+  }, [startRoomCreation, queryClient]);
 
   const handleCreateReviewRoom = useCallback((parentId) => {
     const promptText = "어떤 주제로 검토룸을 열까요?";
-    // This now just adds the initial prompt. The actual creation is handled by the interactive flow.
-    addMessage(parentId, {
-      id: `ai_prompt_${Date.now()}`,
-      role: 'assistant',
-      content: promptText,
-      status: 'complete',
-      created_at: Math.floor(Date.now() / 1000),
-    });
-    // We don't call startRoomCreation here anymore for reviews.
-    // The ChatInput will handle the interactive creation process.
-    // We just need to make sure the UI knows a review creation is in progress.
-    // The prompt in the input box will be handled by ChatInput's placeholder logic.
-    startReviewRoomCreation(parentId, ""); // Start with an empty topic
-  }, [addMessage, startReviewRoomCreation]);
+    startRoomCreation(parentId, ROOM_TYPES.REVIEW, promptText);
+    queryClient.setQueryData(['messages', parentId], (old = []) => [
+      ...old,
+      {
+        message_id: `ai_prompt_${Date.now()}`,
+        room_id: parentId,
+        role: 'assistant',
+        content: promptText,
+        timestamp: Math.floor(Date.now() / 1000),
+      }
+    ]);
+  }, [startRoomCreation, queryClient]);
 
   const handleRenameClick = useCallback((room) => setRenamingRoom(room), []);
   const handleDeleteClick = useCallback((room) => setDeletingRoom(room), []);

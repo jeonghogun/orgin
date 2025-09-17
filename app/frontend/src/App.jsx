@@ -128,7 +128,15 @@ function AppContent() {
     },
     onSuccess: (data, { parentId }) => {
       if (data.status === 'created') {
-        queryClient.invalidateQueries({ queryKey: ['rooms'] });
+        // Add the new room to cache and navigate immediately
+        queryClient.setQueryData(['rooms'], (oldRooms = []) => {
+          if (!Array.isArray(oldRooms)) return oldRooms;
+          const exists = oldRooms.some(room => room.room_id === data.room.room_id);
+          if (exists) return oldRooms;
+          return [...oldRooms, data.room];
+        });
+        // Remove immediate invalidation to prevent timing issues
+        // queryClient.invalidateQueries({ queryKey: ['rooms'] });
         navigate(`/rooms/${data.room.room_id}`);
       } else if (data.status === 'needs_more_context') {
         addMessage(parentId, {

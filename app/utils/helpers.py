@@ -12,9 +12,10 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
-def generate_id() -> str:
-    """Generate unique ID"""
-    return str(uuid.uuid4())
+def generate_id(prefix: str = "") -> str:
+    """Generate unique ID with optional prefix."""
+    uid = str(uuid.uuid4())
+    return f"{prefix}_{uid}" if prefix else uid
 
 
 def get_current_timestamp() -> int:

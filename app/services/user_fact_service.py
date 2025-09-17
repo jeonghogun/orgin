@@ -6,7 +6,7 @@ from prometheus_client import Counter
 from app.services.database_service import DatabaseService
 from app.services.fact_types import FactType
 from app.services.audit_service import AuditService
-from app.core.secrets import SecretProvider
+from app.core.secrets import SecretProvider, get_secret_provider
 from app.tasks.fact_tasks import request_user_clarification_task
 from app.utils.helpers import generate_id, get_current_timestamp
 from app.models.memory_schemas import UserProfile
@@ -198,5 +198,27 @@ class UserFactService:
     async def resolve_fact_conflict(self, winning_fact_id: str, losing_fact_id: str):
         self.db.execute_update("UPDATE user_facts SET latest = TRUE, pending_review = FALSE WHERE id = %s", (winning_fact_id,))
         self.db.execute_update("DELETE FROM user_facts WHERE id = %s", (losing_fact_id,))
-        await self.audit_service.log('fact_conflict_resolved', {'winning_fact_id': winning_fact_id, 'losing_fact_id': losing_fact_id})
-        logger.info(f"Resolved fact conflict. Winner: {winning_fact_id}, Loser: {losing_fact_id}")
+        if hasattr(self.audit_service, "log"):
+            await self.audit_service.log(
+                "fact_conflict_resolved",
+                {"winning_fact_id": winning_fact_id, "losing_fact_id": losing_fact_id}
+            )
+        logger.info("Resolved fact conflict.", extra={"winner": winning_fact_id, "loser": losing_fact_id})
+
+
+_user_fact_service_instance: Optional[UserFactService] = None
+
+
+def get_user_fact_service() -> UserFactService:
+    """Return a singleton instance of UserFactService."""
+    global _user_fact_service_instance
+    if _user_fact_service_instance is None:
+        from app.services.database_service import get_database_service
+        from app.services.audit_service import get_audit_service
+
+        _user_fact_service_instance = UserFactService(
+            db_service=get_database_service(),
+            audit_service=get_audit_service(),
+            secret_provider=get_secret_provider()
+        )
+    return _user_fact_service_instance

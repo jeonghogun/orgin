@@ -24,6 +24,19 @@ except ImportError:
 from app.core.errors import LLMError, LLMErrorCode
 
 
+INVALID_REQUEST_ERRORS = tuple(
+    getattr(openai, name)
+    for name in ("InvalidRequestError", "BadRequestError")
+    if hasattr(openai, name)
+)
+
+API_ERRORS = tuple(
+    getattr(openai, name)
+    for name in ("APIError", "APIStatusError")
+    if hasattr(openai, name)
+)
+
+
 def map_openai_error(error: Exception, provider: str = "openai") -> LLMError:
     """OpenAI API 에러를 내부 LLMError로 매핑"""
     
@@ -46,7 +59,7 @@ def map_openai_error(error: Exception, provider: str = "openai") -> LLMError:
             error_message=f"OpenAI authentication failed: {error.message}"
         )
     
-    elif isinstance(error, openai.InvalidRequestError):
+    elif INVALID_REQUEST_ERRORS and isinstance(error, INVALID_REQUEST_ERRORS):
         # 토큰 초과인지 확인
         if "context_length_exceeded" in str(error).lower():
             return LLMError(
@@ -65,7 +78,7 @@ def map_openai_error(error: Exception, provider: str = "openai") -> LLMError:
                 error_message=f"OpenAI invalid request: {error.message}"
             )
     
-    elif isinstance(error, openai.APIError):
+    elif API_ERRORS and isinstance(error, API_ERRORS):
         return LLMError(
             error_code=LLMErrorCode.API_ERROR,
             provider=provider,

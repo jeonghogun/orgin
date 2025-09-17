@@ -9,7 +9,7 @@ import os
 from contextlib import asynccontextmanager
 from typing import Dict, Any, Callable, TypeVar, Awaitable, cast, Optional, List
 
-from fastapi import FastAPI, Request, Depends
+from fastapi import FastAPI, Request, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles

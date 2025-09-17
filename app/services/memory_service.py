@@ -7,11 +7,6 @@ import json
 import math
 import asyncio
 from datetime import datetime, timezone
-import logging
-import json
-import math
-import asyncio
-from datetime import datetime, timezone
 from typing import List, Optional, Tuple, Dict, Any
 
 from app.models.schemas import Message
@@ -23,8 +18,8 @@ from app.services.hybrid_search_service import get_hybrid_search_service
 from app.core.secrets import SecretProvider
 from app.utils.helpers import generate_id, get_current_timestamp
 from app.config.settings import settings
-from app.services.conversation_service import get_conversation_service
 from app.services.fact_types import FactType
+from app.services.storage_service import storage_service
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +50,21 @@ class MemoryService:
     def _merge_and_score(self, bm25_results: List[Dict[str, Any]], vector_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Merge BM25 and vector search results using HybridSearchService."""
         return self.hybrid_search.merge_search_results(bm25_results, vector_results, 'message_id')
+
+    def _build_conversation_snippet(self, messages: List[Message], limit: int = 20) -> str:
+        """Create a conversation snippet using the most recent messages."""
+        tail = messages[-limit:]
+        lines = [f"{msg.role}: {msg.content}" for msg in tail if msg.content]
+        return "\n".join(lines)
+
+    def _fallback_summary(self, messages: List[Message]) -> str:
+        """Provide a lightweight fallback summary when LLM summarization fails."""
+        last_user = next((msg.content for msg in reversed(messages) if msg.role == "user" and msg.content), None)
+        if last_user:
+            return f"최근 사용자 발화 요약: {last_user[:300]}"
+        if messages:
+            return f"최근 대화 요약: {messages[-1].content[:300]}"
+        return "대화 내용이 충분하지 않습니다."
 
     def _apply_time_decay(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Apply time decay to search results using HybridSearchService."""
@@ -99,8 +109,129 @@ class MemoryService:
 
     # --- Unchanged context and promotion methods ---
     async def get_context(self, room_id: str, user_id: str) -> Optional[ConversationContext]:
-        # ... implementation unchanged ...
-        pass
+        """Retrieve (or lazily build) the conversation context for a room."""
+        query = (
+            "SELECT context_id, room_id, user_id, summary, key_topics, sentiment, created_at, updated_at "
+            "FROM conversation_contexts WHERE room_id = %s AND user_id = %s"
+        )
+        try:
+            rows = self.db.execute_query(query, (room_id, user_id))
+        except Exception as db_error:
+            logger.warning(
+                "Failed to fetch conversation context (room=%s, user=%s): %s",
+                room_id,
+                user_id,
+                db_error,
+                exc_info=True,
+            )
+            rows = []
+        if rows:
+            row = rows[0]
+            key_topics = row.get("key_topics") or []
+            if isinstance(key_topics, str):
+                try:
+                    key_topics = json.loads(key_topics)
+                except json.JSONDecodeError:
+                    key_topics = [key_topics]
+            return ConversationContext(
+                context_id=row["context_id"],
+                room_id=row["room_id"],
+                user_id=row["user_id"],
+                summary=row.get("summary", ""),
+                key_topics=key_topics,
+                sentiment=row.get("sentiment", "neutral"),
+                created_at=row.get("created_at", get_current_timestamp()),
+                updated_at=row.get("updated_at", get_current_timestamp()),
+            )
+
+        messages = await asyncio.to_thread(storage_service.get_messages, room_id)
+        if not messages:
+            return None
+
+        conversation_text = self._build_conversation_snippet(messages)
+
+        summary = conversation_text[:500]
+        sentiment = "neutral"
+        key_topics: List[str] = []
+
+        try:
+            llm_payload = (
+                "You are an assistant that summarizes conversations. "
+                "Return JSON with fields 'summary' (string), 'key_topics' (array of up to 5 short phrases), "
+                "and 'sentiment' (one of positive, neutral, negative)."
+            )
+            user_prompt = (
+                "Conversation:\n" + conversation_text + "\n\n"
+                "Respond in JSON."
+            )
+            summary_json, _ = await self.llm_service.invoke(
+                provider_name="openai",
+                model=settings.LLM_MODEL,
+                system_prompt=llm_payload,
+                user_prompt=user_prompt,
+                request_id="memory-context-summary",
+                response_format="json",
+            )
+            parsed = json.loads(summary_json)
+            summary = parsed.get("summary", summary)
+            raw_topics = parsed.get("key_topics", [])
+            if isinstance(raw_topics, list):
+                key_topics = [str(topic) for topic in raw_topics if topic]
+            sentiment = parsed.get("sentiment", sentiment)
+        except Exception as summarise_error:
+            logger.warning(
+                "Failed to generate context summary for room %s: %s",
+                room_id,
+                summarise_error,
+            )
+            summary = self._fallback_summary(messages)
+            key_topics = []
+            sentiment = "neutral"
+
+        now_ts = get_current_timestamp()
+        context = ConversationContext(
+            context_id=generate_id("ctx"),
+            room_id=room_id,
+            user_id=user_id,
+            summary=summary,
+            key_topics=key_topics,
+            sentiment=sentiment,
+            created_at=now_ts,
+            updated_at=now_ts,
+        )
+
+        insert_query = (
+            """
+            INSERT INTO conversation_contexts (context_id, room_id, user_id, summary, key_topics, sentiment, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (room_id, user_id) DO UPDATE
+            SET summary = EXCLUDED.summary,
+                key_topics = EXCLUDED.key_topics,
+                sentiment = EXCLUDED.sentiment,
+                updated_at = EXCLUDED.updated_at
+            """
+        )
+        params = (
+            context.context_id,
+            context.room_id,
+            context.user_id,
+            context.summary,
+            context.key_topics,
+            context.sentiment,
+            context.created_at,
+            context.updated_at,
+        )
+        try:
+            self.db.execute_update(insert_query, params)
+        except Exception as db_error:
+            logger.warning(
+                "Failed to upsert conversation context (room=%s, user=%s): %s",
+                room_id,
+                user_id,
+                db_error,
+                exc_info=True,
+            )
+        return context
     async def update_context(self, context_update: ContextUpdate) -> None:
         # ... implementation unchanged ...
         pass
@@ -112,29 +243,20 @@ class MemoryService:
         Summarizes a sub-room's conversation and promotes the summary as a new
         fact to the main room's memory.
         """
-        conversation_service = get_conversation_service()
         user_fact_service = self.user_fact_service # Already a dependency
 
         # 1. Get all messages from the sub-room
-        full_conversation = ""
         try:
-            # Note: The data model seems to have a single thread per sub-room.
-            # If multiple threads were possible, this logic would need to be adjusted.
-            threads = await conversation_service.get_threads_by_room(room_id=sub_room_id)
-            if not threads:
-                logger.info(f"No threads found in sub-room {sub_room_id} for promotion.")
-                return "No content to promote."
-
-            for thread in threads:
-                messages = await conversation_service.get_all_messages_by_thread(thread.id)
-                for msg in messages:
-                    # Ensure msg is a dictionary and has the expected keys
-                    if isinstance(msg, dict):
-                        full_conversation += f"{msg.get('role', 'unknown')}: {msg.get('content', '')}\n"
+            messages = await asyncio.to_thread(storage_service.get_messages, sub_room_id)
         except Exception as e:
             logger.error(f"Error fetching conversation from sub-room {sub_room_id}: {e}", exc_info=True)
-            # Re-raise as a custom exception or handle gracefully
             raise RuntimeError(f"Failed to fetch conversation for promotion: {e}")
+
+        full_conversation = ""
+        for msg in messages:
+            role = getattr(msg, "role", "unknown")
+            content = getattr(msg, "content", "")
+            full_conversation += f"{role}: {content}\n"
 
         if not full_conversation.strip():
             logger.info(f"Sub-room {sub_room_id} has no message content to promote.")
@@ -150,11 +272,11 @@ class MemoryService:
 
         try:
             summary, _ = await self.llm_service.invoke(
-                provider="openai",
+                provider_name="openai",
                 model=settings.SMART_MODEL,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
-                context="memory-promotion-summary"
+                request_id="memory-promotion-summary"
             )
         except Exception as e:
             logger.error(f"LLM invocation failed during memory promotion for sub-room {sub_room_id}: {e}", exc_info=True)
