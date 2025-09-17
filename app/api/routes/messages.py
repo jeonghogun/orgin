@@ -1,11 +1,7 @@
 """
 Message-related API endpoints
 """
-import asyncio
 import logging
-import time
-import uuid
-import shutil
 import json
 import re
 from datetime import datetime
@@ -342,7 +338,7 @@ async def send_message(
             await manager.broadcast(json.dumps({"type": "new_message", "payload": ai_message.model_dump()}), room_id)
             return create_success_response(data={"message": message.model_dump(), "ai_response": ai_message.model_dump()})
 
-        asyncio.create_task(_handle_fact_extraction(user_fact_service, fact_extractor_service, message))
+        # Fact extraction already executed above (or scheduled via background tasks on failure).
         
         # --- Original Intent/Action Processing Logic ---
         current_room = storage_service.get_room(room_id)
@@ -448,8 +444,6 @@ async def send_message(
         logger.error(f"Error sending message: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to send message: {str(e)}")
 
-
-from fastapi.responses import StreamingResponse
 
 @router.post("/{room_id}/messages/stream")
 async def send_message_stream(
