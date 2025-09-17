@@ -8,7 +8,7 @@ import uuid
 import shutil
 import json
 from datetime import datetime
-from typing import Dict, Optional, List
+from typing import Any, Dict, Optional, List
 from fastapi import APIRouter, HTTPException, Request, Depends, File, UploadFile
 
 from app.api.dependencies import (
@@ -397,6 +397,7 @@ async def send_message_stream(
 
     async def stream_generator():
         ai_response_content = ""
+        chunk_count = 0
         # The memory context can be fetched before starting the stream
         memory_context = await memory_service.get_context(room_id, user_id)
 
@@ -410,11 +411,24 @@ async def send_message_stream(
         )
 
         async for chunk in stream:
-            ai_response_content += chunk
-            # Yield each chunk to the client as it arrives
-            # We can format it as JSON for consistency if needed
-            yield json.dumps({"delta": chunk}) + "\n"
-        
+            payload: Dict[str, Any] = {}
+            if isinstance(chunk, dict):
+                delta = chunk.get("delta")
+                meta = chunk.get("meta")
+            else:
+                delta = str(chunk)
+                meta = None
+
+            if delta:
+                ai_response_content += delta
+                chunk_count += 1
+                payload["delta"] = delta
+            if meta:
+                payload["meta"] = meta
+
+            if payload:
+                yield json.dumps(payload) + "\n"
+
         # After the stream is finished, save the full AI message
         ai_message = Message(
             message_id=generate_id(),
@@ -422,12 +436,16 @@ async def send_message_stream(
             user_id="ai",
             content=ai_response_content,
             timestamp=get_current_timestamp(),
-            role="ai"
+            role="assistant"
         )
         storage_service.save_message(ai_message)
-        
+
         # Send a final "done" message
-        yield json.dumps({"done": True, "message_id": ai_message.message_id}) + "\n"
+        yield json.dumps({
+            "done": True,
+            "message_id": ai_message.message_id,
+            "meta": {"status": "completed", "chunk_count": chunk_count},
+        }) + "\n"
 
     return StreamingResponse(stream_generator(), media_type="application/x-ndjson")
 

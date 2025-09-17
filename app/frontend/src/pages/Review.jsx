@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import RoomHeader from '../components/RoomHeader';
 import MessageList from '../components/MessageList';
@@ -9,12 +9,15 @@ import { useAppContext } from '../context/AppContext';
 import useEventSource from '../hooks/useEventSource';
 import toast from 'react-hot-toast';
 import Message from '../components/Message'; // We need the Message component to render live messages
+import ReviewTimeline from '../components/review/ReviewTimeline';
 
 const Review = ({ reviewId, isSplitView = false, createRoomMutation }) => {
   const { sidebarOpen } = useAppContext();
   const navigate = useNavigate();
   const [liveMessages, setLiveMessages] = useState([]);
   const [reviewStatus, setReviewStatus] = useState('loading');
+  const [statusEvents, setStatusEvents] = useState([]);
+  const statusKeyRef = useRef(new Set());
 
   const { data: review, isLoading } = useQuery({
     queryKey: ['review', reviewId],
@@ -25,6 +28,48 @@ const Review = ({ reviewId, isSplitView = false, createRoomMutation }) => {
     },
     enabled: !!reviewId,
   });
+
+  const { data: historicalMessages = [] } = useQuery({
+    queryKey: ['messages', review?.room_id],
+    queryFn: async () => {
+      if (!review?.room_id) return [];
+      const response = await axios.get(`/api/rooms/${review.room_id}/messages`);
+      return response.data || [];
+    },
+    enabled: !!review?.room_id,
+    staleTime: 1000 * 60,
+  });
+
+  const appendLiveMessage = useCallback((message) => {
+    if (!message?.message_id) return;
+    setLiveMessages((prev) => {
+      if (prev.some((item) => item.message_id === message.message_id)) {
+        return prev;
+      }
+      return [...prev, message];
+    });
+  }, []);
+
+  useEffect(() => {
+    statusKeyRef.current = new Set();
+    setStatusEvents([]);
+    setLiveMessages([]);
+  }, [reviewId]);
+
+  const recordStatusEvent = useCallback((status, ts) => {
+    if (!status) return;
+    const timestamp = typeof ts === 'number' ? ts : Math.floor(Date.now() / 1000);
+    const key = `${status}-${timestamp}`;
+    if (statusKeyRef.current.has(key)) {
+      return;
+    }
+    statusKeyRef.current.add(key);
+    setStatusEvents((prev) => {
+      const next = [...prev, { status, timestamp }];
+      next.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+      return next;
+    });
+  }, []);
 
   const parsedFinalReport = useMemo(() => {
     if (!review?.final_report) return null;
@@ -37,22 +82,120 @@ const Review = ({ reviewId, isSplitView = false, createRoomMutation }) => {
     };
   }, [review?.final_report]);
 
+  const combinedMessages = useMemo(() => {
+    const map = new Map();
+    historicalMessages.forEach((msg) => {
+      if (msg?.message_id) {
+        map.set(msg.message_id, msg);
+      }
+    });
+    liveMessages.forEach((msg) => {
+      if (msg?.message_id) {
+        map.set(msg.message_id, msg);
+      }
+    });
+    return Array.from(map.values()).sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+  }, [historicalMessages, liveMessages]);
+
+  const extractPersona = useCallback((message) => {
+    if (!message) return '패널';
+    if (message.metadata?.persona) {
+      return message.metadata.persona;
+    }
+    const personaMatch = message.content?.match(/Panelist:\s*([^\n]+)/i);
+    if (personaMatch) {
+      return personaMatch[1].trim();
+    }
+    if (message.user_id && message.user_id !== 'assistant') {
+      return message.user_id;
+    }
+    return '패널';
+  }, []);
+
+  const extractRound = useCallback((message) => {
+    if (!message) return null;
+    if (message.metadata?.round) {
+      return message.metadata.round;
+    }
+    const roundMatch = message.content?.match(/라운드\s*(\d+)/i) || message.content?.match(/Round\s*(\d+)/i);
+    if (roundMatch) {
+      return Number.parseInt(roundMatch[1], 10);
+    }
+    return null;
+  }, []);
+
+  const personaEvents = useMemo(() => {
+    const grouped = {};
+    combinedMessages.forEach((message) => {
+      if (!message?.content) return;
+      const persona = extractPersona(message);
+      if (!grouped[persona]) {
+        grouped[persona] = [];
+      }
+      grouped[persona].push({
+        id: message.message_id,
+        timestamp: message.timestamp,
+        round: extractRound(message),
+        preview: message.content.replace(/\s+/g, ' ').slice(0, 140),
+      });
+    });
+    return grouped;
+  }, [combinedMessages, extractPersona, extractRound]);
+
+  const handleExportRecommendations = useCallback(() => {
+    if (!parsedFinalReport?.recommendations?.length) {
+      toast.error('다운로드할 추천 항목이 없습니다.');
+      return;
+    }
+    const tasks = parsedFinalReport.recommendations.map((item, idx) => ({
+      id: `${reviewId || review?.review_id || 'review'}-task-${idx + 1}`,
+      title: `${review?.topic || '리뷰'} - 추천 ${idx + 1}`,
+      description: item,
+      reviewId: reviewId,
+      source: 'Origin Review',
+    }));
+    const payload = {
+      generated_at: new Date().toISOString(),
+      review_id: reviewId,
+      topic: review?.topic,
+      tasks,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `review-${reviewId || review?.room_id}-tasks.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+    toast.success('추천 작업 템플릿을 다운로드했습니다.');
+  }, [parsedFinalReport, reviewId, review]);
+
   const eventHandlers = useMemo(() => ({
     live_event: (e) => {
       try {
         const eventData = JSON.parse(e.data);
         if (eventData.type === 'status_update') {
           setReviewStatus(eventData.payload.status);
+          recordStatusEvent(eventData.payload.status, eventData.ts);
         } else if (eventData.type === 'new_message') {
-          setLiveMessages(prev => [...prev, eventData.payload]);
+          appendLiveMessage(eventData.payload);
         }
       } catch (err) {
         console.error("Failed to parse live event:", err);
       }
     },
     historical_event: (e) => {
-        // This is not used anymore as MessageList fetches historical messages.
-        // Kept for potential future use.
+        try {
+          const eventData = JSON.parse(e.data);
+          if (eventData.type === 'status_update') {
+            const statusValue = eventData.payload?.status || eventData.status;
+            recordStatusEvent(statusValue, eventData.ts || eventData.timestamp);
+          } else if (eventData.type === 'new_message' && eventData.payload) {
+            appendLiveMessage(eventData.payload);
+          }
+        } catch (err) {
+          console.error('Failed to parse historical event:', err);
+        }
     },
     error: (err) => {
       console.error("SSE Error:", err);
@@ -60,11 +203,26 @@ const Review = ({ reviewId, isSplitView = false, createRoomMutation }) => {
     },
     done: () => {
       setReviewStatus('completed');
+      recordStatusEvent('completed', Math.floor(Date.now() / 1000));
     }
-  }), [reviewId]);
+  }), [appendLiveMessage, recordStatusEvent, reviewId]);
 
   const sseUrl = reviewId ? `/api/reviews/${reviewId}/events` : null;
   useEventSource(sseUrl, eventHandlers);
+
+
+  useEffect(() => {
+    if (!review) return;
+    if (review.created_at) {
+      recordStatusEvent('created', review.created_at);
+    }
+    if (review.started_at) {
+      recordStatusEvent('in_progress', review.started_at);
+    }
+    if (review.completed_at) {
+      recordStatusEvent(review.status === 'failed' ? 'failed' : 'completed', review.completed_at);
+    }
+  }, [review, recordStatusEvent]);
 
 
   // ESC key to navigate back
@@ -146,10 +304,24 @@ const Review = ({ reviewId, isSplitView = false, createRoomMutation }) => {
                 ) : (
                   <p className="text-body text-muted">추가 실행 제안이 없습니다.</p>
                 )}
+                {parsedFinalReport.recommendations.length > 0 && (
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-border/60 bg-panel-elev px-3 py-2">
+                    <p className="text-xs text-muted">추천 항목을 바로 작업 관리 도구로 옮길 수 있도록 JSON 템플릿을 제공합니다.</p>
+                    <button
+                      type="button"
+                      onClick={handleExportRecommendations}
+                      className="rounded-button bg-accent px-3 py-1.5 text-xs font-semibold text-white transition-colors duration-150 hover:bg-accent-weak"
+                    >
+                      작업 템플릿 다운로드
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           </div>
         )}
+
+        <ReviewTimeline statusEvents={statusEvents} personaEvents={personaEvents} />
 
         {/* MessageList will show historical messages */}
         <MessageList roomId={review?.room_id} createRoomMutation={createRoomMutation} />

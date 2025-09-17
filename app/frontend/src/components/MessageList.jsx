@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useCallback } from 'react';
+import React, { useEffect, useRef, useCallback, useMemo } from 'react';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import axios from 'axios';
 import Message from './Message';
@@ -7,6 +7,7 @@ import useWebSocket from '../hooks/useWebSocket';
 import ConnectionStatusBanner from './common/ConnectionStatusBanner';
 import { ROOM_TYPES } from '../constants';
 import toast from 'react-hot-toast';
+import ContextSummaryCard from './ContextSummaryCard';
 
 
 const fetchMessages = async (roomId) => {
@@ -66,15 +67,35 @@ const MessageList = ({ roomId, currentRoom, createRoomMutation, interactiveRevie
     staleTime: 1000 * 60 * 5, // 5 minutes
   });
 
+  const contextMessage = useMemo(() => {
+    if (!messages || messages.length === 0) {
+      return null;
+    }
+    return messages.find((msg) => {
+      if (!msg || !msg.content) return false;
+      const isSystemAuthor = msg.user_id === 'system' || msg.role === 'system';
+      const isAssistantSystem = msg.user_id === 'system' && msg.role !== 'user';
+      const hasSummary = msg.content.includes('**핵심 요약:**') || msg.content.includes('핵심 요약');
+      return (isSystemAuthor || isAssistantSystem) && hasSummary;
+    }) || null;
+  }, [messages]);
+
+  const displayMessages = useMemo(() => {
+    if (!contextMessage) {
+      return messages;
+    }
+    return messages.filter((msg) => msg.message_id !== contextMessage.message_id);
+  }, [messages, contextMessage]);
+
 
   useEffect(() => {
     // Scroll to bottom when new messages are added
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [displayMessages]);
 
   if (!roomId) {
     // TODO: Replace with example prompts component
-    return <div className="flex items-center justify-center h-full text-muted text-body">Select a room to start a conversation.</div>;
+      return <div className="flex items-center justify-center h-full text-muted text-body">Select a room to start a conversation.</div>;
   }
 
   if (isLoading) {
@@ -93,6 +114,7 @@ const MessageList = ({ roomId, currentRoom, createRoomMutation, interactiveRevie
         <div className="p-4 border-t border-border">
           <ChatInput
             roomId={roomId}
+            roomData={currentRoom}
             disabled={!roomId}
             createRoomMutation={createRoomMutation}
             interactiveReviewRoomMutation={interactiveReviewRoomMutation}
@@ -125,7 +147,10 @@ const MessageList = ({ roomId, currentRoom, createRoomMutation, interactiveRevie
       )}
       <ConnectionStatusBanner status={connectionStatus} />
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {messages.map((message) => (
+        {contextMessage && currentRoom?.type === ROOM_TYPES.SUB && (
+          <ContextSummaryCard content={contextMessage.content} />
+        )}
+        {displayMessages.map((message) => (
           <Message key={message.message_id} message={message} />
         ))}
         <div ref={messagesEndRef} />
@@ -133,6 +158,7 @@ const MessageList = ({ roomId, currentRoom, createRoomMutation, interactiveRevie
       <div className="p-4 border-t border-border">
         <ChatInput
           roomId={roomId}
+          roomData={currentRoom}
           disabled={!roomId}
           createRoomMutation={createRoomMutation}
           interactiveReviewRoomMutation={interactiveReviewRoomMutation}

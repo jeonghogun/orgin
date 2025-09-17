@@ -43,10 +43,14 @@ const Sub = ({ roomId, onToggleReview, createRoomMutation }) => {
 
       {/* 메시지 목록 - 독립적인 스크롤 영역 */}
       <div className="flex-1 overflow-y-auto px-4 pb-20 min-h-0">
-        <div className="max-w-3xl mx-auto">
-          <MessageList roomId={roomId} createRoomMutation={createRoomMutation} />
+          <div className="max-w-3xl mx-auto">
+            <MessageList
+              roomId={roomId}
+              currentRoom={roomData}
+              createRoomMutation={createRoomMutation}
+            />
+          </div>
         </div>
-      </div>
 
       {/* 채팅 입력창 - 화면 전체 하단에 고정 */}
       <div 
@@ -57,9 +61,13 @@ const Sub = ({ roomId, onToggleReview, createRoomMutation }) => {
         }}
       >
         <div className="max-w-3xl mx-auto">
-          <ChatInput roomId={roomId} createRoomMutation={createRoomMutation} />
+            <ChatInput
+              roomId={roomId}
+              roomData={roomData}
+              createRoomMutation={createRoomMutation}
+            />
+          </div>
         </div>
-      </div>
     </div>
   );
 };

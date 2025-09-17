@@ -20,6 +20,10 @@ class RAGService:
         self.db: DatabaseService = get_database_service()
         self.openai_client = openai.AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
         self.hybrid_search = get_hybrid_search_service()
+        # Centralize provider/model configuration so that downstream consumers
+        # (e.g., streaming clients) can surface richer telemetry.
+        self.streaming_provider = "openai"
+        self.streaming_model = "gpt-4o-mini"
 
     async def create_and_store_chunks(self, attachment_id: str, text_chunks: List[str]):
         if not text_chunks:
@@ -216,7 +220,7 @@ class RAGService:
             system_prompt, user_prompt = await self._get_rag_prompt_and_context(user_message, room_id, memory_context)
 
             stream = await self.openai_client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=self.streaming_model,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
@@ -225,13 +229,39 @@ class RAGService:
                 temperature=0.7,
                 stream=True,
             )
+            meta_sent = False
+            chunk_index = 0
             async for chunk in stream:
                 content = chunk.choices[0].delta.content
+                if not meta_sent:
+                    meta_sent = True
+                    yield {
+                        "meta": {
+                            "status": "started",
+                            "provider": self.streaming_provider,
+                            "model": getattr(chunk, "model", self.streaming_model),
+                        }
+                    }
                 if content:
-                    yield content
+                    chunk_index += 1
+                    yield {
+                        "delta": content,
+                        "meta": {
+                            "chunk_index": chunk_index,
+                            "provider": self.streaming_provider,
+                            "model": getattr(chunk, "model", self.streaming_model),
+                        },
+                    }
         except Exception as e:
             logger.error(f"Failed to generate streaming RAG response: {e}")
-            yield "죄송합니다. 응답을 생성하는 중 오류가 발생했습니다."
+            yield {
+                "delta": "죄송합니다. 응답을 생성하는 중 오류가 발생했습니다.",
+                "meta": {
+                    "status": "failed",
+                    "provider": self.streaming_provider,
+                    "model": self.streaming_model,
+                },
+            }
 
     async def search_hybrid(
         self, query: str, user_id: str, thread_id: Optional[str], limit: int
