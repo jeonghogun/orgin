@@ -30,3 +30,16 @@ async def test_extract_facts_from_message_success(fact_extractor_service, mock_l
     facts = await fact_extractor_service.extract_facts_from_message("My name is test", "test_msg_id")
     assert len(facts) == 1
     assert facts[0]['type'] == "user_name"
+
+
+@pytest.mark.asyncio
+async def test_extract_facts_from_message_fallback_patterns(fact_extractor_service, mock_llm_service):
+    mock_provider = MagicMock()
+    mock_provider.invoke = AsyncMock(side_effect=RuntimeError("LLM unavailable"))
+    mock_llm_service.get_provider.return_value = mock_provider
+
+    facts = await fact_extractor_service.extract_facts_from_message("내 이름은 호건이야", "msg_fallback")
+
+    assert len(facts) == 1
+    assert facts[0]["type"] == FactType.USER_NAME.value
+    assert facts[0]["value"] == "호건"

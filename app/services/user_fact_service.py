@@ -178,10 +178,11 @@ class UserFactService:
                     actual_value = str(value_json)
             else:
                 actual_value = ""
-            
+
             formatted_fact = {
                 "type": fact.get("fact_type"),
                 "value": actual_value,
+                "content": actual_value,
                 "confidence": fact.get("confidence", 1.0),
                 "created_at": fact.get("created_at"),
                 "updated_at": fact.get("updated_at")

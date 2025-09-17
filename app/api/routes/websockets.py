@@ -27,10 +27,25 @@ class ConnectionManager:
         logger.info(f"WebSocket disconnected from room {room_id}")
 
     async def broadcast(self, message: str, room_id: str):
-        if room_id in self.active_connections:
-            logger.info(f"Broadcasting to room {room_id}: {message[:100]}")
-            for connection in self.active_connections[room_id]:
+        if room_id not in self.active_connections:
+            return
+
+        logger.info(f"Broadcasting to room {room_id}: {message[:100]}")
+        failed_connections: list[WebSocket] = []
+        for connection in list(self.active_connections[room_id]):
+            try:
                 await connection.send_text(message)
+            except Exception as send_error:
+                logger.warning(
+                    "WebSocket send failed for room %s: %s",
+                    room_id,
+                    send_error,
+                    exc_info=True,
+                )
+                failed_connections.append(connection)
+
+        for connection in failed_connections:
+            self.disconnect(connection, room_id)
 
 manager = ConnectionManager()
 

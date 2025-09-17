@@ -4,7 +4,8 @@ Intent Service - LLM-based intent classification and entity extraction
 
 import json
 import logging
-from typing import Dict, Any, Optional, TypedDict, cast
+import re
+from typing import Dict, Any, Optional, TypedDict, cast, List
 from app.services.llm_service import LLMService
 from app.config.settings import settings
 
@@ -20,10 +21,99 @@ class IntentResult(TypedDict):
 class IntentService:
     """LLM-based intent classification and entity extraction service"""
 
+    TIME_KEYWORDS = [
+        "몇 시", "몇시", "지금 시간", "현재 시간", "현재시간", "시간 알려", "시간좀",
+        "몇시야", "몇시에", "몇시인지", "오늘 시간", "시간이 몇"
+    ]
+    DATE_KEYWORDS = [
+        "날짜", "며칠", "몇일", "오늘 몇", "오늘 날짜", "오늘은 몇",
+        "오늘 며칠", "오늘 몇 일이", "오늘 몇 일이야"
+    ]
+    WEATHER_KEYWORDS = [
+        "날씨", "기온", "온도", "비와", "비 와", "비가", "비 올", "눈 와",
+        "날씨 어때", "날씨 알려", "날씨 좀", "기상", "습도"
+    ]
+    NAME_GET_KEYWORDS = [
+        "내 이름", "제 이름", "내이름", "제이름", "내 이름이 뭐", "이름이 뭐야",
+        "내 이름 뭐", "내가 누구야", "내가 누구", "내 이름 기억", "이름 기억해"
+    ]
+    NAME_SET_PATTERNS = [
+        re.compile(r"(?:내|제|저의)\s*이름(?:은|은요|은지)?\s*([\w가-힣]+)", re.IGNORECASE),
+        re.compile(r"(?:나를|저를)\s*([\w가-힣]+)\s*라고\s*불러", re.IGNORECASE),
+        re.compile(r"(?:이름은)\s*([\w가-힣]+)", re.IGNORECASE),
+    ]
+    NAME_SUFFIXES = ("입니다", "이에요", "예요", "이야", "야", "라고", "라고요", "라고해")
+
     def __init__(self, llm_service: LLMService):
         super().__init__()
         self.llm_service = llm_service
         self.llm_provider = None
+
+    def _contains_keyword(self, text: str, keywords: List[str]) -> bool:
+        if not text:
+            return False
+        compressed = text.replace(" ", "")
+        return any(keyword in text or keyword in compressed for keyword in keywords)
+
+    def _clean_name(self, raw_name: str) -> Optional[str]:
+        if not raw_name:
+            return None
+        name = raw_name.strip()
+        # Remove trailing punctuation and descriptive suffixes
+        name = re.sub(r"[\s,.;!?]+$", "", name)
+        for suffix in self.NAME_SUFFIXES:
+            if name.endswith(suffix):
+                name = name[: -len(suffix)]
+        name = name.strip()
+        if not name:
+            return None
+        # Filter out overly long or alphanumeric strings to avoid false positives
+        if any(char.isdigit() for char in name):
+            return None
+        if len(name) > 10:
+            return None
+        return name
+
+    def _detect_name_set(self, message: str) -> Optional[str]:
+        if "이름" not in message and "불러" not in message:
+            return None
+        for pattern in self.NAME_SET_PATTERNS:
+            match = pattern.search(message)
+            if match:
+                candidate = self._clean_name(match.group(1))
+                if candidate and len(candidate) >= 2:
+                    return candidate
+        return None
+
+    def _classify_with_rules(self, message: str) -> Optional[IntentResult]:
+        if not message:
+            return None
+        lowered = message.lower()
+
+        detected_name = self._detect_name_set(message)
+        if detected_name:
+            return IntentResult(
+                intent="name_set",
+                entities={"name": detected_name},
+                confidence=0.96,
+            )
+
+        if self._contains_keyword(lowered, self.NAME_GET_KEYWORDS):
+            return IntentResult(intent="name_get", entities={}, confidence=0.95)
+
+        if self._contains_keyword(lowered, self.TIME_KEYWORDS) or self._contains_keyword(
+            lowered, self.DATE_KEYWORDS
+        ):
+            return IntentResult(intent="time", entities={}, confidence=0.93)
+
+        if self._contains_keyword(lowered, self.WEATHER_KEYWORDS):
+            location = self._extract_location_from_text(lowered)
+            entities: Dict[str, Any] = {}
+            if location:
+                entities["location"] = location
+            return IntentResult(intent="weather", entities=entities, confidence=0.9)
+
+        return None
 
     async def classify_intent(
         self, message: str, request_id: Optional[str] = None
@@ -34,6 +124,15 @@ class IntentService:
         Returns:
             Dict with intent, entities, and confidence
         """
+        rule_based = self._classify_with_rules(message)
+        if rule_based:
+            logger.info(
+                "Intent matched by heuristic rules: %s (confidence: %s)",
+                rule_based["intent"],
+                rule_based["confidence"],
+            )
+            return rule_based
+
         try:
             prompt = f"""
 사용자 메시지의 의도를 분류하고 필요한 정보를 추출하세요.
@@ -104,7 +203,8 @@ class IntentService:
             return IntentResult(intent="general", entities={}, confidence=0.5)
         except Exception as e:
             logger.error(f"Intent classification failed: {e}")
-            # Fallback to general intent
+            if rule_based:
+                return rule_based
             return IntentResult(intent="general", entities={}, confidence=0.3)
 
     def _extract_location_from_text(self, text: str) -> Optional[str]:
@@ -127,5 +227,3 @@ class IntentService:
                 return location
 
         return None
-
-

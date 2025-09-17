@@ -239,22 +239,34 @@ def check_budget(user_info: Dict[str, Any] = AUTH_DEPENDENCY):
         )
 
 async def require_auth_ws(websocket: WebSocket) -> str:
-    """
-    Dependency for authenticating WebSockets.
-    Reads a JWT from the 'sec-websocket-protocol' header.
-    Respects the AUTH_OPTIONAL setting.
-    """
+    """Authenticate WebSocket requests with support for multiple token sources."""
+
     if settings.AUTH_OPTIONAL:
         return "anonymous"
-    token = None
-    if websocket.scope.get("subprotocols"):
+
+    token: Optional[str] = None
+    auth_header = websocket.headers.get("authorization")
+    if auth_header and auth_header.lower().startswith("bearer "):
+        token = auth_header.split(" ", 1)[1].strip()
+
+    if not token:
+        query_token = websocket.query_params.get("token")
+        if query_token:
+            token = query_token
+
+    if not token and websocket.scope.get("subprotocols"):
         for subprotocol in websocket.scope["subprotocols"]:
-            if "ey" in subprotocol:
+            if subprotocol.lower().startswith("bearer "):
+                token = subprotocol.split(" ", 1)[1]
+                break
+            if subprotocol.count(".") == 2:  # looks like a JWT
                 token = subprotocol
                 break
+
     if not token:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-        raise WebSocketDisconnect("Missing auth token in subprotocol")
+        raise WebSocketDisconnect("Missing auth token")
+
     try:
         decoded_token: Dict[str, Any] = auth.verify_id_token(token)
         return decoded_token["uid"]

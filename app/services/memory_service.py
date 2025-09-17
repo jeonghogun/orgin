@@ -80,31 +80,57 @@ class MemoryService:
 
     # The old fact methods are kept for legacy conversation state management.
     async def upsert_user_fact(self, user_id: str, kind: str, key: str, value: Dict[str, Any], confidence: float) -> None:
+        """Persist lightweight conversation facts using the v2 schema."""
+
+        normalized_value = value.get("normalized") or value.get("normalized_value") or key
+        sensitivity = value.get("sensitivity", "low")
         sql = """
-            INSERT INTO user_facts (user_id, kind, key, value_json, confidence, updated_at)
-            VALUES (%s, %s, %s, %s, %s, NOW())
-            ON CONFLICT (user_id, kind, key) DO UPDATE SET
-                value_json = EXCLUDED.value_json, confidence = EXCLUDED.confidence, updated_at = NOW();
+            INSERT INTO user_facts (user_id, kind, fact_type, value_json, confidence, normalized_value, latest, pending_review, sensitivity, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, TRUE, FALSE, %s, NOW())
+            ON CONFLICT (user_id, kind, fact_type) DO UPDATE SET
+                value_json = EXCLUDED.value_json,
+                confidence = EXCLUDED.confidence,
+                normalized_value = EXCLUDED.normalized_value,
+                latest = TRUE,
+                pending_review = FALSE,
+                sensitivity = EXCLUDED.sensitivity,
+                updated_at = NOW();
         """
-        params = (user_id, kind, key, json.dumps(value), confidence)
+        params = (
+            user_id,
+            kind,
+            key,
+            json.dumps(value),
+            confidence,
+            normalized_value,
+            sensitivity,
+        )
         self.db.execute_update(sql, params)
 
     async def get_user_facts(self, user_id: str, kind: Optional[str] = None, key: Optional[str] = None) -> List[Dict[str, Any]]:
         sql = "SELECT * FROM user_facts WHERE user_id = %s"
-        params = [user_id]
+        params: List[Any] = [user_id]
         if kind:
             sql += " AND kind = %s"
             params.append(kind)
-        # Note: 'key' column doesn't exist in the current schema, so we ignore it
-        # The 'fact_type' column exists in the current schema
+        if key:
+            sql += " AND fact_type = %s"
+            params.append(key)
         sql += " ORDER BY confidence DESC"
-        return self.db.execute_query(sql, tuple(params))
+
+        rows = self.db.execute_query(sql, tuple(params))
+        for row in rows:
+            value_json = row.get("value_json")
+            if isinstance(value_json, str):
+                try:
+                    row["value_json"] = json.loads(value_json)
+                except json.JSONDecodeError:
+                    logger.debug("Failed to decode value_json for user fact", exc_info=True)
+        return rows
 
     async def delete_user_fact(self, user_id: str, kind: str, key: str) -> None:
-        # Note: 'key' column doesn't exist in the current schema
-        # We'll use fact_type or just user_id and kind for deletion
-        sql = "DELETE FROM user_facts WHERE user_id = %s AND kind = %s"
-        params = (user_id, kind)
+        sql = "DELETE FROM user_facts WHERE user_id = %s AND kind = %s AND fact_type = %s"
+        params = (user_id, kind, key)
         self.db.execute_update(sql, params)
 
     # --- Unchanged context and promotion methods ---

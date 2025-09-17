@@ -7,9 +7,11 @@ import time
 import uuid
 import shutil
 import json
+import re
 from datetime import datetime
 from typing import Any, Dict, Optional, List
 from fastapi import APIRouter, HTTPException, Request, Depends, File, UploadFile
+from fastapi.responses import StreamingResponse
 
 from app.api.dependencies import (
     AUTH_DEPENDENCY,
@@ -118,17 +120,82 @@ def _detect_fact_query_keywords(content: str) -> Optional[FactType]:
     """키워드 기반 사실 질문 감지 (fallback)"""
     content = content.lower().strip().replace("?", "").replace(".", "")
     query_map: Dict[FactType, List[str]] = {
-        FactType.USER_NAME: ["내 이름", "이름이 뭐", "제 이름"],
-        FactType.JOB: ["내 직업", "무슨 일"],
-        FactType.MBTI: ["내 mbti", "mbti가 뭐"],
-        FactType.HOBBY: ["내 취미", "취미가 뭐"],
-        FactType.GOAL: ["내 목표", "목표가 뭐"],
+        FactType.USER_NAME: [
+            "내 이름", "제 이름", "내이름", "제이름", "내 이름이 뭐", "이름이 뭐",
+            "내 이름 기억", "내가 누구", "내가 누구야"
+        ],
+        FactType.JOB: ["내 직업", "제 직업", "직업이 뭐", "무슨 일", "내직업"],
+        FactType.MBTI: ["내 mbti", "제 mbti", "mbti가 뭐"],
+        FactType.HOBBY: ["내 취미", "제 취미", "취미가 뭐"],
+        FactType.GOAL: ["내 목표", "제 목표", "목표가 뭐"],
     }
     for fact_type, keywords in query_map.items():
         for keyword in keywords:
             if keyword in content:
                 return fact_type
     return None
+
+
+NAME_EXTRACTION_PATTERNS = [
+    re.compile(r"(?:내|제|저의)\s*이름(?:은|은요|은지)?\s*([\w가-힣]+)", re.IGNORECASE),
+    re.compile(r"(?:나를|저를)\s*([\w가-힣]+)\s*라고\s*불러", re.IGNORECASE),
+    re.compile(r"(?:이름은)\s*([\w가-힣]+)", re.IGNORECASE),
+]
+NAME_EXTRACTION_SUFFIXES = ("입니다", "이에요", "예요", "이야", "야", "라고", "라고요", "라고해")
+
+
+def _extract_user_name(text: str) -> Optional[str]:
+    if not text:
+        return None
+    if "이름" not in text and "불러" not in text:
+        return None
+    for pattern in NAME_EXTRACTION_PATTERNS:
+        match = pattern.search(text)
+        if not match:
+            continue
+        candidate = match.group(1).strip()
+        candidate = re.sub(r"[\s,.;!?]+$", "", candidate)
+        for suffix in NAME_EXTRACTION_SUFFIXES:
+            if candidate.endswith(suffix):
+                candidate = candidate[: -len(suffix)]
+        candidate = candidate.strip()
+        if not candidate:
+            continue
+        if any(char.isdigit() for char in candidate):
+            continue
+        if len(candidate) < 2 or len(candidate) > 10:
+            continue
+        return candidate
+    return None
+
+
+async def _stream_immediate_response(
+    room_id: str,
+    user_id: str,
+    storage_service: StorageService,
+    content: str,
+) -> StreamingResponse:
+    ai_message = Message(
+        message_id=generate_id(),
+        room_id=room_id,
+        user_id="ai",
+        content=content,
+        timestamp=get_current_timestamp(),
+        role="ai",
+    )
+    storage_service.save_message(ai_message)
+
+    async def generator():
+        yield json.dumps({"delta": content}) + "\n"
+        yield json.dumps(
+            {
+                "done": True,
+                "message_id": ai_message.message_id,
+                "meta": {"status": "completed", "chunk_count": 1},
+            }
+        ) + "\n"
+
+    return StreamingResponse(generator(), media_type="application/x-ndjson")
 
 # --- Original Endpoints & Helpers ---
 
@@ -254,7 +321,12 @@ async def send_message(
                     if profile and profile.name: facts_to_format = [profile.name]
                 else:
                     user_facts = await user_fact_service.list_facts(user_id=user_id, fact_type=queried_fact_type, latest_only=True)
-                    if user_facts: facts_to_format = [fact['content'] for fact in user_facts if fact.get('content')]
+                    if user_facts:
+                        facts_to_format = [
+                            fact.get('content') or fact.get('value')
+                            for fact in user_facts
+                            if fact.get('content') or fact.get('value')
+                        ]
                 if facts_to_format: await cache_service.set(cache_key, facts_to_format, ttl=3600)
 
             ai_content = f"'{queried_fact_type.value}'에 대해 알려주신 정보가 아직 없어요."
@@ -298,7 +370,28 @@ async def send_message(
 
         logger.info(f"Intent: {intent}, Entities: {entities}")
 
-        if intent == "time":
+        if intent == "name_set":
+            name_value = ""
+            if isinstance(entities, dict):
+                entity_name = entities.get("name")
+                if isinstance(entity_name, str):
+                    name_value = entity_name.strip()
+            if not name_value:
+                name_value = _extract_user_name(content)
+
+            if name_value:
+                await user_fact_service.update_user_profile(user_id, {"name": name_value})
+                await cache_service.delete(f"fact_query:{user_id}:{FactType.USER_NAME.value}")
+                ai_content = f"알겠습니다, {name_value}님! 앞으로 그렇게 불러드릴게요."
+            else:
+                ai_content = "이름을 정확히 알려주시면 기억해 둘게요."
+        elif intent == "name_get":
+            profile = await user_fact_service.get_user_profile(user_id)
+            if profile and profile.name:
+                ai_content = f"당신의 이름은 '{profile.name}'으로 기억하고 있어요."
+            else:
+                ai_content = "아직 이름을 모르고 있어요. 알려주시면 기억해 둘게요!"
+        elif intent == "time":
             ai_content = search_service.now_kst()
         elif intent == "weather":
             location = entities.get("location") or "서울"
@@ -369,6 +462,10 @@ async def send_message_stream(
     fact_extractor_service: FactExtractorService = Depends(get_fact_extractor_service),
     user_fact_service: UserFactService = Depends(get_user_fact_service),
     background_tasks: BackgroundTaskService = Depends(get_background_task_service),
+    search_service: ExternalSearchService = Depends(get_search_service),
+    intent_service: IntentService = Depends(get_intent_service),
+    cache_service: CacheService = Depends(get_cache_service),
+    intent_classifier: IntentClassifierService = Depends(get_intent_classifier_service),
 ):
     """
     Stream a message to a room. This endpoint now supports true streaming.
@@ -394,6 +491,111 @@ async def send_message_stream(
         _handle_fact_extraction,
         user_fact_service, fact_extractor_service, user_message
     )
+
+    # Handle fact queries ("내 이름이 뭐야?" 등) before streaming
+    queried_fact_type = await _detect_fact_query_improved(content, intent_classifier)
+    if queried_fact_type:
+        facts_to_format: List[str] = []
+        cache_key = f"fact_query:{user_id}:{queried_fact_type.value}"
+        cached_facts = await cache_service.get(cache_key)
+
+        if cached_facts:
+            facts_to_format = cached_facts
+        else:
+            if queried_fact_type == FactType.USER_NAME:
+                profile = await user_fact_service.get_user_profile(user_id)
+                if profile and profile.name:
+                    facts_to_format = [profile.name]
+            else:
+                user_facts = await user_fact_service.list_facts(
+                    user_id=user_id,
+                    fact_type=queried_fact_type,
+                    latest_only=True,
+                )
+                if user_facts:
+                    facts_to_format = [
+                        fact.get("content") or fact.get("value")
+                        for fact in user_facts
+                        if fact.get("content") or fact.get("value")
+                    ]
+            if facts_to_format:
+                await cache_service.set(cache_key, facts_to_format, ttl=3600)
+
+        ai_content = f"'{queried_fact_type.value}'에 대해 알려주신 정보가 아직 없어요."
+        if facts_to_format:
+            fact_string = "', '".join(map(str, facts_to_format))
+            if queried_fact_type == FactType.USER_NAME:
+                ai_content = f"당신의 이름은 '{facts_to_format[0]}'(으)로 기억하고 있어요."
+            else:
+                ai_content = f"회원님의 '{queried_fact_type.value}' 정보는 '{fact_string}'입니다."
+
+        return await _stream_immediate_response(
+            room_id=room_id,
+            user_id=user_id,
+            storage_service=storage_service,
+            content=ai_content,
+        )
+
+    # Intent-based handling for quick responses (time, weather, name etc.)
+    intent = ""
+    entities: Dict[str, Any] = {}
+    try:
+        intent_result = await intent_service.classify_intent(content, user_message.message_id)
+        intent = intent_result["intent"]
+        entities = intent_result.get("entities", {})
+    except Exception as intent_error:
+        logger.warning(f"Intent classification fallback in stream path failed: {intent_error}")
+
+    direct_response: Optional[str] = None
+
+    if intent == "name_set":
+        name_value = ""
+        if isinstance(entities, dict):
+            entity_name = entities.get("name")
+            if isinstance(entity_name, str):
+                name_value = entity_name.strip()
+        if not name_value:
+            name_value = _extract_user_name(content) or ""
+
+        if name_value:
+            await user_fact_service.update_user_profile(user_id, {"name": name_value})
+            await cache_service.delete(f"fact_query:{user_id}:{FactType.USER_NAME.value}")
+            direct_response = f"알겠습니다, {name_value}님! 앞으로 그렇게 불러드릴게요."
+        else:
+            direct_response = "이름을 정확히 알려주시면 기억해 둘게요."
+    elif intent == "name_get":
+        profile = await user_fact_service.get_user_profile(user_id)
+        if profile and profile.name:
+            direct_response = f"당신의 이름은 '{profile.name}'으로 기억하고 있어요."
+        else:
+            direct_response = "아직 이름을 모르고 있어요. 알려주시면 기억해 둘게요!"
+    elif intent == "time":
+        direct_response = search_service.now_kst()
+    elif intent == "weather":
+        location = entities.get("location") if isinstance(entities, dict) else None
+        direct_response = search_service.weather(location or "서울")
+    elif intent == "wiki":
+        topic = entities.get("topic") if isinstance(entities, dict) else None
+        direct_response = await search_service.wiki(topic or "인공지능")
+    elif intent == "search":
+        query = entities.get("query") if isinstance(entities, dict) else None
+        search_query = query or "AI"
+        items = await search_service.search(search_query, 3)
+        if items:
+            lines = [f"🔎 '{search_query}' 검색 결과:"]
+            for i, item in enumerate(items, 1):
+                lines.append(f"{i}. {item['title']}\n{item['link']}\n{item['snippet']}")
+            direct_response = "\n\n".join(lines)
+        else:
+            direct_response = f"'{search_query}'에 대한 검색 결과를 찾을 수 없습니다."
+
+    if direct_response is not None:
+        return await _stream_immediate_response(
+            room_id=room_id,
+            user_id=user_id,
+            storage_service=storage_service,
+            content=direct_response,
+        )
 
     async def stream_generator():
         ai_response_content = ""

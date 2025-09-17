@@ -1,7 +1,7 @@
 import logging
 import re
 import json
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from app.services.llm_service import LLMService
 from app.services.fact_types import FactType, FactSensitivity
@@ -18,6 +18,12 @@ class FactExtractorService:
     def __init__(self, llm_service: LLMService):
         self.llm_service = llm_service
         self.korean_consonants_and_vowels = "([ㄱ-ㅎㅏ-ㅣ])"
+        self._name_patterns = [
+            re.compile(r"(?:내|제|저의)\s*이름(?:은|은요|은지)?\s*([\w가-힣]+)", re.IGNORECASE),
+            re.compile(r"(?:나를|저를)\s*([\w가-힣]+)\s*라고\s*불러", re.IGNORECASE),
+            re.compile(r"(?:이름은)\s*([\w가-힣]+)", re.IGNORECASE),
+        ]
+        self._name_suffixes = ("입니다", "이에요", "예요", "이야", "야", "라고", "라고요", "라고해")
 
     def normalize_value(self, fact_type: FactType, value: str) -> str:
         """
@@ -76,9 +82,64 @@ class FactExtractorService:
             facts = result.get("facts", [])
             if not isinstance(facts, list):
                 logger.warning(f"LLM returned non-list for facts: {facts}")
-                return []
+                facts = []
 
-            return facts
         except Exception as e:
             logger.error(f"Failed to extract facts using LLM for message {message_id}: {e}", exc_info=True)
-            return []
+            facts = []
+
+        fallback_facts = self._extract_with_patterns(message_content)
+
+        if not facts and fallback_facts:
+            logger.info(
+                "Fallback fact extraction succeeded for message %s with patterns: %s",
+                message_id,
+                [fact.get("type") for fact in fallback_facts],
+            )
+            return fallback_facts
+
+        if facts and fallback_facts:
+            existing_types = {fact.get("type") for fact in facts}
+            for fallback in fallback_facts:
+                if fallback.get("type") not in existing_types:
+                    facts.append(fallback)
+
+        return facts
+
+    def _clean_name(self, raw_name: str) -> Optional[str]:
+        if not raw_name:
+            return None
+        name = raw_name.strip()
+        name = re.sub(r"[\s,.;!?]+$", "", name)
+        for suffix in self._name_suffixes:
+            if name.endswith(suffix):
+                name = name[: -len(suffix)]
+        name = name.strip()
+        if any(char.isdigit() for char in name):
+            return None
+        if len(name) < 2 or len(name) > 10:
+            return None
+        return name
+
+    def _extract_with_patterns(self, message_content: str) -> list[dict[str, Any]]:
+        extracted: list[dict[str, Any]] = []
+        if not message_content:
+            return extracted
+
+        if "이름" not in message_content and "불러" not in message_content:
+            return extracted
+
+        for pattern in self._name_patterns:
+            match = pattern.search(message_content)
+            if match:
+                candidate = self._clean_name(match.group(1))
+                if candidate:
+                    extracted.append(
+                        {
+                            "type": FactType.USER_NAME.value,
+                            "value": candidate,
+                            "confidence": 0.6,
+                        }
+                    )
+                    break
+        return extracted
