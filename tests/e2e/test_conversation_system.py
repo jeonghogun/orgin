@@ -28,7 +28,36 @@ class TestConversationSystemE2E:
         self.user_id = "test_user_123"
         self.sub_room_id = "test_sub_room_456"
         self.auth_headers = {"Authorization": "Bearer test_token"}
-        
+
+        # Ensure the sub-room exists for the FK constraint used by conversation threads
+        db = get_database_service()
+        current_time = int(time.time())
+        try:
+            db.execute_update(
+                """
+                INSERT INTO rooms (room_id, name, owner_id, type, parent_id, created_at, updated_at, message_count)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (room_id) DO UPDATE
+                SET name = EXCLUDED.name,
+                    owner_id = EXCLUDED.owner_id,
+                    type = EXCLUDED.type,
+                    parent_id = EXCLUDED.parent_id,
+                    updated_at = EXCLUDED.updated_at
+                """,
+                (
+                    self.sub_room_id,
+                    "Test Sub Room",
+                    self.user_id,
+                    "sub",
+                    None,
+                    current_time,
+                    current_time,
+                    0,
+                ),
+            )
+        except Exception as exc:
+            print(f"Room setup error: {exc}")
+
         # Cleanup after test
         yield
         await self._cleanup_test_data()
@@ -40,9 +69,14 @@ class TestConversationSystemE2E:
             # Clean up test threads and messages
             db.execute_update("DELETE FROM conversation_messages WHERE user_id = %s", (self.user_id,))
             db.execute_update("DELETE FROM conversation_threads WHERE sub_room_id = %s", (self.sub_room_id,))
-            db.execute_update("DELETE FROM attachments WHERE thread_id LIKE %s", (f"test_thread_%",))
+            try:
+                db.execute_update("DELETE FROM attachments WHERE thread_id LIKE %s", (f"test_thread_%",))
+            except Exception:
+                # Legacy schemas may not include the thread_id column; ignore errors during cleanup
+                pass
             db.execute_update("DELETE FROM usage_tracking WHERE user_id = %s", (self.user_id,))
             db.execute_update("DELETE FROM daily_usage_metrics WHERE user_id = %s", (self.user_id,))
+            db.execute_update("DELETE FROM rooms WHERE room_id = %s", (self.sub_room_id,))
         except Exception as e:
             print(f"Cleanup error: {e}")
     

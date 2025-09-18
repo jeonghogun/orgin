@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 class Attachment(BaseModel):
     id: str
+    thread_id: Optional[str] = None
     kind: Literal["file", "image", "audio", "video", "url"]
     name: str
     mime: str

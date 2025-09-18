@@ -1,6 +1,12 @@
+import logging
+
 from celery import Celery, Task
-from app.config.settings import settings
+
+from app.config.settings import get_effective_celery_url
 from app.utils.trace_id import trace_id_var
+
+
+logger = logging.getLogger(__name__)
 
 class ContextTask(Task):
     def __call__(self, *args, **kwargs):
@@ -11,10 +17,15 @@ class ContextTask(Task):
             trace_id_var.set(trace_id)
         return super().__call__(*args, **kwargs)
 
+redis_url = get_effective_celery_url()
+if not redis_url:
+    redis_url = "redis://localhost:6379/0"
+    logger.warning("No Celery broker URL configured; defaulting to %s", redis_url)
+
 celery_app = Celery(
     "tasks",
-    broker=settings.REDIS_URL,
-    backend=settings.REDIS_URL,
+    broker=redis_url,
+    backend=redis_url,
     include=["app.tasks.review_tasks", "app.tasks.persona_tasks", "app.tasks.fact_tasks", "app.tasks.memory_tasks", "app.tasks.kpi_tasks", "app.tasks.embedding_tasks"],
     Task=ContextTask,  # Use the custom task class
 )

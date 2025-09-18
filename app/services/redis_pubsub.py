@@ -1,7 +1,8 @@
 import asyncio
 import logging
 import redis.asyncio as redis
-from app.config.settings import settings
+from redis.exceptions import RedisError
+from app.config.settings import get_effective_redis_url
 from app.api.routes.websockets import manager as websocket_manager
 
 logger = logging.getLogger(__name__)
@@ -9,23 +10,45 @@ logger = logging.getLogger(__name__)
 class RedisPubSubManager:
     def __init__(self):
         self.redis_client = None
+        self._redis_url_signature = None
         self.pubsub = None
         self.is_running = False
 
     async def _get_redis_client(self):
-        if not self.redis_client:
-            self.redis_client = await redis.from_url(settings.REDIS_URL, encoding="utf-8", decode_responses=True)
+        target_url = get_effective_redis_url()
+        if not target_url:
+            return None
+
+        if not self.redis_client or self._redis_url_signature != target_url:
+            if self.redis_client:
+                try:
+                    await self.redis_client.close()
+                except Exception:
+                    pass
+            try:
+                self.redis_client = redis.from_url(target_url, encoding="utf-8", decode_responses=True)
+                self._redis_url_signature = target_url
+            except RedisError as exc:
+                logger.warning("Failed to initialize Redis Pub/Sub client at %s: %s", target_url, exc)
+                self.redis_client = None
+                self._redis_url_signature = None
         return self.redis_client
 
     async def publish(self, channel: str, message: str):
         """Publish a message to a Redis channel."""
         client = await self._get_redis_client()
+        if not client:
+            logger.info("Skipping Redis publish to %s because Redis is unavailable", channel)
+            return
         await client.publish(channel, message)
         logger.info(f"Published to {channel}: {message[:100]}")
 
     async def _listener(self):
         """Listen for messages and broadcast to connected WebSockets."""
         client = await self._get_redis_client()
+        if not client:
+            logger.warning("Redis Pub/Sub listener could not start because Redis is unavailable")
+            return
         self.pubsub = client.pubsub()
         # Subscribe to a pattern that matches all review channels
         await self.pubsub.psubscribe("review_*")
@@ -56,7 +79,8 @@ class RedisPubSubManager:
         """Stop the Redis listener."""
         if self.is_running and self.pubsub:
             await self.pubsub.unsubscribe()
-            await self.redis_client.close()
+            if self.redis_client:
+                await self.redis_client.close()
             self.is_running = False
             logger.info("Redis Pub/Sub listener stopped.")
 
@@ -64,11 +88,15 @@ class RedisPubSubManager:
         """Publish a message to a Redis channel synchronously for Celery workers."""
         import redis as sync_redis
         sync_client = None
+        target_url = get_effective_redis_url()
+        if not target_url:
+            logger.info("Skipping synchronous Redis publish to %s because Redis is unavailable", channel)
+            return
         try:
             # Create a new synchronous client for this operation.
             # This is not the most efficient way, but it's simple and avoids
             # managing a separate long-lived synchronous client.
-            sync_client = sync_redis.from_url(settings.REDIS_URL, encoding="utf-8", decode_responses=True)
+            sync_client = sync_redis.from_url(target_url, encoding="utf-8", decode_responses=True)
             sync_client.publish(channel, message)
             logger.info(f"Published synchronously to {channel}: {message[:100]}")
         except Exception as e:

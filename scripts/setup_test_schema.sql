@@ -95,6 +95,7 @@ CREATE TABLE IF NOT EXISTS user_profiles (
 CREATE TABLE IF NOT EXISTS conversation_messages (
     id VARCHAR(255) PRIMARY KEY,
     thread_id VARCHAR(255) NOT NULL REFERENCES conversation_threads(id) ON DELETE CASCADE,
+    user_id VARCHAR(255) NOT NULL,
     role VARCHAR(50) NOT NULL,
     content TEXT NOT NULL,
     model VARCHAR(255),
@@ -104,8 +105,31 @@ CREATE TABLE IF NOT EXISTS conversation_messages (
     content_tsvector TSVECTOR
 );
 
+-- Ensure legacy test databases pick up the user_id column and its data
+ALTER TABLE conversation_messages
+    ADD COLUMN IF NOT EXISTS user_id VARCHAR(255);
+
+UPDATE conversation_messages
+SET user_id = meta->>'userId'
+WHERE user_id IS NULL AND meta IS NOT NULL AND meta ? 'userId';
+
+UPDATE conversation_messages cm
+SET user_id = ct.user_id
+FROM conversation_threads ct
+WHERE cm.user_id IS NULL
+  AND cm.thread_id = ct.id
+  AND cm.role = 'user';
+
+UPDATE conversation_messages
+SET user_id = 'system'
+WHERE user_id IS NULL;
+
+ALTER TABLE conversation_messages
+    ALTER COLUMN user_id SET NOT NULL;
+
 CREATE TABLE IF NOT EXISTS attachments (
     id VARCHAR(255) PRIMARY KEY,
+    thread_id VARCHAR(255) REFERENCES conversation_threads(id) ON DELETE CASCADE,
     kind VARCHAR(50) NOT NULL,
     name VARCHAR(500) NOT NULL,
     mime VARCHAR(100) NOT NULL,
@@ -114,14 +138,19 @@ CREATE TABLE IF NOT EXISTS attachments (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE attachments
+    ADD COLUMN IF NOT EXISTS thread_id VARCHAR(255) REFERENCES conversation_threads(id) ON DELETE CASCADE;
+
 CREATE INDEX IF NOT EXISTS idx_reviews_room_id ON reviews(room_id);
-CREATE INDEX IF NOT EXISTS idx_conversation_threads_sub_room_id ON conversation_threads(sub_room_id);
-CREATE INDEX IF NOT EXISTS idx_conversation_threads_created_at ON conversation_threads(created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_conversation_threads_pinned_archived ON conversation_threads(pinned, archived);
+CREATE INDEX IF NOT EXISTS ix_conversation_threads_sub_room_id ON conversation_threads(sub_room_id);
+CREATE INDEX IF NOT EXISTS ix_conversation_threads_created_at ON conversation_threads(created_at DESC);
+CREATE INDEX IF NOT EXISTS ix_conversation_threads_pinned_archived ON conversation_threads(pinned, archived);
 CREATE INDEX IF NOT EXISTS idx_user_profiles_user_id ON user_profiles(user_id);
-CREATE INDEX IF NOT EXISTS idx_conversation_messages_thread_id ON conversation_messages(thread_id);
-CREATE INDEX IF NOT EXISTS idx_conversation_messages_created_at ON conversation_messages(created_at DESC);
+CREATE INDEX IF NOT EXISTS ix_conversation_messages_thread_id ON conversation_messages(thread_id);
+CREATE INDEX IF NOT EXISTS ix_conversation_messages_user_id ON conversation_messages(user_id);
+CREATE INDEX IF NOT EXISTS ix_conversation_messages_created_at ON conversation_messages(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_conversation_messages_content_tsvector ON conversation_messages USING GIN (content_tsvector);
+CREATE INDEX IF NOT EXISTS idx_attachments_thread_id ON attachments(thread_id);
 
 DO $$
 BEGIN
@@ -158,3 +187,27 @@ CREATE TABLE IF NOT EXISTS review_metrics (
     round_metrics JSONB,
     created_at BIGINT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS usage_tracking (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id VARCHAR(255) NOT NULL,
+    thread_id VARCHAR(255),
+    usage_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    total_tokens INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_usage_tracking_user_date ON usage_tracking(user_id, usage_date);
+
+CREATE TABLE IF NOT EXISTS daily_usage_metrics (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id VARCHAR(255) NOT NULL,
+    usage_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    prompt_tokens INTEGER NOT NULL DEFAULT 0,
+    completion_tokens INTEGER NOT NULL DEFAULT 0,
+    total_tokens INTEGER NOT NULL DEFAULT 0,
+    cost_usd NUMERIC(12,6) DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_daily_usage_metrics_user_date ON daily_usage_metrics(user_id, usage_date);

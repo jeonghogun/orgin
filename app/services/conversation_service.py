@@ -7,9 +7,10 @@ from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any
 
 import redis
+from redis.exceptions import RedisError
 from psycopg2.extras import Json
 
-from app.config.settings import settings
+from app.config.settings import get_effective_redis_url, settings
 from app.models.conversation_schemas import (
     Attachment,
     ConversationMessage,
@@ -24,31 +25,71 @@ logger = logging.getLogger(__name__)
 class ConversationService:
     def __init__(self):
         self.db: DatabaseService = get_database_service()
-        self.redis_client = redis.from_url(settings.REDIS_URL) if settings.REDIS_URL else None
+        self._redis_client: Optional[redis.Redis] = None
+        self._redis_url_signature: Optional[str] = None
+
+    def _ensure_redis_client(self) -> Optional[redis.Redis]:
+        """Lazily initialize (or refresh) the Redis client with current overrides."""
+
+        target_url = get_effective_redis_url()
+        if not target_url:
+            if self._redis_client is not None:
+                try:
+                    self._redis_client.close()
+                except RedisError:
+                    pass
+            self._redis_client = None
+            self._redis_url_signature = None
+            return None
+
+        if self._redis_client is None or self._redis_url_signature != target_url:
+            try:
+                self._redis_client = redis.from_url(target_url)
+                self._redis_url_signature = target_url
+            except RedisError as exc:
+                logger.warning("Failed to initialize Redis client at %s: %s", target_url, exc)
+                self._redis_client = None
+                self._redis_url_signature = None
+
+        return self._redis_client
+
+    @property
+    def redis_client(self) -> Optional[redis.Redis]:
+        return self._ensure_redis_client()
 
     def increment_token_usage(self, user_id: str, token_count: int) -> int:
         """Increments a user's token usage for the day in Redis."""
-        if not self.redis_client:
+        redis_client = self.redis_client
+        if not redis_client:
             logger.info(f"Token usage tracking skipped (Redis not available)")
             return 0
         today = time.strftime("%Y-%m-%d")
         key = f"usage:{user_id}:{today}"
 
-        new_usage = self.redis_client.incrby(key, token_count)
-        # Set expiry to 24 hours on first increment
-        if new_usage == token_count:
-            self.redis_client.expire(key, 86400) # 24 hours
+        try:
+            new_usage = redis_client.incrby(key, token_count)
+            # Set expiry to 24 hours on first increment
+            if new_usage == token_count:
+                redis_client.expire(key, 86400) # 24 hours
+        except RedisError as exc:
+            logger.warning("Token usage tracking skipped due to Redis error: %s", exc)
+            return 0
 
         return new_usage
 
     def get_today_usage(self, user_id: str) -> int:
         """Gets a user's token usage for the day from Redis."""
-        if not self.redis_client:
+        redis_client = self.redis_client
+        if not redis_client:
             logger.info(f"Token usage tracking skipped (Redis not available)")
             return 0
         today = time.strftime("%Y-%m-%d")
         key = f"usage:{user_id}:{today}"
-        usage = self.redis_client.get(key)
+        try:
+            usage = redis_client.get(key)
+        except RedisError as exc:
+            logger.warning("Failed to read token usage from Redis: %s", exc)
+            return 0
         return int(usage) if usage else 0
 
     def create_thread(self, room_id: str, user_id: str, thread_data: ConversationThreadCreate) -> ConversationThread:
@@ -85,13 +126,14 @@ class ConversationService:
         meta_payload: Dict[str, Any] = meta.copy() if isinstance(meta, dict) else {}
         meta_payload.setdefault("userId", user_id)
         insert_query = """
-            INSERT INTO conversation_messages (id, thread_id, role, content, model, status, meta)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            RETURNING id, thread_id, role, content, model, status, created_at, meta
+            INSERT INTO conversation_messages (id, thread_id, user_id, role, content, model, status, meta)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id, thread_id, user_id, role, content, model, status, created_at, meta
         """
         params = (
             message_id,
             thread_id,
+            user_id,
             role,
             content,
             model,
@@ -110,6 +152,7 @@ class ConversationService:
         return {
             "id": db_row["id"],
             "thread_id": db_row["thread_id"],
+            "user_id": db_row.get("user_id"),
             "role": db_row["role"],
             "content": db_row["content"],
             "status": db_row["status"],
@@ -125,7 +168,7 @@ class ConversationService:
         self.db.execute_update(query, params)
 
     def get_messages_by_thread(self, thread_id: str, cursor: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
-        sql_query = "SELECT id, thread_id, role, content, model, status, created_at, meta FROM conversation_messages WHERE thread_id = %s"
+        sql_query = "SELECT id, thread_id, user_id, role, content, model, status, created_at, meta FROM conversation_messages WHERE thread_id = %s"
         params: List[Any] = [thread_id]
         if cursor:
             sql_query += " AND created_at < %s"
@@ -136,13 +179,13 @@ class ConversationService:
         return [self._map_message_row(row) for row in results]
 
     async def get_all_messages_by_thread(self, thread_id: str) -> List[Dict[str, Any]]:
-        query = "SELECT id, thread_id, role, content, model, status, created_at, meta FROM conversation_messages WHERE thread_id = %s ORDER BY created_at ASC"
+        query = "SELECT id, thread_id, user_id, role, content, model, status, created_at, meta FROM conversation_messages WHERE thread_id = %s ORDER BY created_at ASC"
         params = (thread_id,)
         results = await asyncio.to_thread(self.db.execute_query, query, params)
         return [self._map_message_row(row) for row in results]
 
     def get_message_by_id(self, message_id: str) -> Optional[Dict[str, Any]]:
-        query = "SELECT id, thread_id, role, content, model, status, created_at, meta FROM conversation_messages WHERE id = %s"
+        query = "SELECT id, thread_id, user_id, role, content, model, status, created_at, meta FROM conversation_messages WHERE id = %s"
         params = (message_id,)
         results = self.db.execute_query(query, params)
         if not results:
@@ -169,7 +212,7 @@ class ConversationService:
         return new_message
 
     def get_attachment_by_id(self, attachment_id: str) -> Optional[Dict[str, Any]]:
-        query = "SELECT id, kind, name, mime, size, url, created_at FROM attachments WHERE id = %s"
+        query = "SELECT id, thread_id, kind, name, mime, size, url, created_at FROM attachments WHERE id = %s"
         params = (attachment_id,)
         results = self.db.execute_query(query, params)
         return results[0] if results else None
@@ -238,15 +281,16 @@ class ConversationService:
                 break
         return list(reversed(versions)) # Return oldest first
 
-    def create_attachment(self, attachment_data: Dict[str, Any]) -> Attachment:
+    def create_attachment(self, attachment_data: Dict[str, Any], thread_id: Optional[str] = None) -> Attachment:
         attachment_id = f"att_{generate_id()}"
         insert_query = """
-            INSERT INTO attachments (id, kind, name, mime, size, url)
-            VALUES (%s, %s, %s, %s, %s, %s)
-            RETURNING id, kind, name, mime, size, url, created_at
+            INSERT INTO attachments (id, thread_id, kind, name, mime, size, url)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            RETURNING id, thread_id, kind, name, mime, size, url, created_at
         """
         params = (
             attachment_id,
+            thread_id,
             attachment_data["kind"],
             attachment_data["name"],
             attachment_data["mime"],
@@ -259,6 +303,7 @@ class ConversationService:
         row = rows[0]
         payload = {
             "id": row["id"],
+            "thread_id": row.get("thread_id"),
             "kind": row["kind"],
             "name": row["name"],
             "mime": row["mime"],

@@ -2,7 +2,8 @@ import logging
 import shutil
 import uuid
 from pathlib import Path
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
+from typing import Optional
+from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
 
 from app.models.conversation_schemas import Attachment
 from app.services.conversation_service import ConversationService, get_conversation_service
@@ -18,6 +19,7 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 @router.post("/uploads", response_model=Attachment, status_code=201)
 async def upload_file(
     file: UploadFile = File(...),
+    thread_id: Optional[str] = Form(None),
     convo_service: ConversationService = Depends(get_conversation_service),
 ):
     if not file.filename:
@@ -47,7 +49,7 @@ async def upload_file(
     }
 
     try:
-        created_attachment = convo_service.create_attachment(attachment_data)
+        created_attachment = convo_service.create_attachment(attachment_data, thread_id=thread_id)
         process_attachment.delay(created_attachment.id)
 
         # For client consumption, prefer a signed URL when the file lives in Cloud Storage.

@@ -4,6 +4,7 @@ import time
 import os
 from typing import Optional, List, Dict, Any, Tuple
 from contextlib import contextmanager
+from urllib.parse import urlparse, urlunparse
 from psycopg2.pool import SimpleConnectionPool
 from psycopg2.extensions import connection, cursor as CursorClass
 
@@ -39,8 +40,40 @@ class DatabaseService:
             self.db_encryption_key = secret_provider.get("DB_ENCRYPTION_KEY")
             if not self.db_encryption_key:
                 raise ValueError("DB_ENCRYPTION_KEY not found.")
+
+        self._apply_test_overrides()
         
         self.pool: Optional[SimpleConnectionPool] = None
+
+    def _apply_test_overrides(self) -> None:
+        """Allow test-specific environment variables to override connection details."""
+
+        override_host = os.getenv("TEST_DB_HOST")
+        override_port = os.getenv("TEST_DB_PORT")
+
+        if not override_host and not override_port:
+            return
+
+        parsed = urlparse(self.database_url)
+
+        # Split userinfo and host/port sections of the netloc
+        userinfo, at, hostport = parsed.netloc.rpartition("@")
+        host, _, port = hostport.partition(":")
+
+        new_host = override_host or host
+        new_port = override_port or port
+
+        # Reconstruct the netloc respecting available components
+        host_segment = new_host or host
+        if new_port:
+            host_segment = f"{host_segment}:{new_port}"
+
+        if at:
+            netloc = f"{userinfo}@{host_segment}"
+        else:
+            netloc = host_segment
+
+        self.database_url = urlunparse(parsed._replace(netloc=netloc))
 
     def _get_or_create_pool(self) -> SimpleConnectionPool:
         """Lazily creates and returns the connection pool."""
