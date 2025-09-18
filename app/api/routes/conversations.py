@@ -43,9 +43,15 @@ async def create_thread(room_id: str, thread_data: ConversationThreadCreate, use
     return convo_service.create_thread(room_id, user_id, thread_data)
 
 @router.get("/rooms/{room_id}/threads", response_model=List[ConversationThread])
-async def list_threads(room_id: str, query: Optional[str] = None, pinned: Optional[bool] = None, archived: Optional[bool] = None, convo_service: ConversationService = Depends(get_conversation_service)):
+async def list_threads(
+    room_id: str,
+    query: Optional[str] = None,
+    pinned: Optional[bool] = None,
+    archived: Optional[bool] = None,
+    convo_service: ConversationService = Depends(get_conversation_service),
+):
     # Note: The service layer will need to be updated to handle generic room_id
-    return convo_service.get_threads_by_room(room_id, query, pinned, archived)
+    return await convo_service.get_threads_by_room(room_id, query, pinned, archived)
 
 @router.post("/threads/{thread_id}/messages", response_model=Dict[str, str], dependencies=[Depends(check_budget)])
 async def create_message(thread_id: str, request_data: CreateMessageRequest, user_info: Dict[str, Any] = AUTH_DEPENDENCY, convo_service: ConversationService = Depends(get_conversation_service)):

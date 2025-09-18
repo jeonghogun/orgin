@@ -139,6 +139,32 @@ class MemoryService:
 
         return legacy_entries
 
+    async def get_context(self, room_id: str, user_id: str) -> Optional[ConversationContext]:
+        """Return the cached conversation context or generate a fresh one from recent messages."""
+        try:
+            messages = await asyncio.to_thread(storage_service.get_messages, room_id)
+        except Exception as fetch_error:
+            logger.warning(
+                "Failed to load messages for context generation (room=%s, user=%s): %s",
+                room_id,
+                user_id,
+                fetch_error,
+                exc_info=True,
+            )
+            messages = []
+
+        try:
+            return await self.get_conversation_context(room_id, user_id, messages)
+        except Exception as context_error:
+            logger.warning(
+                "Failed to build conversation context (room=%s, user=%s): %s",
+                room_id,
+                user_id,
+                context_error,
+                exc_info=True,
+            )
+            return None
+
     # --- Helper methods for hybrid retrieval remain unchanged ---
     async def _bm25_candidates(self, query: str, room_ids: List[str], user_id: str, encryption_key: str) -> List[Dict[str, Any]]:
         if not query or not room_ids:

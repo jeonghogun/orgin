@@ -1,8 +1,9 @@
 """
 Message-related API endpoints
 """
-import logging
+import inspect
 import json
+import logging
 import re
 from datetime import datetime
 from typing import Any, Dict, Optional, List
@@ -52,6 +53,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="", tags=["messages"])
 
 # --- V2 Fact Extraction/Retrieval Helpers ---
+
+
+async def _maybe_get_room(storage_service: StorageService, room_id: str):
+    room = storage_service.get_room(room_id)
+    if inspect.isawaitable(room):
+        room = await room
+    return room
 
 async def _handle_fact_extraction(
     user_fact_service: UserFactService,
@@ -341,7 +349,7 @@ async def send_message(
         # Fact extraction already executed above (or scheduled via background tasks on failure).
         
         # --- Original Intent/Action Processing Logic ---
-        current_room = storage_service.get_room(room_id)
+        current_room = await _maybe_get_room(storage_service, room_id)
         if current_room and current_room.type == RoomType.REVIEW:
             # ... existing review room logic ...
             pass
