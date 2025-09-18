@@ -191,7 +191,10 @@ class MetricsSummary(BaseModel):
     avg_tokens: float
     median_tokens: float
     p95_tokens: float
-    provider_summary: Dict[str, Dict[str, Any]] = {}
+    provider_summary: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
+    system: Dict[str, Any] = Field(default_factory=dict)
+    llm: Dict[str, Any] = Field(default_factory=dict)
+    errors: Dict[str, Any] = Field(default_factory=dict)
 
 
 class MetricsResponse(BaseModel):

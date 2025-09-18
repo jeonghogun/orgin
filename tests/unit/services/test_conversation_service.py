@@ -108,7 +108,7 @@ def test_create_message(conversation_service, mock_db_service):
         "model": "gpt-4o",
         "status": "complete",
         "created_at": now_dt,
-        "meta": {"some": "data"}
+        "meta": {"some": "data", "model": "gpt-4o"}
     }]
     result = conversation_service.create_message(
         thread_id="thr_123",
@@ -124,9 +124,11 @@ def test_create_message(conversation_service, mock_db_service):
     insert_query, params = call_args[0], call_args[1]
 
     assert "INSERT INTO conversation_messages" in insert_query
-    assert "(id, thread_id, role, content, model, status, meta)" in insert_query
+    assert "(id, thread_id, user_id, role, content, model, status, meta)" in insert_query
     assert params[1] == "thr_123"
-    assert params[2] == "user"
-    assert params[3] == "Hello"
+    assert params[2] == "anonymous"
+    assert params[3] == "user"
+    assert params[4] == "Hello"
     mock_db_service.execute_update.assert_called()
     assert result["thread_id"] == "thr_123"
+    assert result["meta"]["model"] == "gpt-4o"

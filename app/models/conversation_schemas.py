@@ -42,6 +42,7 @@ class MessageMeta(BaseModel):
     parent_id: Optional[str] = Field(default=None, alias='parentId') # For version tree
     attachments: Optional[List[Attachment]] = None
     tool_calls: Optional[List[ToolCall]] = None
+    model: Optional[str] = None
 
 # --- Conversation Message Schemas ---
 

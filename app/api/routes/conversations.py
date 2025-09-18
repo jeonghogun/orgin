@@ -18,6 +18,7 @@ from app.models.conversation_schemas import (
     ConversationMessageUpdate,
     ConversationThread,
     ConversationThreadCreate,
+    ConversationThreadUpdate,
     CreateMessageRequest,
 )
 from app.services.conversation_service import ConversationService, get_conversation_service
@@ -58,9 +59,26 @@ async def create_message(thread_id: str, request_data: CreateMessageRequest, use
     user_id = user_info.get("user_id", "anonymous")
     # Associate attachments with the user message
     meta = {"attachments": [att["id"] for att in request_data.attachments]} if request_data.attachments else None
-    convo_service.create_message(thread_id=thread_id, role="user", content=request_data.content, status="complete", meta=meta, user_id=user_id)
+    convo_service.create_message(
+        thread_id=thread_id,
+        role="user",
+        content=request_data.content,
+        status="complete",
+        meta=meta,
+        user_id=user_id,
+        model=request_data.model,
+    )
 
-    assistant_message = convo_service.create_message(thread_id=thread_id, role="assistant", content="", status="draft", model=request_data.model, user_id=user_id)
+    assistant_meta = {"model": request_data.model} if request_data.model else None
+    assistant_message = convo_service.create_message(
+        thread_id=thread_id,
+        role="assistant",
+        content="",
+        status="draft",
+        model=request_data.model,
+        user_id=user_id,
+        meta=assistant_meta,
+    )
 
     # Cache the user_id to be used by the stream
     redis_client = convo_service.redis_client
@@ -210,6 +228,47 @@ async def stream_message(
 async def get_messages(thread_id: str, cursor: Optional[str] = None, limit: int = 50, convo_service: ConversationService = Depends(get_conversation_service)):
     messages_data = convo_service.get_messages_by_thread(thread_id, cursor, limit)
     return [ConversationMessage(**msg) for msg in messages_data]
+
+
+@router.patch("/threads/{thread_id}", response_model=ConversationThread)
+async def update_thread(
+    thread_id: str,
+    updates: ConversationThreadUpdate,
+    user_info: Dict[str, Any] = AUTH_DEPENDENCY,
+    convo_service: ConversationService = Depends(get_conversation_service),
+):
+    thread = convo_service.get_thread_by_id(thread_id)
+    if not thread:
+        raise HTTPException(status_code=404, detail="Thread not found")
+    if thread.user_id and thread.user_id != user_info.get("user_id"):
+        raise HTTPException(status_code=403, detail="Cannot modify another user's thread")
+
+    updated_payload = convo_service.update_thread(
+        thread_id,
+        title=updates.title,
+        pinned=updates.pinned,
+        archived=updates.archived,
+    )
+    if not updated_payload:
+        raise HTTPException(status_code=404, detail="Thread not found")
+    return updated_payload
+
+
+@router.delete("/threads/{thread_id}", status_code=204)
+async def delete_thread(
+    thread_id: str,
+    user_info: Dict[str, Any] = AUTH_DEPENDENCY,
+    convo_service: ConversationService = Depends(get_conversation_service),
+):
+    thread = convo_service.get_thread_by_id(thread_id)
+    if not thread:
+        raise HTTPException(status_code=404, detail="Thread not found")
+    if thread.user_id and thread.user_id != user_info.get("user_id"):
+        raise HTTPException(status_code=403, detail="Cannot delete another user's thread")
+
+    if not convo_service.delete_thread(thread_id):
+        raise HTTPException(status_code=404, detail="Thread not found")
+    return Response(status_code=204)
 
 @router.patch("/messages/{message_id}", response_model=Dict[str, str], dependencies=[Depends(check_budget)])
 async def edit_message(message_id: str, update_data: ConversationMessageUpdate, convo_service: ConversationService = Depends(get_conversation_service)):

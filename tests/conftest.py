@@ -404,6 +404,8 @@ def authenticated_client(isolated_test_env, test_user_id: str):
             return None
         async def get_user_facts(self, *args, **kwargs):
             return []
+        async def get_context(self, room_id: str, user_id: str):
+            return None
     class _DummyRagService:
         async def get_context_from_attachments(self, user_query: str, thread_id: str):
             return ""

@@ -57,6 +57,23 @@ class ConversationService:
     def redis_client(self) -> Optional[redis.Redis]:
         return self._ensure_redis_client()
 
+    @redis_client.setter
+    def redis_client(self, value: Optional[redis.Redis]) -> None:
+        """Allow tests to inject a Redis client directly."""
+        if value is None:
+            if self._redis_client is not None:
+                try:
+                    self._redis_client.close()
+                except RedisError:
+                    pass
+            self._redis_client = None
+            self._redis_url_signature = None
+            return
+
+        self._redis_client = value
+        # Use a sentinel signature to avoid overwriting injected clients.
+        self._redis_url_signature = "__injected__"
+
     def increment_token_usage(self, user_id: str, token_count: int) -> int:
         """Increments a user's token usage for the day in Redis."""
         redis_client = self.redis_client
@@ -103,6 +120,15 @@ class ConversationService:
         rows = self.db.execute_returning(insert_query, params)
         if not rows:
             raise RuntimeError("Failed to create conversation thread")
+
+        # Touch the parent room to keep ordering consistent for the UI.
+        try:
+            self.db.execute_update(
+                "UPDATE rooms SET updated_at = %s WHERE room_id = %s",
+                (int(time.time()), room_id),
+            )
+        except Exception as exc:
+            logger.warning("Failed to bump parent room timestamp for %s: %s", room_id, exc)
         return self._map_thread_row(rows[0])
 
     async def get_threads_by_room(self, room_id: str, query: Optional[str] = None, pinned: Optional[bool] = None, archived: Optional[bool] = None) -> List[ConversationThread]:
@@ -125,6 +151,8 @@ class ConversationService:
         message_id = f"msg_{generate_id()}"
         meta_payload: Dict[str, Any] = meta.copy() if isinstance(meta, dict) else {}
         meta_payload.setdefault("userId", user_id)
+        if model and "model" not in meta_payload:
+            meta_payload["model"] = model
         insert_query = """
             INSERT INTO conversation_messages (id, thread_id, user_id, role, content, model, status, meta)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
@@ -160,6 +188,52 @@ class ConversationService:
             "meta": normalized_meta,
             "created_at": created_at,
         }
+
+    def update_thread(
+        self,
+        thread_id: str,
+        *,
+        title: Optional[str] = None,
+        pinned: Optional[bool] = None,
+        archived: Optional[bool] = None,
+    ) -> Optional[ConversationThread]:
+        updates: List[str] = []
+        params: List[Any] = []
+        if title is not None:
+            updates.append("title = %s")
+            params.append(title)
+        if pinned is not None:
+            updates.append("pinned = %s")
+            params.append(pinned)
+        if archived is not None:
+            updates.append("archived = %s")
+            params.append(archived)
+
+        if not updates:
+            return self.get_thread_by_id(thread_id)
+
+        updates.append("updated_at = NOW()")
+        query = (
+            "UPDATE conversation_threads SET "
+            + ", ".join(updates)
+            + " WHERE id = %s RETURNING id, sub_room_id, user_id, title, pinned, archived, created_at, updated_at"
+        )
+        params.append(thread_id)
+        rows = self.db.execute_returning(query, tuple(params))
+        if not rows:
+            return None
+        return self._map_thread_row(rows[0])
+
+    def delete_thread(self, thread_id: str) -> bool:
+        deleted = self.db.execute_update("DELETE FROM conversation_threads WHERE id = %s", (thread_id,))
+        return deleted > 0
+
+    def get_thread_by_id(self, thread_id: str) -> Optional[ConversationThread]:
+        query = "SELECT id, sub_room_id, user_id, title, pinned, archived, created_at, updated_at FROM conversation_threads WHERE id = %s"
+        rows = self.db.execute_query(query, (thread_id,))
+        if not rows:
+            return None
+        return self._map_thread_row(rows[0])
 
     def update_message(self, message_id: str, content: str, status: str, meta: Dict[str, Any]) -> None:
         meta_payload = Json(meta) if meta else None
@@ -369,6 +443,8 @@ class ConversationService:
         meta = self._deserialize_meta(row.get("meta"))
         if "userId" not in meta and "user_id" in row:
             meta["userId"] = row["user_id"]
+        if row.get("model") and "model" not in meta:
+            meta["model"] = row["model"]
         created_at = self._normalize_timestamp(row.get("created_at"))
         return {
             "id": row["id"],
