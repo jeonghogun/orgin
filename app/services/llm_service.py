@@ -20,8 +20,15 @@ except ImportError:  # pragma: no cover - legacy OpenAI library compatibility
 import google.generativeai as genai
 import anthropic
 from anthropic import Anthropic, AsyncAnthropic
-from openai.types.chat import ChatCompletionMessageParam
-from openai.types.chat.completion_create_params import ResponseFormat
+try:  # pragma: no cover - optional typing helpers for newer openai SDKs
+    from openai.types.chat import ChatCompletionMessageParam
+except (ImportError, AttributeError):
+    ChatCompletionMessageParam = Dict[str, Any]  # type: ignore[assignment]
+
+try:  # pragma: no cover - optional typing helpers for newer openai SDKs
+    from openai.types.chat.completion_create_params import ResponseFormat
+except (ImportError, AttributeError):
+    ResponseFormat = Dict[str, Any]  # type: ignore[assignment]
 
 from app.config.settings import settings
 from app.core.secrets import SecretProvider
