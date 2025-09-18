@@ -3,6 +3,8 @@ Metrics-related API endpoints
 """
 
 import logging
+import time
+from collections import defaultdict
 from typing import Dict, Optional, List, Any
 from fastapi import APIRouter, HTTPException, Depends
 import numpy as np
@@ -14,7 +16,75 @@ from app.models.schemas import MetricsResponse, MetricsSummary, ReviewMetrics
 
 logger = logging.getLogger(__name__)
 
-from collections import defaultdict
+
+def _empty_summary() -> MetricsSummary:
+    now_ts = int(time.time())
+    return MetricsSummary(
+        total_reviews=0,
+        avg_duration=0.0,
+        median_duration=0.0,
+        p95_duration=0.0,
+        avg_tokens=0.0,
+        median_tokens=0.0,
+        p95_tokens=0.0,
+        provider_summary={},
+        system={"status": "ok", "active_reviews": 0, "timestamp": now_ts},
+        llm={"total_tokens": 0, "providers": {}},
+        errors={"total": 0, "by_type": {}},
+    )
+
+
+def _build_summary(all_metrics: List[ReviewMetrics]) -> MetricsSummary:
+    if not all_metrics:
+        return _empty_summary()
+
+    durations = [m.total_duration_seconds for m in all_metrics]
+    tokens = [m.total_tokens_used for m in all_metrics]
+
+    provider_summary = defaultdict(
+        lambda: {"total_calls": 0, "total_success": 0, "total_failures": 0, "total_tokens": 0, "total_duration": 0.0}
+    )
+    for m in all_metrics:
+        for provider, stats in m.provider_metrics.items():
+            provider_summary[provider]["total_calls"] += stats.get("success", 0) + stats.get("fail", 0)
+            provider_summary[provider]["total_success"] += stats.get("success", 0)
+            provider_summary[provider]["total_failures"] += stats.get("fail", 0)
+            provider_summary[provider]["total_tokens"] += stats.get("total_tokens", 0)
+            provider_summary[provider]["total_duration"] += stats.get("duration", 0)
+
+    final_provider_summary: Dict[str, Dict[str, Any]] = {}
+    for provider, data in provider_summary.items():
+        total_calls = data["total_calls"]
+        final_provider_summary[provider] = {
+            "total_calls": total_calls,
+            "success_rate": (data["total_success"] / total_calls) if total_calls > 0 else 0,
+            "avg_tokens": (data["total_tokens"] / total_calls) if total_calls > 0 else 0,
+            "avg_duration": (data["total_duration"] / total_calls) if total_calls > 0 else 0,
+        }
+
+    now_ts = int(time.time())
+    system_info = {
+        "status": "ok",
+        "active_reviews": sum(1 for metric in all_metrics if metric.total_duration_seconds == 0),
+        "timestamp": now_ts,
+    }
+    llm_info = {"total_tokens": int(sum(tokens)), "providers": final_provider_summary}
+    errors_info = {"total": 0, "by_type": {}}
+
+    return MetricsSummary(
+        total_reviews=len(all_metrics),
+        avg_duration=float(np.mean(durations)) if durations else 0,
+        median_duration=float(np.median(durations)) if durations else 0,
+        p95_duration=float(np.percentile(durations, 95)) if durations else 0,
+        avg_tokens=float(np.mean(tokens)) if tokens else 0,
+        median_tokens=float(np.median(tokens)) if tokens else 0,
+        p95_tokens=float(np.percentile(tokens, 95)) if tokens else 0,
+        provider_summary=final_provider_summary,
+        system=system_info,
+        llm=llm_info,
+        errors=errors_info,
+    )
+
 
 # Create router
 router = APIRouter(prefix="/metrics", tags=["metrics"])
@@ -29,63 +99,9 @@ async def get_metrics(
 ) -> MetricsResponse:
     """Get aggregated review metrics."""
     try:
-        all_metrics: List[ReviewMetrics] = storage_service.get_all_review_metrics(
-            limit=limit, since=since
-        )
-
-        if not all_metrics:
-            return MetricsResponse(
-                summary=MetricsSummary(
-                    total_reviews=0,
-                    avg_duration=0.0,
-                    median_duration=0.0,
-                    p95_duration=0.0,
-                    avg_tokens=0.0,
-                    median_tokens=0.0,
-                    p95_tokens=0.0,
-                    provider_summary={}
-                ), 
-                data=[]
-            )
-
-        # Calculate overall aggregations
-        durations = [m.total_duration_seconds for m in all_metrics]
-        tokens = [m.total_tokens_used for m in all_metrics]
-
-        # Calculate per-provider aggregations
-        provider_summary = defaultdict(lambda: {"total_calls": 0, "total_success": 0, "total_failures": 0, "total_tokens": 0, "total_duration": 0.0})
-        for m in all_metrics:
-            for provider, stats in m.provider_metrics.items():
-                provider_summary[provider]["total_calls"] += stats.get("success", 0) + stats.get("fail", 0)
-                provider_summary[provider]["total_success"] += stats.get("success", 0)
-                provider_summary[provider]["total_failures"] += stats.get("fail", 0)
-                provider_summary[provider]["total_tokens"] += stats.get("total_tokens", 0)
-                provider_summary[provider]["total_duration"] += stats.get("duration", 0)
-
-        # Finalize provider summary with averages
-        final_provider_summary = {}
-        for provider, data in provider_summary.items():
-            total_calls = data["total_calls"]
-            final_provider_summary[provider] = {
-                "total_calls": total_calls,
-                "success_rate": (data["total_success"] / total_calls) if total_calls > 0 else 0,
-                "avg_tokens": (data["total_tokens"] / total_calls) if total_calls > 0 else 0,
-                "avg_duration": (data["total_duration"] / total_calls) if total_calls > 0 else 0,
-            }
-
-        summary = MetricsSummary(
-            total_reviews=len(all_metrics),
-            avg_duration=float(np.mean(durations)) if durations else 0,
-            median_duration=float(np.median(durations)) if durations else 0,
-            p95_duration=float(np.percentile(durations, 95)) if durations else 0,
-            avg_tokens=float(np.mean(tokens)) if tokens else 0,
-            median_tokens=float(np.median(tokens)) if tokens else 0,
-            p95_tokens=float(np.percentile(tokens, 95)) if tokens else 0,
-            provider_summary=final_provider_summary,
-        )
-
+        all_metrics: List[ReviewMetrics] = storage_service.get_all_review_metrics(limit=limit, since=since)
+        summary = _build_summary(all_metrics)
         return MetricsResponse(summary=summary, data=all_metrics)
-
     except Exception as e:
         logger.error(f"Error getting metrics: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to get metrics")
@@ -98,58 +114,8 @@ async def get_metrics_summary(
 ) -> MetricsSummary:
     """Get metrics summary only."""
     try:
-        all_metrics: List[ReviewMetrics] = storage_service.get_all_review_metrics(
-            limit=100, since=None
-        )
-
-        if not all_metrics:
-            return MetricsSummary(
-                total_reviews=0,
-                avg_duration=0.0,
-                median_duration=0.0,
-                p95_duration=0.0,
-                avg_tokens=0.0,
-                median_tokens=0.0,
-                p95_tokens=0.0,
-                provider_summary={}
-            )
-
-        # Calculate overall aggregations
-        durations = [m.total_duration_seconds for m in all_metrics]
-        tokens = [m.total_tokens_used for m in all_metrics]
-
-        # Calculate per-provider aggregations
-        provider_summary = defaultdict(lambda: {"total_calls": 0, "total_success": 0, "total_failures": 0, "total_tokens": 0, "total_duration": 0.0})
-        for m in all_metrics:
-            for provider, stats in m.provider_metrics.items():
-                provider_summary[provider]["total_calls"] += stats.get("success", 0) + stats.get("fail", 0)
-                provider_summary[provider]["total_success"] += stats.get("success", 0)
-                provider_summary[provider]["total_failures"] += stats.get("fail", 0)
-                provider_summary[provider]["total_tokens"] += stats.get("total_tokens", 0)
-                provider_summary[provider]["total_duration"] += stats.get("duration", 0)
-
-        # Finalize provider summary with averages
-        final_provider_summary = {}
-        for provider, data in provider_summary.items():
-            total_calls = data["total_calls"]
-            final_provider_summary[provider] = {
-                "total_calls": total_calls,
-                "success_rate": (data["total_success"] / total_calls) if total_calls > 0 else 0,
-                "avg_tokens": (data["total_tokens"] / total_calls) if total_calls > 0 else 0,
-                "avg_duration": (data["total_duration"] / total_calls) if total_calls > 0 else 0,
-            }
-
-        return MetricsSummary(
-            total_reviews=len(all_metrics),
-            avg_duration=float(np.mean(durations)) if durations else 0,
-            median_duration=float(np.median(durations)) if durations else 0,
-            p95_duration=float(np.percentile(durations, 95)) if durations else 0,
-            avg_tokens=float(np.mean(tokens)) if tokens else 0,
-            median_tokens=float(np.median(tokens)) if tokens else 0,
-            p95_tokens=float(np.percentile(tokens, 95)) if tokens else 0,
-            provider_summary=final_provider_summary,
-        )
-
+        all_metrics: List[ReviewMetrics] = storage_service.get_all_review_metrics(limit=100, since=None)
+        return _build_summary(all_metrics)
     except Exception as e:
         logger.error(f"Error getting metrics summary: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to get metrics summary")

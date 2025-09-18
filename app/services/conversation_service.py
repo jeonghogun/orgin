@@ -57,6 +57,23 @@ class ConversationService:
     def redis_client(self) -> Optional[redis.Redis]:
         return self._ensure_redis_client()
 
+    @redis_client.setter
+    def redis_client(self, value: Optional[redis.Redis]) -> None:
+        """Allow tests to inject a Redis client directly."""
+        if value is None:
+            if self._redis_client is not None:
+                try:
+                    self._redis_client.close()
+                except RedisError:
+                    pass
+            self._redis_client = None
+            self._redis_url_signature = None
+            return
+
+        self._redis_client = value
+        # Use a sentinel signature to avoid overwriting injected clients.
+        self._redis_url_signature = "__injected__"
+
     def increment_token_usage(self, user_id: str, token_count: int) -> int:
         """Increments a user's token usage for the day in Redis."""
         redis_client = self.redis_client
@@ -103,6 +120,15 @@ class ConversationService:
         rows = self.db.execute_returning(insert_query, params)
         if not rows:
             raise RuntimeError("Failed to create conversation thread")
+
+        # Touch the parent room to keep ordering consistent for the UI.
+        try:
+            self.db.execute_update(
+                "UPDATE rooms SET updated_at = %s WHERE room_id = %s",
+                (int(time.time()), room_id),
+            )
+        except Exception as exc:
+            logger.warning("Failed to bump parent room timestamp for %s: %s", room_id, exc)
         return self._map_thread_row(rows[0])
 
     async def get_threads_by_room(self, room_id: str, query: Optional[str] = None, pinned: Optional[bool] = None, archived: Optional[bool] = None) -> List[ConversationThread]:
@@ -125,6 +151,8 @@ class ConversationService:
         message_id = f"msg_{generate_id()}"
         meta_payload: Dict[str, Any] = meta.copy() if isinstance(meta, dict) else {}
         meta_payload.setdefault("userId", user_id)
+        if model and "model" not in meta_payload:
+            meta_payload["model"] = model
         insert_query = """
             INSERT INTO conversation_messages (id, thread_id, user_id, role, content, model, status, meta)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
@@ -161,11 +189,105 @@ class ConversationService:
             "created_at": created_at,
         }
 
+    def update_thread(
+        self,
+        thread_id: str,
+        updates: Optional[Dict[str, Any]] = None,
+        *,
+        title: Optional[str] = None,
+        pinned: Optional[bool] = None,
+        archived: Optional[bool] = None,
+    ) -> Optional[ConversationThread]:
+        """Update thread metadata supporting both legacy dict payloads and keyword args."""
+
+        # Allow callers to pass the legacy dict payload while still supporting keyword usage
+        merged_updates: Dict[str, Any] = {}
+        if isinstance(updates, dict):
+            merged_updates.update(updates)
+
+        if title is not None:
+            merged_updates["title"] = title
+        if pinned is not None:
+            merged_updates["pinned"] = pinned
+        if archived is not None:
+            merged_updates["archived"] = archived
+
+        # Accept historical field names from earlier API versions
+        if "is_pinned" in merged_updates and "pinned" not in merged_updates:
+            merged_updates["pinned"] = merged_updates["is_pinned"]
+        if "is_archived" in merged_updates and "archived" not in merged_updates:
+            merged_updates["archived"] = merged_updates["is_archived"]
+
+        updates_sql: List[str] = []
+        params: List[Any] = []
+
+        if "title" in merged_updates and merged_updates["title"] is not None:
+            updates_sql.append("title = %s")
+            params.append(merged_updates["title"])
+        if "pinned" in merged_updates and merged_updates["pinned"] is not None:
+            updates_sql.append("pinned = %s")
+            params.append(bool(merged_updates["pinned"]))
+        if "archived" in merged_updates and merged_updates["archived"] is not None:
+            updates_sql.append("archived = %s")
+            params.append(bool(merged_updates["archived"]))
+
+        if not updates_sql:
+            return self.get_thread_by_id(thread_id)
+
+        updates_sql.append("updated_at = NOW()")
+        query = (
+            "UPDATE conversation_threads SET "
+            + ", ".join(updates_sql)
+            + " WHERE id = %s RETURNING id, sub_room_id, user_id, title, pinned, archived, created_at, updated_at"
+        )
+        params.append(thread_id)
+        rows = self.db.execute_returning(query, tuple(params))
+        if not rows:
+            return None
+        return self._map_thread_row(rows[0])
+
+    def delete_thread(self, thread_id: str) -> bool:
+        deleted = self.db.execute_update("DELETE FROM conversation_threads WHERE id = %s", (thread_id,))
+        return deleted > 0
+
+    def get_thread_by_id(self, thread_id: str) -> Optional[ConversationThread]:
+        query = "SELECT id, sub_room_id, user_id, title, pinned, archived, created_at, updated_at FROM conversation_threads WHERE id = %s"
+        rows = self.db.execute_query(query, (thread_id,))
+        if not rows:
+            return None
+        return self._map_thread_row(rows[0])
+
     def update_message(self, message_id: str, content: str, status: str, meta: Dict[str, Any]) -> None:
         meta_payload = Json(meta) if meta else None
         query = "UPDATE conversation_messages SET content = %s, status = %s, meta = %s WHERE id = %s"
         params = (content, status, meta_payload, message_id)
         self.db.execute_update(query, params)
+
+    def search_messages(
+        self,
+        query: str,
+        *,
+        thread_id: Optional[str] = None,
+        limit: int = 20,
+    ) -> Dict[str, Any]:
+        """Perform a simple text search across conversation messages."""
+
+        sql_query = (
+            "SELECT id, thread_id, user_id, role, content, model, status, created_at, meta "
+            "FROM conversation_messages WHERE content ILIKE %s"
+        )
+        params: List[Any] = [f"%{query}%"]
+
+        if thread_id:
+            sql_query += " AND thread_id = %s"
+            params.append(thread_id)
+
+        sql_query += " ORDER BY created_at DESC LIMIT %s"
+        params.append(limit)
+
+        rows = self.db.execute_query(sql_query, tuple(params))
+        results = [self._map_message_row(row) for row in rows]
+        return {"query": query, "total_results": len(results), "results": results}
 
     def get_messages_by_thread(self, thread_id: str, cursor: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
         sql_query = "SELECT id, thread_id, user_id, role, content, model, status, created_at, meta FROM conversation_messages WHERE thread_id = %s"
@@ -369,6 +491,8 @@ class ConversationService:
         meta = self._deserialize_meta(row.get("meta"))
         if "userId" not in meta and "user_id" in row:
             meta["userId"] = row["user_id"]
+        if row.get("model") and "model" not in meta:
+            meta["model"] = row["model"]
         created_at = self._normalize_timestamp(row.get("created_at"))
         return {
             "id": row["id"],

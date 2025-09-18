@@ -15,7 +15,7 @@ from app.services.rag_service import RAGService
 logger = logging.getLogger(__name__)
 
 # Create router
-router = APIRouter(prefix="/search", tags=["search"])
+router = APIRouter(tags=["search"])
 
 
 class SearchRequest(BaseModel):

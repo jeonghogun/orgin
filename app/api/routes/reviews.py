@@ -5,15 +5,19 @@ Review-related API endpoints
 import inspect
 import json
 import logging
-from typing import Any, Dict, List
+import uuid
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
-from app.api.dependencies import AUTH_DEPENDENCY, get_storage_service
+from app.api.dependencies import AUTH_DEPENDENCY, get_storage_service, get_review_service
 from app.models.schemas import ReviewMeta
 from app.services.storage_service import StorageService
+from app.services.review_service import ReviewService
 from app.utils.helpers import create_success_response, generate_id, get_current_timestamp
+from app.models.enums import RoomType
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +25,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["reviews"])
 
 IDEMPOTENCY_KEY_TTL = 60 * 60 * 24  # 24 hours
+
+
+class CreateReviewRequest(BaseModel):
+    topic: str
+    instruction: Optional[str] = None
+    panelists: Optional[List[str]] = None
 
 
 async def _maybe_get_room(storage_service: StorageService, room_id: str):
@@ -54,6 +64,77 @@ async def get_room_reviews(
 ) -> List[ReviewMeta]:
     """Compatibility endpoint for nested room review queries."""
     return await get_reviews_by_room(room_id, user_info, storage_service)
+
+
+@router.post("/rooms/{room_id}/reviews", response_model=ReviewMeta)
+async def create_review_for_room(
+    room_id: str,
+    request: CreateReviewRequest,
+    user_info: Dict[str, str] = AUTH_DEPENDENCY,
+    storage_service: StorageService = Depends(get_storage_service),
+    review_service: ReviewService = Depends(get_review_service),
+):
+    user_id = user_info.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    parent_room = await _maybe_get_room(storage_service, room_id)
+    if not parent_room:
+        raise HTTPException(status_code=404, detail="Room not found")
+    if parent_room.owner_id != user_id:
+        raise HTTPException(status_code=403, detail="Cannot start a review in another user's room")
+    if parent_room.type != RoomType.SUB:
+        raise HTTPException(status_code=400, detail="Reviews can only be created from sub-rooms")
+
+    review_room_id = generate_id("room")
+    review_id = generate_id("rev")
+    created_at = get_current_timestamp()
+    instruction = request.instruction or "이 주제를 바탕으로 심층 검토를 진행해주세요."
+
+    try:
+        storage_service.create_room(
+            room_id=review_room_id,
+            name=f"Review: {request.topic}",
+            owner_id=user_id,
+            room_type=RoomType.REVIEW,
+            parent_id=room_id,
+        )
+    except Exception as create_error:
+        logger.error("Failed to create review room for %s: %s", room_id, create_error, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to create review room")
+
+    review_meta = ReviewMeta(
+        review_id=review_id,
+        room_id=review_room_id,
+        topic=request.topic,
+        instruction=instruction,
+        status="pending",
+        total_rounds=4,
+        current_round=0,
+        created_at=created_at,
+    )
+
+    try:
+        storage_service.save_review_meta(review_meta)
+    except Exception as save_error:
+        logger.error("Failed to persist review metadata for %s: %s", review_id, save_error, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to persist review metadata")
+
+    trace_id = str(uuid.uuid4())
+    try:
+        await review_service.start_review_process(
+            review_id=review_id,
+            review_room_id=review_room_id,
+            topic=request.topic,
+            instruction=instruction,
+            panelists=request.panelists,
+            trace_id=trace_id,
+        )
+    except Exception as start_error:
+        logger.error("Failed to start review %s: %s", review_id, start_error, exc_info=True)
+        # Allow client to poll later; status remains pending
+
+    return review_meta
 
 
 @router.get("/reviews/{id}", response_model=ReviewMeta)

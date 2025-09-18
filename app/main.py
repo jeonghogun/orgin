@@ -191,7 +191,7 @@ app.include_router(websockets.router)
 app.include_router(admin.router, prefix="/api")
 app.include_router(conversations.router, prefix="/api/convo")
 app.include_router(uploads.router, prefix="/api")
-app.include_router(exports.router, prefix="/api") # New router for exports
+app.include_router(exports.router, prefix="/api/convo") # Align export routes with conversation namespace
 
 # Mount uploads directory. Nginx will not serve this, so FastAPI must.
 uploads_dir = "uploads"

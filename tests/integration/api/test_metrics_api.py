@@ -18,8 +18,13 @@ def test_get_metrics_endpoint(authenticated_client: TestClient):
     # We need to create rooms and reviews first to satisfy foreign key constraints
     # Note: The test client is synchronous, so we don't use await here.
     # The underlying app calls are async and handled by the TestClient.
-    # Use the existing main room created by authenticated_client fixture
-    main_room_id = "room_main_1"
+    # Ensure we have a main room to attach sub-rooms to
+    main_room_res = authenticated_client.post(
+        "/api/rooms",
+        json={"name": "Metrics Main", "type": "main", "parent_id": None},
+    )
+    assert main_room_res.status_code == 200
+    main_room_id = main_room_res.json()["room_id"]
 
     sub_room_res = authenticated_client.post(f"/api/rooms", json={"name": "Sub for Metrics", "type": "sub", "parent_id": main_room_id})
     assert sub_room_res.status_code == 200

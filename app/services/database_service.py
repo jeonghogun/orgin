@@ -94,6 +94,14 @@ class DatabaseService:
         """Clear all test data when in test mode."""
         if not self._is_test_mode:
             return
+
+        # Many integration tests seed prerequisite data (e.g. rooms) in their
+        # fixtures before exercising the API.  Clearing the tables on every
+        # new connection causes those fixtures to lose their setup.  Only run
+        # the automatic cleanup when an explicit opt-in flag is provided so
+        # tests can request a clean slate when they really need it.
+        if os.getenv("PYTEST_RESET_DB_ON_CONNECT", "").lower() not in {"1", "true", "yes"}:
+            return
             
         cursor = conn.cursor()
         try:

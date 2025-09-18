@@ -82,6 +82,7 @@ CREATE TABLE IF NOT EXISTS user_profiles (
 CREATE TABLE IF NOT EXISTS conversation_messages (
     id VARCHAR(255) PRIMARY KEY,
     thread_id VARCHAR(255) NOT NULL REFERENCES conversation_threads(id) ON DELETE CASCADE,
+    user_id VARCHAR(255) NOT NULL DEFAULT 'anonymous',
     role VARCHAR(50) NOT NULL,
     content TEXT NOT NULL,
     model VARCHAR(255),
@@ -91,9 +92,13 @@ CREATE TABLE IF NOT EXISTS conversation_messages (
     content_tsvector TSVECTOR
 );
 
+ALTER TABLE conversation_messages
+    ALTER COLUMN user_id DROP DEFAULT;
+
 -- Create attachments table
 CREATE TABLE IF NOT EXISTS attachments (
     id VARCHAR(255) PRIMARY KEY,
+    thread_id VARCHAR(255) REFERENCES conversation_threads(id) ON DELETE CASCADE,
     kind VARCHAR(50) NOT NULL,
     name VARCHAR(500) NOT NULL,
     mime VARCHAR(100) NOT NULL,
@@ -101,6 +106,56 @@ CREATE TABLE IF NOT EXISTS attachments (
     url VARCHAR(1000) NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS conversation_contexts (
+    context_id VARCHAR(255) PRIMARY KEY,
+    room_id VARCHAR(255) NOT NULL REFERENCES rooms(room_id) ON DELETE CASCADE,
+    user_id VARCHAR(255) NOT NULL,
+    summary TEXT,
+    key_topics TEXT[],
+    sentiment VARCHAR(50),
+    created_at BIGINT NOT NULL,
+    updated_at BIGINT NOT NULL,
+    UNIQUE (room_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_conversation_contexts_room_user ON conversation_contexts(room_id, user_id);
+
+ALTER TABLE conversation_messages
+    ADD COLUMN IF NOT EXISTS meta JSONB;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'conversation_messages' AND column_name = 'user_id'
+    ) THEN
+        ALTER TABLE conversation_messages
+            ADD COLUMN user_id VARCHAR(255) NOT NULL DEFAULT 'anonymous';
+        ALTER TABLE conversation_messages
+            ALTER COLUMN user_id DROP DEFAULT;
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'attachments' AND column_name = 'thread_id'
+    ) THEN
+        ALTER TABLE attachments
+            ADD COLUMN thread_id VARCHAR(255);
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.table_constraints
+        WHERE constraint_name = 'attachments_thread_id_fkey'
+          AND table_name = 'attachments'
+    ) THEN
+        ALTER TABLE attachments
+            ADD CONSTRAINT attachments_thread_id_fkey
+            FOREIGN KEY (thread_id) REFERENCES conversation_threads(id) ON DELETE CASCADE;
+    END IF;
+END $$;
 
 -- Create export_jobs table for async export flow
 CREATE TABLE IF NOT EXISTS export_jobs (
