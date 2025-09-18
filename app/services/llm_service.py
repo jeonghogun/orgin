@@ -2,6 +2,7 @@
 LLM Service - Unified interface for all LLM providers with improved error handling.
 Now includes both async and sync methods for use in API and Celery contexts.
 """
+import asyncio
 import json
 import logging
 import time
@@ -10,7 +11,12 @@ from abc import ABC, abstractmethod
 
 # Import both async and sync clients
 import openai
-from openai import OpenAI, AsyncOpenAI
+
+try:
+    from openai import OpenAI, AsyncOpenAI
+except ImportError:  # pragma: no cover - legacy OpenAI library compatibility
+    OpenAI = None
+    AsyncOpenAI = None
 import google.generativeai as genai
 import anthropic
 from anthropic import Anthropic, AsyncAnthropic
@@ -48,62 +54,346 @@ class OpenAIProvider(LLMProvider):
         api_key = secret_provider.get("OPENAI_API_KEY")
         if not api_key:
             raise ValueError("OpenAI API key not found in secret provider.")
-        self.async_client = AsyncOpenAI(api_key=api_key)
-        self.sync_client = OpenAI(api_key=api_key)
 
-    async def invoke(self, model: str, system_prompt: str, user_prompt: str, request_id: str, response_format: str = "text") -> Tuple[str, Dict[str, Any]]:
-        start_time = time.time()
-        try:
-            messages: List[ChatCompletionMessageParam] = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
-            response_format_config: ResponseFormat = {"type": "json_object"} if response_format == "json" else {"type": "text"}
-            response = await self.async_client.chat.completions.create(model=model, messages=messages, response_format=response_format_config, temperature=0.7, max_tokens=4000)
-            usage_data = response.usage
-            content = response.choices[0].message.content or ""
-            metrics = {"prompt_tokens": usage_data.prompt_tokens if usage_data else 0, "completion_tokens": usage_data.completion_tokens if usage_data else 0, "total_tokens": usage_data.total_tokens if usage_data else 0}
-            latency_ms = (time.time() - start_time) * 1000
-            logger.info("OpenAI API call successful", extra={"req_id": request_id, "provider": "openai", "model": model, "latency_ms": latency_ms, "tokens_used": metrics["total_tokens"]})
-            return content, metrics
-        except Exception as e:
-            llm_error = map_openai_error(e, "openai")
-            latency_ms = (time.time() - start_time) * 1000
-            logger.error("OpenAI API call failed", extra={"req_id": request_id, "provider": "openai", "model": model, "error_code": llm_error.error_code.value, "error_message": llm_error.error_message, "latency_ms": latency_ms, "retryable": llm_error.retryable, **llm_error.to_dict()})
-            raise llm_error
+        self.legacy_mode = False
+        self.async_client: Optional[AsyncOpenAI] = None
+        self.sync_client: Optional[OpenAI] = None
+        self._openai_module = openai
 
-    def invoke_sync(self, model: str, system_prompt: str, user_prompt: str, request_id: str, response_format: str = "text") -> Tuple[str, Dict[str, Any]]:
-        start_time = time.time()
-        try:
-            messages: List[ChatCompletionMessageParam] = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
-            response_format_config: ResponseFormat = {"type": "json_object"} if response_format == "json" else {"type": "text"}
-            response = self.sync_client.chat.completions.create(model=model, messages=messages, response_format=response_format_config, temperature=0.7, max_tokens=4000)
-            usage_data = response.usage
-            content = response.choices[0].message.content or ""
-            metrics = {"prompt_tokens": usage_data.prompt_tokens if usage_data else 0, "completion_tokens": usage_data.completion_tokens if usage_data else 0, "total_tokens": usage_data.total_tokens if usage_data else 0}
-            latency_ms = (time.time() - start_time) * 1000
-            logger.info("OpenAI API call successful (sync)", extra={"req_id": request_id, "provider": "openai", "model": model, "latency_ms": latency_ms, "tokens_used": metrics["total_tokens"]})
-            return content, metrics
-        except Exception as e:
-            llm_error = map_openai_error(e, "openai")
-            latency_ms = (time.time() - start_time) * 1000
-            logger.error("OpenAI API call failed (sync)", extra={"req_id": request_id, "provider": "openai", "model": model, "error_code": llm_error.error_code.value, "error_message": llm_error.error_message, "latency_ms": latency_ms, "retryable": llm_error.retryable, **llm_error.to_dict()})
-            raise llm_error
+        if AsyncOpenAI is not None and OpenAI is not None:
+            try:
+                self.async_client = AsyncOpenAI(api_key=api_key)
+                self.sync_client = OpenAI(api_key=api_key)
+            except Exception as exc:  # pragma: no cover - defensive fallback
+                logger.warning(
+                    "Falling back to legacy OpenAI client due to init failure: %s", exc
+                )
+                self.legacy_mode = True
+        else:
+            self.legacy_mode = True
 
-    async def stream_invoke(self, model: str, system_prompt: str, user_prompt: str, request_id: str) -> AsyncGenerator[str, None]:
-        start_time = time.time()
+        if self.legacy_mode:
+            logger.info("Using legacy OpenAI client compatibility mode.")
+            self._openai_module.api_key = api_key
+
+    async def _invoke_modern(
+        self,
+        model: str,
+        messages: List[ChatCompletionMessageParam],
+        response_format: str,
+        request_id: str,
+        start_time: float,
+    ) -> Tuple[str, Dict[str, Any]]:
+        response_format_config: ResponseFormat = (
+            {"type": "json_object"} if response_format == "json" else {"type": "text"}
+        )
         try:
-            messages: List[ChatCompletionMessageParam] = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
-            stream = await self.async_client.chat.completions.create(
-                model=model, messages=messages, temperature=0.7, max_tokens=4000, stream=True
+            response = await self.async_client.chat.completions.create(
+                model=model,
+                messages=messages,
+                response_format=response_format_config,
+                temperature=0.7,
+                max_tokens=4000,
             )
-            async for chunk in stream:
-                content = chunk.choices[0].delta.content or ""
-                yield content
-            latency_ms = (time.time() - start_time) * 1000
-            logger.info("OpenAI API stream completed successfully", extra={"req_id": request_id, "provider": "openai", "model": model, "latency_ms": latency_ms})
+        except TypeError as type_error:
+            if "response_format" in str(type_error):
+                response = await self.async_client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    temperature=0.7,
+                    max_tokens=4000,
+                )
+            else:
+                raise
+
+        usage_data = response.usage
+        content = response.choices[0].message.content or ""
+        metrics = {
+            "prompt_tokens": usage_data.prompt_tokens if usage_data else 0,
+            "completion_tokens": usage_data.completion_tokens if usage_data else 0,
+            "total_tokens": usage_data.total_tokens if usage_data else 0,
+        }
+        latency_ms = (time.time() - start_time) * 1000
+        logger.info(
+            "OpenAI API call successful",
+            extra={
+                "req_id": request_id,
+                "provider": "openai",
+                "model": model,
+                "latency_ms": latency_ms,
+                "tokens_used": metrics["total_tokens"],
+            },
+        )
+        return content, metrics
+
+    async def _invoke_legacy(
+        self,
+        model: str,
+        messages: List[Dict[str, str]],
+        response_format: str,
+        request_id: str,
+        start_time: float,
+    ) -> Tuple[str, Dict[str, Any]]:
+        kwargs = {
+            "model": model,
+            "messages": messages,
+            "temperature": 0.7,
+            "max_tokens": 4000,
+        }
+        if response_format == "json":
+            # Legacy APIs do not support response_format, rely on prompt instructions.
+            kwargs.setdefault("temperature", 0.0)
+
+        chat_completion = self._openai_module.ChatCompletion
+        if hasattr(chat_completion, "acreate"):
+            response = await chat_completion.acreate(**kwargs)
+        else:  # pragma: no cover - very old SDK fallback
+            loop = asyncio.get_running_loop()
+            response = await loop.run_in_executor(
+                None, lambda: chat_completion.create(**kwargs)
+            )
+
+        usage_data = response.get("usage", {})
+        choice = response["choices"][0]
+        message_content = choice.get("message", {}).get("content", "")
+        metrics = {
+            "prompt_tokens": usage_data.get("prompt_tokens", 0),
+            "completion_tokens": usage_data.get("completion_tokens", 0),
+            "total_tokens": usage_data.get("total_tokens", 0),
+        }
+        latency_ms = (time.time() - start_time) * 1000
+        logger.info(
+            "OpenAI API call successful (legacy)",
+            extra={
+                "req_id": request_id,
+                "provider": "openai",
+                "model": model,
+                "latency_ms": latency_ms,
+                "tokens_used": metrics["total_tokens"],
+            },
+        )
+        return message_content, metrics
+
+    async def invoke(
+        self,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+        request_id: str,
+        response_format: str = "text",
+    ) -> Tuple[str, Dict[str, Any]]:
+        start_time = time.time()
+        messages: List[ChatCompletionMessageParam] = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        try:
+            if self.legacy_mode:
+                return await self._invoke_legacy(
+                    model, messages, response_format, request_id, start_time
+                )
+            return await self._invoke_modern(
+                model, messages, response_format, request_id, start_time
+            )
         except Exception as e:
             llm_error = map_openai_error(e, "openai")
             latency_ms = (time.time() - start_time) * 1000
-            logger.error("OpenAI API stream failed", extra={"req_id": request_id, "provider": "openai", "model": model, "error_code": llm_error.error_code.value, "error_message": llm_error.error_message, "latency_ms": latency_ms, "retryable": llm_error.retryable, **llm_error.to_dict()})
+            logger.error(
+                "OpenAI API call failed",
+                extra={
+                    "req_id": request_id,
+                    "provider": "openai",
+                    "model": model,
+                    "error_code": llm_error.error_code.value,
+                    "error_message": llm_error.error_message,
+                    "latency_ms": latency_ms,
+                    "retryable": llm_error.retryable,
+                    **llm_error.to_dict(),
+                },
+            )
             raise llm_error
+
+    def invoke_sync(
+        self,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+        request_id: str,
+        response_format: str = "text",
+    ) -> Tuple[str, Dict[str, Any]]:
+        start_time = time.time()
+        messages: List[ChatCompletionMessageParam] = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        try:
+            if self.legacy_mode:
+                kwargs = {
+                    "model": model,
+                    "messages": messages,
+                    "temperature": 0.7,
+                    "max_tokens": 4000,
+                }
+                if response_format == "json":
+                    kwargs.setdefault("temperature", 0.0)
+                response = self._openai_module.ChatCompletion.create(**kwargs)
+                usage_data = response.get("usage", {})
+                content = response["choices"][0]["message"].get("content", "")
+            else:
+                response_format_config: ResponseFormat = (
+                    {"type": "json_object"} if response_format == "json" else {"type": "text"}
+                )
+                try:
+                    response = self.sync_client.chat.completions.create(
+                        model=model,
+                        messages=messages,
+                        response_format=response_format_config,
+                        temperature=0.7,
+                        max_tokens=4000,
+                    )
+                except TypeError as type_error:
+                    if "response_format" in str(type_error):
+                        response = self.sync_client.chat.completions.create(
+                            model=model,
+                            messages=messages,
+                            temperature=0.7,
+                            max_tokens=4000,
+                        )
+                    else:
+                        raise
+                usage_data = response.usage
+                content = response.choices[0].message.content or ""
+
+            metrics = {
+                "prompt_tokens": usage_data.get("prompt_tokens", 0)
+                if isinstance(usage_data, dict)
+                else getattr(usage_data, "prompt_tokens", 0),
+                "completion_tokens": usage_data.get("completion_tokens", 0)
+                if isinstance(usage_data, dict)
+                else getattr(usage_data, "completion_tokens", 0),
+                "total_tokens": usage_data.get("total_tokens", 0)
+                if isinstance(usage_data, dict)
+                else getattr(usage_data, "total_tokens", 0),
+            }
+            latency_ms = (time.time() - start_time) * 1000
+            logger.info(
+                "OpenAI API call successful (sync)",
+                extra={
+                    "req_id": request_id,
+                    "provider": "openai",
+                    "model": model,
+                    "latency_ms": latency_ms,
+                    "tokens_used": metrics["total_tokens"],
+                },
+            )
+            return content, metrics
+        except Exception as e:
+            llm_error = map_openai_error(e, "openai")
+            latency_ms = (time.time() - start_time) * 1000
+            logger.error(
+                "OpenAI API call failed (sync)",
+                extra={
+                    "req_id": request_id,
+                    "provider": "openai",
+                    "model": model,
+                    "error_code": llm_error.error_code.value,
+                    "error_message": llm_error.error_message,
+                    "latency_ms": latency_ms,
+                    "retryable": llm_error.retryable,
+                    **llm_error.to_dict(),
+                },
+            )
+            raise llm_error
+
+    async def stream_invoke(
+        self,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+        request_id: str,
+    ) -> AsyncGenerator[str, None]:
+        start_time = time.time()
+        try:
+            messages: List[ChatCompletionMessageParam] = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ]
+            if self.legacy_mode:
+                kwargs = {
+                    "model": model,
+                    "messages": messages,
+                    "temperature": 0.7,
+                    "max_tokens": 4000,
+                    "stream": True,
+                }
+                stream = await self._openai_module.ChatCompletion.acreate(**kwargs)
+                async for chunk in stream:
+                    delta = chunk["choices"][0]["delta"].get("content") or ""
+                    yield delta
+            else:
+                stream = await self.async_client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    temperature=0.7,
+                    max_tokens=4000,
+                    stream=True,
+                )
+                async for chunk in stream:
+                    content = chunk.choices[0].delta.content or ""
+                    yield content
+            latency_ms = (time.time() - start_time) * 1000
+            logger.info(
+                "OpenAI API stream completed successfully",
+                extra={
+                    "req_id": request_id,
+                    "provider": "openai",
+                    "model": model,
+                    "latency_ms": latency_ms,
+                },
+            )
+        except Exception as e:
+            llm_error = map_openai_error(e, "openai")
+            latency_ms = (time.time() - start_time) * 1000
+            logger.error(
+                "OpenAI API stream failed",
+                extra={
+                    "req_id": request_id,
+                    "provider": "openai",
+                    "model": model,
+                    "error_code": llm_error.error_code.value,
+                    "error_message": llm_error.error_message,
+                    "latency_ms": latency_ms,
+                    "retryable": llm_error.retryable,
+                    **llm_error.to_dict(),
+                },
+            )
+            raise llm_error
+
+    async def create_embedding_async(self, text: str):
+        if self.legacy_mode:
+            if hasattr(self._openai_module.Embedding, "acreate"):
+                return await self._openai_module.Embedding.acreate(
+                    model="text-embedding-ada-002", input=text
+                )
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(
+                None,
+                lambda: self._openai_module.Embedding.create(
+                    model="text-embedding-ada-002", input=text
+                ),
+            )
+        return await self.async_client.embeddings.create(
+            model="text-embedding-3-small", input=text
+        )
+
+    def create_embedding_sync(self, text: str):
+        if self.legacy_mode:
+            return self._openai_module.Embedding.create(
+                model="text-embedding-ada-002", input=text
+            )
+        return self.sync_client.embeddings.create(
+            model="text-embedding-3-small", input=text
+        )
 
 
 class GeminiProvider(LLMProvider):
@@ -268,14 +558,32 @@ class LLMService:
         if not isinstance(provider, OpenAIProvider):
             raise TypeError("Embedding generation is only supported for OpenAI provider.")
         try:
-            response = await provider.async_client.embeddings.create(model="text-embedding-3-small", input=text)
-            embedding = response.data[0].embedding
-            usage_data = response.usage
-            metrics = {"prompt_tokens": usage_data.prompt_tokens if usage_data else 0, "completion_tokens": 0, "total_tokens": usage_data.prompt_tokens if usage_data else 0}
+            response = await provider.create_embedding_async(text)
+            data = response.data[0] if hasattr(response, "data") else response["data"][0]
+            if isinstance(data, dict):
+                embedding = data.get("embedding")
+            else:
+                embedding = getattr(data, "embedding", None)
+            if embedding is None:
+                raise ValueError("Embedding data missing from OpenAI response")
+            usage_data = getattr(response, "usage", None)
+            if isinstance(response, dict):
+                usage_data = response.get("usage")
+            metrics = {
+                "prompt_tokens": getattr(usage_data, "prompt_tokens", 0)
+                if usage_data
+                else (usage_data.get("prompt_tokens", 0) if isinstance(usage_data, dict) else 0),
+                "completion_tokens": 0,
+                "total_tokens": getattr(usage_data, "prompt_tokens", 0)
+                if usage_data
+                else (usage_data.get("prompt_tokens", 0) if isinstance(usage_data, dict) else 0),
+            }
             return embedding, metrics
         except Exception as e:
             llm_error = map_openai_error(e, "openai")
-            logger.error(f"OpenAI embedding generation failed: {llm_error.error_message}")
+            logger.error(
+                f"OpenAI embedding generation failed: {llm_error.error_message}"
+            )
             raise llm_error
 
     # --- SYNC METHODS for Celery ---
@@ -293,14 +601,32 @@ class LLMService:
         if not isinstance(provider, OpenAIProvider):
             raise TypeError("Embedding generation is only supported for OpenAI provider.")
         try:
-            response = provider.sync_client.embeddings.create(model="text-embedding-3-small", input=text)
-            embedding = response.data[0].embedding
-            usage_data = response.usage
-            metrics = {"prompt_tokens": usage_data.prompt_tokens if usage_data else 0, "completion_tokens": 0, "total_tokens": usage_data.prompt_tokens if usage_data else 0}
+            response = provider.create_embedding_sync(text)
+            data = response.data[0] if hasattr(response, "data") else response["data"][0]
+            if isinstance(data, dict):
+                embedding = data.get("embedding")
+            else:
+                embedding = getattr(data, "embedding", None)
+            if embedding is None:
+                raise ValueError("Embedding data missing from OpenAI response")
+            usage_data = getattr(response, "usage", None)
+            if isinstance(response, dict):
+                usage_data = response.get("usage")
+            metrics = {
+                "prompt_tokens": getattr(usage_data, "prompt_tokens", 0)
+                if usage_data
+                else (usage_data.get("prompt_tokens", 0) if isinstance(usage_data, dict) else 0),
+                "completion_tokens": 0,
+                "total_tokens": getattr(usage_data, "prompt_tokens", 0)
+                if usage_data
+                else (usage_data.get("prompt_tokens", 0) if isinstance(usage_data, dict) else 0),
+            }
             return embedding, metrics
         except Exception as e:
             llm_error = map_openai_error(e, "openai")
-            logger.error(f"OpenAI embedding generation failed (sync): {llm_error.error_message}")
+            logger.error(
+                f"OpenAI embedding generation failed (sync): {llm_error.error_message}"
+            )
             raise llm_error
 
     # --- Common Methods ---

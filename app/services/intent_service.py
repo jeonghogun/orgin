@@ -43,6 +43,18 @@ class IntentService:
         re.compile(r"(?:이름은)\s*([\w가-힣]+)", re.IGNORECASE),
     ]
     NAME_SUFFIXES = ("입니다", "이에요", "예요", "이야", "야", "라고", "라고요", "라고해")
+    SMALLTALK_KEYWORDS = [
+        "안녕",
+        "안녕하세요",
+        "하이",
+        "hello",
+        "hi",
+        "고마워",
+        "감사",
+        "반가워",
+        "잘 있어",
+        "수고",
+    ]
 
     def __init__(self, llm_service: LLMService):
         super().__init__()
@@ -112,6 +124,9 @@ class IntentService:
             if location:
                 entities["location"] = location
             return IntentResult(intent="weather", entities=entities, confidence=0.9)
+
+        if self._is_smalltalk(message, lowered):
+            return IntentResult(intent="general", entities={}, confidence=0.6)
 
         return None
 
@@ -206,6 +221,26 @@ class IntentService:
             if rule_based:
                 return rule_based
             return IntentResult(intent="general", entities={}, confidence=0.3)
+
+    def _is_smalltalk(self, original: str, lowered: str) -> bool:
+        stripped = original.strip()
+        if not stripped:
+            return False
+
+        if any(keyword in lowered for keyword in self.SMALLTALK_KEYWORDS):
+            return True
+
+        if len(stripped) <= 8 and not any(char in stripped for char in "?!"):
+            keyword_groups = (
+                self.TIME_KEYWORDS
+                + self.DATE_KEYWORDS
+                + self.WEATHER_KEYWORDS
+                + self.NAME_GET_KEYWORDS
+            )
+            if not any(keyword in lowered for keyword in keyword_groups):
+                return True
+
+        return False
 
     def _extract_location_from_text(self, text: str) -> Optional[str]:
         """Extract location from text using simple pattern matching"""
