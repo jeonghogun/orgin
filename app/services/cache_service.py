@@ -1,11 +1,29 @@
 import json
 import logging
+from dataclasses import asdict, is_dataclass
 from typing import Optional, Any
 import redis.asyncio as redis
 
 from app.config.settings import settings
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_for_json(value: Any) -> Any:
+    """Normalize complex values into JSON-serialisable structures."""
+    if hasattr(value, "model_dump"):
+        try:
+            return value.model_dump()
+        except TypeError:
+            # model_dump may expect keyword arguments in older Pydantic versions
+            return value.model_dump(exclude_none=False)
+    if is_dataclass(value):
+        return asdict(value)
+    if isinstance(value, dict):
+        return {key: _normalize_for_json(val) for key, val in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_normalize_for_json(item) for item in value]
+    return value
 
 class CacheService:
     def __init__(self, redis_client: Optional[redis.Redis]):
@@ -35,13 +53,11 @@ class CacheService:
             return False
         try:
             ttl = ttl or self.default_ttl
-            # Use model_dump for Pydantic models before json.dumps
-            if hasattr(value, 'model_dump_json'):
+            if hasattr(value, "model_dump_json"):
                 value_to_cache = value.model_dump_json()
-            elif isinstance(value, list) and hasattr(value[0], 'model_dump'):
-                 value_to_cache = json.dumps([item.model_dump() for item in value])
             else:
-                value_to_cache = json.dumps(value)
+                normalized = _normalize_for_json(value)
+                value_to_cache = json.dumps(normalized)
 
             await self.redis.setex(key, ttl, value_to_cache)
             logger.info(f"Cache SET for key: {key} with TTL: {ttl}")

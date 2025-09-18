@@ -18,7 +18,7 @@ export const AppProvider = ({ children, value: providerValue }) => {
   const handleRoomSelect = (roomId) => {
     setSelectedRoomId(roomId);
     if (window.innerWidth < 1024) {
-      setSidebarOpen(true);
+      setSidebarOpen(false);
     }
   };
 

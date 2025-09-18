@@ -14,6 +14,13 @@ const useConversationStore = create(
       promptText: '',
     },
 
+    reviewRoomCreation: {
+      active: false,
+      parentId: null,
+      topic: null,
+      history: [],
+    },
+
     // Generation Settings
     model: 'gpt-4o',
     temperature: 0.7,
@@ -65,16 +72,13 @@ const useConversationStore = create(
       }),
 
       startRoomCreation: (parentId, type, promptText) => {
-        console.log('startRoomCreation called:', { parentId, type, promptText });
         set((state) => {
-          console.log('Setting roomCreationRequest state:', { parentId, type, promptText });
           state.roomCreationRequest = {
             active: true,
             type,
             parentId,
             promptText,
           };
-          console.log('New state after setting:', state.roomCreationRequest);
         });
       },
 
@@ -86,14 +90,6 @@ const useConversationStore = create(
           promptText: '',
         };
       }),
-
-      // Interactive review room creation
-      reviewRoomCreation: {
-        active: false,
-        parentId: null,
-        topic: null,
-        history: [], // [{role: 'user' | 'assistant', content: '...'}, ...]
-      },
 
       startReviewRoomCreation: (parentId, topic) => set((state) => {
         state.reviewRoomCreation = {

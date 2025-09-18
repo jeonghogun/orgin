@@ -16,6 +16,7 @@ from app.models.schemas import (
     ReviewMetrics,
 )
 from app.services.database_service import DatabaseService, get_database_service
+from app.utils.helpers import get_current_timestamp
 
 logger = logging.getLogger(__name__)
 

@@ -90,14 +90,12 @@ const RoomItem = memo(({ room, level, parentRoom = null, onRenameClick, onDelete
   const handleAddSubRoom = (e) => {
     e.preventDefault();
     e.stopPropagation();
-    console.log('+ button clicked for sub room, room_id:', room.room_id);
     onCreateSubRoom(room.room_id);
   };
 
   const handleAddReviewRoom = (e) => {
     e.preventDefault();
     e.stopPropagation();
-    console.log('+ button clicked for review room, room_id:', room.room_id);
     onCreateReviewRoom(room.room_id);
   };
 
