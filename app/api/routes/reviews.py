@@ -2,33 +2,22 @@
 Review-related API endpoints
 """
 
-import logging
-import uuid
 import json
-from typing import Dict, List, Optional, Any
-from fastapi import APIRouter, HTTPException, Depends, Request
+import logging
+from typing import Any, Dict, List
+
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from app.api.dependencies import AUTH_DEPENDENCY, get_storage_service
+from app.models.schemas import ReviewMeta
 from app.services.storage_service import StorageService
-from app.services.review_service import ReviewService
-from app.utils.helpers import generate_id, get_current_timestamp, create_success_response
-from app.models.schemas import CreateReviewRequest, ReviewMeta, ReviewEvent, Room
-from app.api.dependencies import (
-    AUTH_DEPENDENCY,
-    get_storage_service,
-    get_review_service,
-)
+from app.utils.helpers import create_success_response, generate_id, get_current_timestamp
 
 logger = logging.getLogger(__name__)
 
 # Create router
 router = APIRouter(tags=["reviews"])
-
-
-import redis
-from fastapi import Header
-
-from app.api.dependencies import get_redis_client
 
 IDEMPOTENCY_KEY_TTL = 60 * 60 * 24  # 24 hours
 

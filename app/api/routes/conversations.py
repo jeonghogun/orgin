@@ -1,24 +1,28 @@
+import asyncio
+import io
 import json
 import logging
-from typing import List, Dict, Any, Optional
-from fastapi import APIRouter, Depends, HTTPException, Request, Query
-import io
 import zipfile
 from pathlib import Path
-from fastapi.responses import Response, JSONResponse, StreamingResponse
+from typing import Any, Dict, List, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from sse_starlette.sse import EventSourceResponse
 
 from app.api.dependencies import AUTH_DEPENDENCY, check_budget
+from app.core.metrics import SSE_SESSIONS_ACTIVE
 from app.models.conversation_schemas import (
-    ConversationThread, ConversationThreadCreate, ConversationMessage,
-    CreateMessageRequest, ConversationMessageUpdate
+    ConversationMessage,
+    ConversationMessageUpdate,
+    ConversationThread,
+    ConversationThreadCreate,
+    CreateMessageRequest,
 )
 from app.services.conversation_service import ConversationService, get_conversation_service
 from app.services.llm_adapters import get_llm_adapter
-from app.services.rag_service import get_rag_service
 from app.services.memory_service import MemoryService, get_memory_service
-from app.core.metrics import SSE_SESSIONS_ACTIVE
-import asyncio
+from app.services.rag_service import get_rag_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -31,7 +35,7 @@ async def get_models():
 
 @router.post("/rooms/{room_id}/threads", response_model=ConversationThread, status_code=201)
 async def create_thread(room_id: str, thread_data: ConversationThreadCreate, user_info: Dict[str, Any] = AUTH_DEPENDENCY, convo_service: ConversationService = Depends(get_conversation_service)):
-    print(f"DEBUG: create_thread called for room_id: {room_id}")
+    logger.debug("Creating thread for room %s", room_id)
     user_id = user_info.get("user_id")
     # Note: The service layer will need to be updated to handle generic room_id
     return convo_service.create_thread(room_id, user_id, thread_data)
