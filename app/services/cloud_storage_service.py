@@ -35,7 +35,8 @@ class CloudStorageService:
             return None
         if self._client is None:
             try:
-                self._client = storage.Client()  # type: ignore[operator]
+                project_id = settings.GCP_PROJECT_ID
+                self._client = storage.Client(project=project_id)  # type: ignore[operator]
             except Exception as exc:  # pragma: no cover - network/auth errors in CI
                 logger.warning("Failed to initialise Cloud Storage client: %s", exc)
                 self._client = None

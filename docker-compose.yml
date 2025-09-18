@@ -67,10 +67,13 @@ services:
       - ./app:/app/app
       - ./scripts:/app/scripts
       - ./pyproject.toml:/app/pyproject.toml
+      - ~/.config/gcloud:/root/.config/gcloud:ro
     ports:
       - "8000:8000" # Expose for direct access if needed, but primary access is via nginx
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@pgbouncer:6432/${POSTGRES_DB}
+      - GOOGLE_APPLICATION_CREDENTIALS=/root/.config/gcloud/application_default_credentials.json
+      - GCP_PROJECT_ID=${GCP_PROJECT_ID}
     env_file:
       - .env
     depends_on:
@@ -82,8 +85,11 @@ services:
     command: celery -A app.celery_app worker --loglevel=INFO -P gevent -Q default
     volumes:
       - .:/app
+      - ~/.config/gcloud:/root/.config/gcloud:ro
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@pgbouncer:6432/${POSTGRES_DB}
+      - GOOGLE_APPLICATION_CREDENTIALS=/root/.config/gcloud/application_default_credentials.json
+      - GCP_PROJECT_ID=${GCP_PROJECT_ID}
     env_file:
       - .env
     depends_on:
@@ -95,8 +101,11 @@ services:
     command: celery -A app.celery_app worker --loglevel=INFO -P gevent -Q high_priority
     volumes:
       - .:/app
+      - ~/.config/gcloud:/root/.config/gcloud:ro
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@pgbouncer:6432/${POSTGRES_DB}
+      - GOOGLE_APPLICATION_CREDENTIALS=/root/.config/gcloud/application_default_credentials.json
+      - GCP_PROJECT_ID=${GCP_PROJECT_ID}
     env_file:
       - .env
     depends_on:
@@ -108,8 +117,11 @@ services:
     command: celery -A app.celery_app worker --loglevel=INFO -P gevent -Q low_priority
     volumes:
       - .:/app
+      - ~/.config/gcloud:/root/.config/gcloud:ro
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@pgbouncer:6432/${POSTGRES_DB}
+      - GOOGLE_APPLICATION_CREDENTIALS=/root/.config/gcloud/application_default_credentials.json
+      - GCP_PROJECT_ID=${GCP_PROJECT_ID}
     env_file:
       - .env
     depends_on:
