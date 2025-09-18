@@ -192,30 +192,52 @@ class ConversationService:
     def update_thread(
         self,
         thread_id: str,
+        updates: Optional[Dict[str, Any]] = None,
         *,
         title: Optional[str] = None,
         pinned: Optional[bool] = None,
         archived: Optional[bool] = None,
     ) -> Optional[ConversationThread]:
-        updates: List[str] = []
-        params: List[Any] = []
-        if title is not None:
-            updates.append("title = %s")
-            params.append(title)
-        if pinned is not None:
-            updates.append("pinned = %s")
-            params.append(pinned)
-        if archived is not None:
-            updates.append("archived = %s")
-            params.append(archived)
+        """Update thread metadata supporting both legacy dict payloads and keyword args."""
 
-        if not updates:
+        # Allow callers to pass the legacy dict payload while still supporting keyword usage
+        merged_updates: Dict[str, Any] = {}
+        if isinstance(updates, dict):
+            merged_updates.update(updates)
+
+        if title is not None:
+            merged_updates["title"] = title
+        if pinned is not None:
+            merged_updates["pinned"] = pinned
+        if archived is not None:
+            merged_updates["archived"] = archived
+
+        # Accept historical field names from earlier API versions
+        if "is_pinned" in merged_updates and "pinned" not in merged_updates:
+            merged_updates["pinned"] = merged_updates["is_pinned"]
+        if "is_archived" in merged_updates and "archived" not in merged_updates:
+            merged_updates["archived"] = merged_updates["is_archived"]
+
+        updates_sql: List[str] = []
+        params: List[Any] = []
+
+        if "title" in merged_updates and merged_updates["title"] is not None:
+            updates_sql.append("title = %s")
+            params.append(merged_updates["title"])
+        if "pinned" in merged_updates and merged_updates["pinned"] is not None:
+            updates_sql.append("pinned = %s")
+            params.append(bool(merged_updates["pinned"]))
+        if "archived" in merged_updates and merged_updates["archived"] is not None:
+            updates_sql.append("archived = %s")
+            params.append(bool(merged_updates["archived"]))
+
+        if not updates_sql:
             return self.get_thread_by_id(thread_id)
 
-        updates.append("updated_at = NOW()")
+        updates_sql.append("updated_at = NOW()")
         query = (
             "UPDATE conversation_threads SET "
-            + ", ".join(updates)
+            + ", ".join(updates_sql)
             + " WHERE id = %s RETURNING id, sub_room_id, user_id, title, pinned, archived, created_at, updated_at"
         )
         params.append(thread_id)
@@ -240,6 +262,32 @@ class ConversationService:
         query = "UPDATE conversation_messages SET content = %s, status = %s, meta = %s WHERE id = %s"
         params = (content, status, meta_payload, message_id)
         self.db.execute_update(query, params)
+
+    def search_messages(
+        self,
+        query: str,
+        *,
+        thread_id: Optional[str] = None,
+        limit: int = 20,
+    ) -> Dict[str, Any]:
+        """Perform a simple text search across conversation messages."""
+
+        sql_query = (
+            "SELECT id, thread_id, user_id, role, content, model, status, created_at, meta "
+            "FROM conversation_messages WHERE content ILIKE %s"
+        )
+        params: List[Any] = [f"%{query}%"]
+
+        if thread_id:
+            sql_query += " AND thread_id = %s"
+            params.append(thread_id)
+
+        sql_query += " ORDER BY created_at DESC LIMIT %s"
+        params.append(limit)
+
+        rows = self.db.execute_query(sql_query, tuple(params))
+        results = [self._map_message_row(row) for row in rows]
+        return {"query": query, "total_results": len(results), "results": results}
 
     def get_messages_by_thread(self, thread_id: str, cursor: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
         sql_query = "SELECT id, thread_id, user_id, role, content, model, status, created_at, meta FROM conversation_messages WHERE thread_id = %s"

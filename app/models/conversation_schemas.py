@@ -4,7 +4,7 @@ Pydantic Schemas for the new Conversation feature.
 import time
 from typing import List, Optional, Literal, Dict, Any, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 # --- Attachment Schemas ---
 
@@ -83,6 +83,14 @@ class ConversationThread(BaseModel):
     class Config:
         from_attributes = True
 
+    @property
+    def is_pinned(self) -> bool:
+        return self.pinned
+
+    @property
+    def is_archived(self) -> bool:
+        return self.archived
+
 class ConversationThreadCreate(BaseModel):
     title: str
 
@@ -90,6 +98,16 @@ class ConversationThreadUpdate(BaseModel):
     title: Optional[str] = None
     pinned: Optional[bool] = None
     archived: Optional[bool] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _alias_legacy_fields(cls, values: Any) -> Any:
+        if isinstance(values, dict):
+            if "is_pinned" in values and "pinned" not in values:
+                values["pinned"] = values["is_pinned"]
+            if "is_archived" in values and "archived" not in values:
+                values["archived"] = values["is_archived"]
+        return values
 
 # --- API Specific Schemas ---
 

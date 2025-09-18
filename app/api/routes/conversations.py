@@ -21,6 +21,7 @@ from app.models.conversation_schemas import (
     ConversationThreadUpdate,
     CreateMessageRequest,
 )
+from pydantic import BaseModel, Field
 from app.services.conversation_service import ConversationService, get_conversation_service
 from app.services.llm_adapters import get_llm_adapter
 from app.services.memory_service import MemoryService, get_memory_service
@@ -31,6 +32,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 AVAILABLE_MODELS = [{"id": "gpt-4o", "name": "GPT-4o"}, {"id": "claude-3-opus-20240229", "name": "Claude 3 Opus"}]
+
+
+class ConversationSearchRequest(BaseModel):
+    query: str = Field(..., min_length=1)
+    thread_id: Optional[str] = None
+    limit: int = Field(default=20, ge=1, le=100)
 
 @router.get("/models", response_model=List[Dict[str, Any]])
 async def get_models():
@@ -391,12 +398,6 @@ async def get_daily_usage(user_info: Dict[str, Any] = AUTH_DEPENDENCY, convo_ser
     usage = convo_service.get_today_usage(user_id)
     return {"usage": usage, "budget": settings.DAILY_TOKEN_BUDGET, "currency": "tokens"}
 
-from pydantic import BaseModel
-
-class ConversationSearchRequest(BaseModel):
-    query: str
-    thread_id: Optional[str] = None
-    limit: int = 10
 
 class HybridSearchResult(BaseModel):
     id: str
