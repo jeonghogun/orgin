@@ -7,9 +7,19 @@ from starlette.websockets import WebSocketDisconnect
 async def test_websocket_auth_success(authenticated_client: TestClient):
     """Tests successful WebSocket connection with valid auth and ownership."""
     # 1. Create a review to connect to
-    main_room_res = authenticated_client.post("/api/rooms", json={"name": "Main for WS", "type": "main"})
-    main_room_id = main_room_res.json()["room_id"]
-    sub_room_res = authenticated_client.post("/api/rooms", json={"name": "Sub for WS", "type": "sub", "parent_id": main_room_id})
+    import time
+    timestamp = str(int(time.time()))
+    
+    # Try to create main room, if it fails, get existing one
+    main_room_res = authenticated_client.post("/api/rooms", json={"name": f"Main for WS {timestamp}", "type": "main"})
+    if main_room_res.status_code == 400:
+        # Get existing main room
+        rooms_res = authenticated_client.get("/api/rooms")
+        main_room_id = rooms_res.json()[0]["room_id"]
+    else:
+        main_room_id = main_room_res.json()["room_id"]
+    
+    sub_room_res = authenticated_client.post("/api/rooms", json={"name": f"Sub for WS {timestamp}", "type": "sub", "parent_id": main_room_id})
     sub_room_id = sub_room_res.json()["room_id"]
     review_res = authenticated_client.post(
         f"/api/rooms/{sub_room_id}/reviews",
@@ -40,9 +50,19 @@ async def test_websocket_auth_failure_bad_token(authenticated_client: TestClient
 async def test_websocket_auth_failure_wrong_owner(authenticated_client: TestClient):
     """Tests that a user cannot connect to a review they do not own."""
     # 1. Create a review with the default user
-    main_room_res = authenticated_client.post("/api/rooms", json={"name": "Main for WS Owner Test", "type": "main"})
-    main_room_id = main_room_res.json()["room_id"]
-    sub_room_res = authenticated_client.post("/api/rooms", json={"name": "Sub for WS Owner Test", "type": "sub", "parent_id": main_room_id})
+    import time
+    timestamp = str(int(time.time()))
+    
+    # Try to create main room, if it fails, get existing one
+    main_room_res = authenticated_client.post("/api/rooms", json={"name": f"Main for WS Owner Test {timestamp}", "type": "main"})
+    if main_room_res.status_code == 400:
+        # Get existing main room
+        rooms_res = authenticated_client.get("/api/rooms")
+        main_room_id = rooms_res.json()[0]["room_id"]
+    else:
+        main_room_id = main_room_res.json()["room_id"]
+    
+    sub_room_res = authenticated_client.post("/api/rooms", json={"name": f"Sub for WS Owner Test {timestamp}", "type": "sub", "parent_id": main_room_id})
     sub_room_id = sub_room_res.json()["room_id"]
     review_res = authenticated_client.post(
         f"/api/rooms/{sub_room_id}/reviews",

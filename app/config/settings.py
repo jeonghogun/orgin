@@ -156,6 +156,11 @@ class Settings(BaseSettings):
     ALERT_LATENCY_SECONDS_THRESHOLD: int = 300  # Alert if a single review takes more than 5 minutes
     ALERT_FAILURE_RATE_THRESHOLD: float = 0.2  # Alert if overall failure rate exceeds 20%
 
+    # --- Memory Archive Configuration ---
+    MEMORY_ARCHIVE_AFTER_DAYS: int = 14  # Archive conversations after 14 days
+    MEMORY_ARCHIVE_BATCH_SIZE: int = 300  # Process 300 conversations per batch (balanced between 200-500)
+    MEMORY_ARCHIVE_MIN_MESSAGES: int = 10  # Minimum messages required for archival
+
     class Config:
         env_file = ".env"
         case_sensitive = True
