@@ -3,11 +3,11 @@ Search-related API endpoints for external sources.
 """
 
 import logging
-from typing import Dict
+from typing import Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Depends
+from pydantic import BaseModel
 
 from app.utils.helpers import create_success_response
-from typing import List, Optional
 from app.services.external_api_service import ExternalSearchService
 from app.api.dependencies import AUTH_DEPENDENCY, get_search_service, get_rag_service
 from app.services.rag_service import RAGService
@@ -16,6 +16,11 @@ logger = logging.getLogger(__name__)
 
 # Create router
 router = APIRouter(prefix="/search", tags=["search"])
+
+
+class SearchRequest(BaseModel):
+    query: str
+    limit: int = 5
 
 
 @router.get("")
@@ -32,6 +37,21 @@ async def search(
     except Exception as e:
         logger.error(f"Search error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Search failed")
+
+
+@router.post("")
+async def search_post(
+    request: SearchRequest,
+    user_info: Dict[str, str] = AUTH_DEPENDENCY,
+    search_service: ExternalSearchService = Depends(get_search_service),
+):
+    """POST variant of the search endpoint for clients that prefer JSON payloads."""
+    return await search(
+        q=request.query,
+        n=request.limit,
+        user_info=user_info,
+        search_service=search_service,
+    )
 
 
 @router.get("/wiki")

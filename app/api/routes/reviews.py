@@ -2,6 +2,7 @@
 Review-related API endpoints
 """
 
+import inspect
 import json
 import logging
 from typing import Any, Dict, List
@@ -22,6 +23,12 @@ router = APIRouter(tags=["reviews"])
 IDEMPOTENCY_KEY_TTL = 60 * 60 * 24  # 24 hours
 
 
+async def _maybe_get_room(storage_service: StorageService, room_id: str):
+    room = storage_service.get_room(room_id)
+    if inspect.isawaitable(room):
+        room = await room
+    return room
+
 
 @router.get("/reviews", response_model=List[ReviewMeta])
 async def get_reviews_by_room(
@@ -31,12 +38,22 @@ async def get_reviews_by_room(
 ) -> List[ReviewMeta]:
     """Get all reviews for a specific room"""
     # Verify room exists and belongs to user
-    room = storage_service.get_room(room_id)
+    room = await _maybe_get_room(storage_service, room_id)
     if not room or room.owner_id != user_info.get("user_id"):
         raise HTTPException(status_code=404, detail="Room not found or access denied.")
-    
+
     reviews = storage_service.get_reviews_by_room(room_id)
     return reviews
+
+
+@router.get("/rooms/{room_id}/reviews", response_model=List[ReviewMeta])
+async def get_room_reviews(
+    room_id: str,
+    user_info: Dict[str, str] = AUTH_DEPENDENCY,
+    storage_service: StorageService = Depends(get_storage_service),
+) -> List[ReviewMeta]:
+    """Compatibility endpoint for nested room review queries."""
+    return await get_reviews_by_room(room_id, user_info, storage_service)
 
 
 @router.get("/reviews/{id}", response_model=ReviewMeta)
@@ -60,7 +77,7 @@ async def get_review(
         raise HTTPException(status_code=404, detail="Review not found")
 
     # Verify that the associated room belongs to the user
-    room = storage_service.get_room(review.room_id)
+    room = await _maybe_get_room(storage_service, review.room_id)
     if not room or room.owner_id != user_info.get("user_id"):
         raise HTTPException(status_code=403, detail="Access denied to review")
 
@@ -103,7 +120,7 @@ async def get_review_events_stream(
     review = storage_service.get_review_meta(review_id)
     if not review:
         raise HTTPException(status_code=404, detail="Review not found")
-    room = storage_service.get_room(review.room_id)
+    room = await _maybe_get_room(storage_service, review.room_id)
     if not room or room.owner_id != user_info.get("user_id"):
         raise HTTPException(status_code=403, detail="Access denied to review")
 

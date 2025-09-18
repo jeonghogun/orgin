@@ -428,7 +428,7 @@ class TestConversationServiceIntegration:
         assert thread.title == "Integration Test Thread"
         
         # Get threads by subroom
-        retrieved_threads = service.get_threads_by_room(room_id)
+        retrieved_threads = asyncio.run(service.get_threads_by_room(room_id))
         assert len(retrieved_threads) > 0
         retrieved_thread = retrieved_threads[0]
         assert retrieved_thread.title == thread.title
@@ -464,7 +464,7 @@ class TestConversationServiceIntegration:
             assert success is True
             
             # Verify deletion
-            remaining_threads = service.get_threads_by_room(room_id)
+            remaining_threads = asyncio.run(service.get_threads_by_room(room_id))
             assert len(remaining_threads) == 0
         
         print("✅ ConversationService CRUD operations test passed")

@@ -300,7 +300,7 @@ def require_role(required_role: str) -> Callable:
         memory_service: MemoryService = Depends(get_memory_service),
     ) -> Dict[str, str]:
         user_id = user_info.get("user_id")
-        if not user_id:
+        if not user_id or user_id == "anonymous":
             raise HTTPException(status_code=401, detail="Not authenticated")
         user_profile = await memory_service.get_user_profile(user_id)
         if not user_profile or user_profile.role != required_role:
