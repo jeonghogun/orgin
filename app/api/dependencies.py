@@ -7,7 +7,7 @@ from typing import Dict, Optional, Any, Callable, Type
 from fastapi import HTTPException, Request, Depends, WebSocket, WebSocketDisconnect, status
 from firebase_admin import auth
 
-from app.config.settings import settings
+from app.config.settings import get_effective_redis_url, settings
 from app.services.storage_service import StorageService
 from app.services.database_service import get_database_service, DatabaseService
 from app.services.llm_service import LLMService
@@ -25,6 +25,7 @@ from app.services.intent_classifier_service import IntentClassifierService
 from app.services.background_task_service import BackgroundTaskService
 from app.core.secrets import SecretProvider, env_secrets_provider
 import redis
+from redis.exceptions import RedisError
 
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,7 @@ _admin_service: Optional[AdminService] = None
 _audit_service: Optional[AuditService] = None
 _cache_service: Optional[CacheService] = None
 _redis_client: Optional[redis.Redis] = None
+_redis_url_signature: Optional[str] = None
 _secret_provider: Optional[SecretProvider] = None
 _storage_service: Optional[StorageService] = None
 _llm_service: Optional[LLMService] = None
@@ -149,25 +151,40 @@ def get_admin_service() -> AdminService:
         _admin_service = get_admin_service_from_module()
     return _admin_service
 
-def get_redis_client() -> redis.Redis:
+def get_redis_client() -> Optional[redis.Redis]:
     """Dependency to get the Redis client instance."""
-    global _redis_client
-    if _redis_client is None:
-        redis_url = settings.REDIS_URL
-        if not redis_url:
-            logger.warning("REDIS_URL is not configured; cache features are disabled.")
-            _redis_client = None
-        else:
+    global _redis_client, _redis_url_signature
+
+    redis_url = get_effective_redis_url()
+    if not redis_url:
+        if _redis_client is not None:
             try:
-                _redis_client = redis.from_url(redis_url)
-            except Exception as redis_error:
-                logger.warning(
-                    "Failed to initialize Redis client from %s: %s",
-                    redis_url,
-                    redis_error,
-                    exc_info=True,
-                )
-                _redis_client = None
+                _redis_client.close()
+            except Exception:
+                pass
+        _redis_client = None
+        _redis_url_signature = None
+        logger.warning("REDIS_URL is not configured; cache features are disabled.")
+        return None
+
+    if _redis_client is None or _redis_url_signature != redis_url:
+        if _redis_client is not None:
+            try:
+                _redis_client.close()
+            except Exception:
+                pass
+        try:
+            _redis_client = redis.from_url(redis_url)
+            _redis_url_signature = redis_url
+        except RedisError as redis_error:
+            logger.warning(
+                "Failed to initialize Redis client from %s: %s",
+                redis_url,
+                redis_error,
+                exc_info=True,
+            )
+            _redis_client = None
+            _redis_url_signature = None
     return _redis_client
 
 def get_cache_service() -> CacheService:

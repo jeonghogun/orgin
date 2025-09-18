@@ -11,7 +11,8 @@ from google.generativeai import GenerativeModel, configure, types as genai_types
 from openai.types.chat import ChatCompletionChunk
 
 import redis
-from app.config.settings import settings
+from redis.exceptions import RedisError
+from app.config.settings import get_effective_redis_url, settings
 from app.models.conversation_schemas import SSEEvent, SSEDelta, SSEToolCall, SSEUsage
 from app.core.metrics import LLM_CALLS_TOTAL, LLM_LATENCY_SECONDS, LLM_TOKENS_TOTAL, CONVO_COST_USD_TOTAL
 
@@ -54,21 +55,35 @@ class BaseLLMAdapter(ABC):
 class OpenAIAdapter(BaseLLMAdapter):
     """Adapter for OpenAI-compatible models."""
     def __init__(self):
-        redis_url = settings.REDIS_URL
-        self.redis_client: Optional[redis.Redis]
-        if redis_url:
+        self.redis_client: Optional[redis.Redis] = None
+        self._redis_url_signature: Optional[str] = None
+
+    def _ensure_redis_client(self) -> Optional[redis.Redis]:
+        redis_url = get_effective_redis_url()
+        if not redis_url:
+            if self.redis_client:
+                try:
+                    self.redis_client.close()
+                except RedisError:
+                    pass
+            self.redis_client = None
+            self._redis_url_signature = None
+            return None
+
+        if self.redis_client is None or self._redis_url_signature != redis_url:
             try:
                 self.redis_client = redis.from_url(redis_url)
-            except Exception as redis_error:
+                self._redis_url_signature = redis_url
+            except RedisError as redis_error:
                 logger.warning(
                     "Failed to connect to Redis at %s: %s. Falling back to no-op cache.",
                     redis_url,
                     redis_error,
                 )
                 self.redis_client = None
-        else:
-            logger.info("REDIS_URL not configured; streaming cancellation will be disabled.")
-            self.redis_client = None
+                self._redis_url_signature = None
+
+        return self.redis_client
 
     async def generate_stream(
         self,
@@ -91,6 +106,7 @@ class OpenAIAdapter(BaseLLMAdapter):
             return
 
         try:
+            redis_client = self._ensure_redis_client()
             stream = await openai_client.chat.completions.create(
                 model=model,
                 messages=messages,
@@ -103,9 +119,9 @@ class OpenAIAdapter(BaseLLMAdapter):
 
             tool_calls: List[Any] = []
             async for chunk in stream:
-                if self.redis_client and self.redis_client.exists(cancellation_key):
+                if redis_client and redis_client.exists(cancellation_key):
                     logger.info(f"Cancellation detected for stream {message_id}. Stopping.")
-                    self.redis_client.delete(cancellation_key)  # Clean up the key
+                    redis_client.delete(cancellation_key)  # Clean up the key
                     break
 
                 chunk: ChatCompletionChunk

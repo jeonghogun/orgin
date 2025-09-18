@@ -3,8 +3,9 @@ import logging
 from dataclasses import asdict, is_dataclass
 from typing import Optional, Any
 import redis.asyncio as redis
+from redis.exceptions import RedisError
 
-from app.config.settings import settings
+from app.config.settings import get_effective_redis_url, settings
 
 logger = logging.getLogger(__name__)
 
@@ -80,17 +81,37 @@ class CacheService:
             return False
 
 _redis_client: Optional[redis.Redis] = None
+_redis_url_signature: Optional[str] = None
 
 async def get_redis_client() -> Optional[redis.Redis]:
     """Get a singleton Redis client instance."""
-    global _redis_client
-    if _redis_client is None and settings.REDIS_URL:
+    global _redis_client, _redis_url_signature
+
+    redis_url = get_effective_redis_url()
+    if not redis_url:
+        if _redis_client is not None:
+            try:
+                await _redis_client.close()
+            except Exception:
+                pass
+        _redis_client = None
+        _redis_url_signature = None
+        return None
+
+    if _redis_client is None or _redis_url_signature != redis_url:
+        if _redis_client is not None:
+            try:
+                await _redis_client.close()
+            except Exception:
+                pass
         try:
-            # Ensure the client is created with decode_responses=True for string operations
-            _redis_client = redis.from_url(settings.REDIS_URL, encoding="utf-8", decode_responses=True)
-        except Exception as e:
-            logger.error(f"Failed to create Redis client for cache: {e}")
+            _redis_client = redis.from_url(redis_url, encoding="utf-8", decode_responses=True)
+            _redis_url_signature = redis_url
+        except RedisError as exc:
+            logger.error("Failed to create Redis client for cache at %s: %s", redis_url, exc)
             _redis_client = None
+            _redis_url_signature = None
+
     return _redis_client
 
 async def get_cache_service() -> CacheService:

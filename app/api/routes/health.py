@@ -3,8 +3,10 @@ Health check endpoints for monitoring and load balancing.
 """
 import logging
 from fastapi import APIRouter, HTTPException
+from redis.exceptions import RedisError
+
 from app.services.database_service import get_database_service
-from app.config.settings import settings
+from app.config.settings import get_effective_redis_url
 
 logger = logging.getLogger(__name__)
 
@@ -45,17 +47,22 @@ async def detailed_health_check():
         health_status["status"] = "unhealthy"
     
     # Check Redis connectivity (if configured)
-    try:
-        import redis
-        redis_client = redis.from_url(settings.REDIS_URL, decode_responses=True)
-        redis_client.ping()
-        health_status["components"]["redis"] = "healthy"
-    except Exception as e:
-        logger.warning(f"Redis health check failed: {e}")
-        health_status["components"]["redis"] = "unhealthy"
-        # Redis failure doesn't make the service unhealthy, just degraded
-        if health_status["status"] == "healthy":
-            health_status["status"] = "degraded"
+    redis_url = get_effective_redis_url()
+    if redis_url:
+        try:
+            import redis
+
+            redis_client = redis.from_url(redis_url, decode_responses=True)
+            redis_client.ping()
+            health_status["components"]["redis"] = "healthy"
+        except (RedisError, Exception) as e:
+            logger.warning(f"Redis health check failed: {e}")
+            health_status["components"]["redis"] = "unhealthy"
+            # Redis failure doesn't make the service unhealthy, just degraded
+            if health_status["status"] == "healthy":
+                health_status["status"] = "degraded"
+    else:
+        health_status["components"]["redis"] = "disabled"
     
     # Return appropriate HTTP status
     if health_status["status"] == "unhealthy":

@@ -2,6 +2,7 @@ import logging
 import time
 import json
 import redis
+from redis.exceptions import RedisError
 from datetime import datetime
 from typing import List, Dict, Any, Tuple, Union, Optional, Type
 
@@ -10,7 +11,7 @@ from celery.exceptions import Ignore
 from pydantic import BaseModel, ValidationError
 
 from app.celery_app import celery_app
-from app.config.settings import settings
+from app.config.settings import get_effective_redis_url, settings
 from app.models.schemas import Message, WebSocketMessage
 from app.models.review_schemas import (
     LLMReviewInitialAnalysis,
@@ -207,12 +208,25 @@ def run_initial_panel_turn(self: BaseTask, review_id: str, review_room_id: str, 
         _record_status_update(review_id, "processing")
 
         if settings.DAILY_ORG_TOKEN_BUDGET:
-            redis_client = redis.from_url(settings.REDIS_URL, decode_responses=True)
-            today_key = f"daily_token_usage:{datetime.utcnow().strftime('%Y-%m-%d')}"
-            current_usage = int(redis_client.get(today_key) or 0)
-            if current_usage > settings.DAILY_ORG_TOKEN_BUDGET:
-                raise BudgetExceededError(f"Daily token budget of {settings.DAILY_ORG_TOKEN_BUDGET} exceeded.")
-            redis_client.close()
+            redis_url = get_effective_redis_url()
+            redis_client = None
+            if redis_url:
+                try:
+                    redis_client = redis.from_url(redis_url, decode_responses=True)
+                    today_key = f"daily_token_usage:{datetime.utcnow().strftime('%Y-%m-%d')}"
+                    current_usage = int(redis_client.get(today_key) or 0)
+                    if current_usage > settings.DAILY_ORG_TOKEN_BUDGET:
+                        raise BudgetExceededError(f"Daily token budget of {settings.DAILY_ORG_TOKEN_BUDGET} exceeded.")
+                except RedisError as exc:
+                    logger.warning(
+                        "Skipping org budget enforcement due to Redis error: %s",
+                        exc,
+                    )
+                finally:
+                    if redis_client:
+                        redis_client.close()
+            else:
+                logger.info("Daily org token budget check skipped (Redis unavailable)")
 
         panel_configs = llm_strategy_service.get_default_panelists()
         if panelists_override:
@@ -830,11 +844,21 @@ def generate_consolidated_report(
         if settings.METRICS_ENABLED:
             total_tokens = sum(m.get("total_tokens", 0) for r in all_metrics for m in r if m)
             if settings.DAILY_ORG_TOKEN_BUDGET:
-                redis_client = redis.from_url(settings.REDIS_URL, decode_responses=True)
-                today_key = f"daily_token_usage:{datetime.utcnow().strftime('%Y-%m-%d')}"
-                redis_client.incrby(today_key, total_tokens)
-                redis_client.expire(today_key, 60 * 60 * 25)
-                redis_client.close()
+                redis_url = get_effective_redis_url()
+                redis_client = None
+                if redis_url:
+                    try:
+                        redis_client = redis.from_url(redis_url, decode_responses=True)
+                        today_key = f"daily_token_usage:{datetime.utcnow().strftime('%Y-%m-%d')}"
+                        redis_client.incrby(today_key, total_tokens)
+                        redis_client.expire(today_key, 60 * 60 * 25)
+                    except RedisError as exc:
+                        logger.warning("Failed to update daily org usage in Redis: %s", exc)
+                    finally:
+                        if redis_client:
+                            redis_client.close()
+                else:
+                    logger.info("Daily org token usage tracking skipped (Redis unavailable)")
 
         _record_status_update(review_id, "completed")
     except Exception as e:

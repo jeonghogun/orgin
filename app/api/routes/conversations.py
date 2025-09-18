@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from sse_starlette.sse import EventSourceResponse
+from redis.exceptions import RedisError
 
 from app.api.dependencies import AUTH_DEPENDENCY, check_budget
 from app.core.metrics import SSE_SESSIONS_ACTIVE
@@ -56,7 +57,16 @@ async def create_message(thread_id: str, request_data: CreateMessageRequest, use
     assistant_message = convo_service.create_message(thread_id=thread_id, role="assistant", content="", status="draft", model=request_data.model, user_id=user_id)
 
     # Cache the user_id to be used by the stream
-    convo_service.redis_client.set(f"stream_user:{assistant_message['id']}", user_id, ex=3600)
+    redis_client = convo_service.redis_client
+    if redis_client:
+        try:
+            redis_client.set(
+                f"stream_user:{assistant_message['id']}",
+                user_id,
+                ex=3600,
+            )
+        except RedisError as exc:
+            logger.warning("Failed to cache stream user %s: %s", assistant_message["id"], exc)
 
     return {"messageId": assistant_message["id"]}
 
@@ -72,8 +82,19 @@ async def stream_message(
     if not draft_message:
         raise HTTPException(status_code=404, detail="Message not found.")
 
-    user_id = convo_service.redis_client.get(f"stream_user:{message_id}")
-    user_id = user_id.decode('utf-8') if user_id else "anonymous"
+    cached_user: Optional[str] = None
+    redis_client = convo_service.redis_client
+    if redis_client:
+        try:
+            cached_value = redis_client.get(f"stream_user:{message_id}")
+            if isinstance(cached_value, bytes):
+                cached_user = cached_value.decode("utf-8")
+            else:
+                cached_user = cached_value
+        except RedisError as exc:
+            logger.warning("Failed to load stream user %s from Redis: %s", message_id, exc)
+
+    user_id = cached_user or "anonymous"
     if user_id == "anonymous":
         raise HTTPException(status_code=401, detail="Could not identify user for streaming.")
 
@@ -170,7 +191,12 @@ async def stream_message(
                     convo_service.increment_token_usage(user_id, total_tokens)
 
             # Always clean up the user cache
-            convo_service.redis_client.delete(f"stream_user:{message_id}")
+            redis_client = convo_service.redis_client
+            if redis_client:
+                try:
+                    redis_client.delete(f"stream_user:{message_id}")
+                except RedisError as exc:
+                    logger.warning("Failed to clear stream cache for %s: %s", message_id, exc)
 
     return EventSourceResponse(event_generator())
 
@@ -277,8 +303,15 @@ async def cancel_stream(message_id: str, convo_service: ConversationService = De
     Sets a flag in Redis to signal that a stream should be cancelled.
     """
     # Set a key with a short expiry to signal cancellation
-    convo_service.redis_client.set(f"cancel:stream:{message_id}", 1, ex=60)
-    logger.info(f"Cancellation signal sent for message stream: {message_id}")
+    if convo_service.redis_client:
+        try:
+            convo_service.redis_client.set(f"cancel:stream:{message_id}", 1, ex=60)
+            logger.info("Cancellation signal sent for message stream: %s", message_id)
+        except RedisError as exc:
+            logger.warning("Failed to set cancellation flag for %s: %s", message_id, exc)
+    else:
+        logger.info("Redis unavailable; cancellation signal skipped for %s", message_id)
+
     return {"message": "Cancellation signal sent."}
 
 @router.get("/usage/today", response_model=Dict[str, Any])

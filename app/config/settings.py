@@ -3,6 +3,7 @@
 import logging
 import os
 from typing import Optional, Dict, Any
+from urllib.parse import urlparse, urlunparse
 
 from pydantic_settings import BaseSettings
 from pydantic import model_validator, PostgresDsn, ValidationError
@@ -166,6 +167,101 @@ class Settings(BaseSettings):
         case_sensitive = True
 
 
+def _rewrite_url_with_overrides(url: str, host: Optional[str], port: Optional[str]) -> str:
+    """Rewrite a URL's host/port components while preserving credentials and paths."""
+
+    parsed = urlparse(url)
+    userinfo, at, hostport = parsed.netloc.rpartition("@")
+    current_host, _, current_port = hostport.partition(":")
+
+    new_host = host or current_host
+    new_port = port or current_port
+
+    host_segment = new_host or current_host
+    if new_port:
+        host_segment = f"{host_segment}:{new_port}"
+
+    if at:
+        netloc = f"{userinfo}{at}{host_segment}"
+    else:
+        netloc = host_segment
+
+    return urlunparse(parsed._replace(netloc=netloc))
+
+
+def _apply_test_overrides(settings: Settings) -> None:
+    """Apply test-specific overrides for services that rely on network URLs."""
+
+    redis_host = os.getenv("TEST_REDIS_HOST")
+    redis_port = os.getenv("TEST_REDIS_PORT")
+
+    if redis_host or redis_port:
+        if settings.REDIS_URL:
+            settings.REDIS_URL = _rewrite_url_with_overrides(
+                settings.REDIS_URL,
+                redis_host,
+                redis_port,
+            )
+        else:
+            host = redis_host or "localhost"
+            port = redis_port or "6379"
+            settings.REDIS_URL = f"redis://{host}:{port}/0"
+
+        if not settings.CELERY_BROKER_URL:
+            settings.CELERY_BROKER_URL = settings.REDIS_URL
+        if not settings.CELERY_RESULT_BACKEND:
+            settings.CELERY_RESULT_BACKEND = settings.REDIS_URL
+
+
+def _base_redis_url() -> Optional[str]:
+    """Determine the baseline Redis URL before any test overrides are applied."""
+
+    if settings.REDIS_URL:
+        return settings.REDIS_URL
+
+    env_url = os.getenv("REDIS_URL")
+    if env_url:
+        return env_url
+
+    host = os.getenv("REDIS_HOST")
+    port = os.getenv("REDIS_PORT")
+    if host or port:
+        host = host or "localhost"
+        port = port or "6379"
+        return f"redis://{host}:{port}/0"
+
+    return None
+
+
+def get_effective_redis_url() -> Optional[str]:
+    """Return the Redis URL after applying any runtime test overrides."""
+
+    redis_host = os.getenv("TEST_REDIS_HOST")
+    redis_port = os.getenv("TEST_REDIS_PORT")
+
+    base_url = _base_redis_url()
+
+    if redis_host or redis_port:
+        if base_url:
+            return _rewrite_url_with_overrides(base_url, redis_host, redis_port)
+
+        host = redis_host or "localhost"
+        port = redis_port or "6379"
+        return f"redis://{host}:{port}/0"
+
+    return base_url
+
+
+def get_effective_celery_url() -> Optional[str]:
+    """Return the Celery broker/backend URL honoring Redis overrides."""
+
+    celery_url = settings.CELERY_BROKER_URL or os.getenv("CELERY_BROKER_URL")
+    if celery_url:
+        return celery_url
+
+    return get_effective_redis_url()
+
+
 def _load_settings() -> Settings:
     """Instantiate :class:`Settings`, providing a helpful fallback for tests."""
 
@@ -195,3 +291,4 @@ def _load_settings() -> Settings:
 
 # Global settings instance
 settings = _load_settings()
+_apply_test_overrides(settings)

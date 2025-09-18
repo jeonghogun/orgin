@@ -151,6 +151,7 @@ class ConversationMessage(Base):
     __tablename__ = 'conversation_messages'
     id = Column(String, primary_key=True)
     thread_id = Column(String, ForeignKey('conversation_threads.id', ondelete='CASCADE'), nullable=False, index=True)
+    user_id = Column(String, nullable=False, index=True)
     role = Column(String, nullable=False)
     content = Column(Text, nullable=False)
     model = Column(String, nullable=True)
