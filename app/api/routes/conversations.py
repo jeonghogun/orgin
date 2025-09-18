@@ -246,7 +246,7 @@ async def get_message_diff(message_id: str, against: str, convo_service: Convers
 
 @router.get("/threads/{thread_id}/export")
 async def export_thread(thread_id: str, format: str = Query("json", enum=["json", "md", "zip"]), convo_service: ConversationService = Depends(get_conversation_service)):
-    messages = convo_service.get_all_messages_by_thread(thread_id)
+    messages = await convo_service.get_all_messages_by_thread(thread_id)
     if not messages: raise HTTPException(status_code=404, detail="Thread not found.")
 
     if format == "json":

@@ -151,7 +151,7 @@ class TestConversationSystemE2E:
         # Step 6: Export the thread
         export_response = client.get(
             f"/api/convo/threads/{thread_id}/export",
-            params={"format": "markdown"},
+            params={"format": "md"},
             headers=self.auth_headers
         )
         assert export_response.status_code == 200

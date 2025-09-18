@@ -152,6 +152,21 @@ CREATE INDEX IF NOT EXISTS ix_conversation_messages_created_at ON conversation_m
 CREATE INDEX IF NOT EXISTS idx_conversation_messages_content_tsvector ON conversation_messages USING GIN (content_tsvector);
 CREATE INDEX IF NOT EXISTS idx_attachments_thread_id ON attachments(thread_id);
 
+-- Create attachment_chunks table for RAG functionality
+CREATE TABLE IF NOT EXISTS attachment_chunks (
+    id VARCHAR(255) PRIMARY KEY,
+    attachment_id VARCHAR(255) NOT NULL REFERENCES attachments(id) ON DELETE CASCADE,
+    thread_id VARCHAR(255) NOT NULL REFERENCES conversation_threads(id) ON DELETE CASCADE,
+    chunk_index INTEGER NOT NULL,
+    chunk_text TEXT NOT NULL,
+    embedding VECTOR(1536),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_attachment_chunks_attachment_id ON attachment_chunks(attachment_id);
+CREATE INDEX IF NOT EXISTS idx_attachment_chunks_thread_id ON attachment_chunks(thread_id);
+CREATE INDEX IF NOT EXISTS idx_attachment_chunks_embedding ON attachment_chunks USING ivfflat (embedding vector_cosine_ops);
+
 DO $$
 BEGIN
     IF NOT EXISTS (
