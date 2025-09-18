@@ -46,11 +46,12 @@ review_rebuttal:
         - If there are differences, analyze them and clarify or improve weak points.
         - If they are mostly aligned, reinforce the shared perspective by pointing out missing factors, hidden risks, or practical details.
         - **When you state a disagreement or make an addition, you must provide a brief reasoning for it.**
-        - Only state "the arguments are sufficient" if you believe no meaningful improvement is possible (this should be rare).
+        - If you have nothing new to add, set `"no_new_arguments"` to `true` and keep the other lists empty.
         - Your output must be in the specified JSON format.
         - The JSON schema you must adhere to is:
           {{
             "round": 2,
+            "no_new_arguments": false,
             "agreements": [
               "Summary of a round 1 argument you fully agree with"
             ],
@@ -75,8 +76,8 @@ review_synthesis:
     v1:
       template: |
         Synthesis Round.
-        Based on all previous arguments from round 1 and 2, please synthesize them into your final, comprehensive position.
-        Provide actionable recommendations based on your conclusion.
+        Based on all previous arguments from round 1 and 2, synthesize them into your final, comprehensive position.
+        Provide actionable recommendations based on your conclusion. Prepare a clear stance for the final alignment round.
 
         {synthesis_context}
 
@@ -84,11 +85,45 @@ review_synthesis:
         - The JSON schema you must adhere to is:
           {{
             "round": 3,
+            "no_new_arguments": false,
             "executive_summary": "A high-level summary of my final position, synthesizing all discussions.",
             "conclusion": "The detailed, comprehensive conclusion supporting the summary.",
             "recommendations": [
               "Specific, actionable recommendation 1, based on the conclusion.",
               "Specific, actionable recommendation 2, based on the conclusion."
+            ]
+          }}
+
+review_resolution:
+  description: "The prompt for Round 4 (Final Alignment) of the review process."
+  default_version: v1
+  versions:
+    v1:
+      template: |
+        Final Alignment Round.
+        You now have access to the synthesized round 3 perspectives for every panelist.
+
+        {resolution_context}
+
+        Provide your final stance that the observer should see. Focus on consensus signals, remaining disagreements, and concrete next steps.
+        - If you truly have nothing to add beyond round 3, set `"no_new_arguments"` to `true` and keep the other fields concise.
+        - Otherwise, highlight what changed for you after seeing the other syntheses.
+        - Your output must be in the specified JSON format.
+        - The JSON schema you must adhere to is:
+          {{
+            "round": 4,
+            "no_new_arguments": false,
+            "final_position": "Your final recommendation or stance.",
+            "consensus_highlights": [
+              "Strong agreement point 1",
+              "Strong agreement point 2"
+            ],
+            "open_questions": [
+              "Outstanding question or risk 1"
+            ],
+            "next_steps": [
+              "Specific, follow-up action 1",
+              "Specific, follow-up action 2"
             ]
           }}
 
@@ -98,7 +133,7 @@ review_final_report:
   versions:
     v1:
       template: |
-        The following are the final reports from the AI panelists:
+        The following are the panelist outputs by round (completed rounds: {rounds_completed}):
         {panelist_reports}
 
         Please create a consolidated final report.

@@ -1,15 +1,14 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import RoomHeader from '../components/RoomHeader';
-import MessageList from '../components/MessageList';
 import ChatInput from '../components/ChatInput';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 import { useAppContext } from '../context/AppContext';
 import useEventSource from '../hooks/useEventSource';
 import toast from 'react-hot-toast';
-import Message from '../components/Message'; // We need the Message component to render live messages
 import ReviewTimeline from '../components/review/ReviewTimeline';
+import DebateTranscript from '../components/review/DebateTranscript';
 
 const Review = ({ reviewId, isSplitView = false, createRoomMutation }) => {
   const { sidebarOpen } = useAppContext();
@@ -18,6 +17,9 @@ const Review = ({ reviewId, isSplitView = false, createRoomMutation }) => {
   const [reviewStatus, setReviewStatus] = useState('loading');
   const [statusEvents, setStatusEvents] = useState([]);
   const statusKeyRef = useRef(new Set());
+  const queryClient = useQueryClient();
+  const [isRequestingRound, setIsRequestingRound] = useState(false);
+  const MAX_DEBATE_ROUNDS = 4;
 
   const { data: review, isLoading } = useQuery({
     queryKey: ['review', reviewId],
@@ -40,20 +42,73 @@ const Review = ({ reviewId, isSplitView = false, createRoomMutation }) => {
     staleTime: 1000 * 60,
   });
 
+  const extractPersona = useCallback((message) => {
+    if (!message) return '패널';
+    if (message.persona) {
+      return message.persona;
+    }
+    if (message.metadata?.persona) {
+      return message.metadata.persona;
+    }
+    const personaMatch = message.content?.match(/Panelist:\s*([^\n]+)/i);
+    if (personaMatch) {
+      return personaMatch[1].trim();
+    }
+    if (message.user_id && message.user_id !== 'assistant') {
+      return message.user_id;
+    }
+    return '패널';
+  }, []);
+
+  const extractRound = useCallback((message) => {
+    if (!message) return null;
+    if (typeof message.round === 'number') {
+      return message.round;
+    }
+    if (message.metadata?.round) {
+      return message.metadata.round;
+    }
+    const roundMatch = message.content?.match(/라운드\s*(\d+)/i) || message.content?.match(/Round\s*(\d+)/i);
+    if (roundMatch) {
+      return Number.parseInt(roundMatch[1], 10);
+    }
+    return null;
+  }, []);
+
+  const normalizeMessage = useCallback((message) => {
+    if (!message?.message_id) return null;
+    const persona = extractPersona(message);
+    const round = extractRound(message);
+    const rawContent = message.content || '';
+    const MAX_CONTENT_LENGTH = 8000;
+    const isTrimmed = rawContent.length > MAX_CONTENT_LENGTH;
+    const trimmedContent = isTrimmed ? `${rawContent.slice(0, MAX_CONTENT_LENGTH)}…` : rawContent;
+
+    return {
+      ...message,
+      content: trimmedContent,
+      persona,
+      round,
+      isTrimmed,
+    };
+  }, [extractPersona, extractRound]);
+
   const appendLiveMessage = useCallback((message) => {
-    if (!message?.message_id) return;
+    const normalized = normalizeMessage(message);
+    if (!normalized?.message_id) return;
     setLiveMessages((prev) => {
-      if (prev.some((item) => item.message_id === message.message_id)) {
+      if (prev.some((item) => item.message_id === normalized.message_id)) {
         return prev;
       }
-      return [...prev, message];
+      return [...prev, normalized];
     });
-  }, []);
+  }, [normalizeMessage]);
 
   useEffect(() => {
     statusKeyRef.current = new Set();
     setStatusEvents([]);
     setLiveMessages([]);
+    setIsRequestingRound(false);
   }, [reviewId]);
 
   const recordStatusEvent = useCallback((status, ts) => {
@@ -84,58 +139,29 @@ const Review = ({ reviewId, isSplitView = false, createRoomMutation }) => {
 
   const combinedMessages = useMemo(() => {
     const map = new Map();
-    historicalMessages.forEach((msg) => {
-      if (msg?.message_id) {
-        map.set(msg.message_id, msg);
+    const addMessage = (msg, alreadyNormalized = false) => {
+      const normalized = alreadyNormalized ? msg : normalizeMessage(msg);
+      if (normalized?.message_id) {
+        map.set(normalized.message_id, normalized);
       }
-    });
-    liveMessages.forEach((msg) => {
-      if (msg?.message_id) {
-        map.set(msg.message_id, msg);
-      }
-    });
+    };
+    historicalMessages.forEach((msg) => addMessage(msg));
+    liveMessages.forEach((msg) => addMessage(msg, true));
     return Array.from(map.values()).sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
-  }, [historicalMessages, liveMessages]);
-
-  const extractPersona = useCallback((message) => {
-    if (!message) return '패널';
-    if (message.metadata?.persona) {
-      return message.metadata.persona;
-    }
-    const personaMatch = message.content?.match(/Panelist:\s*([^\n]+)/i);
-    if (personaMatch) {
-      return personaMatch[1].trim();
-    }
-    if (message.user_id && message.user_id !== 'assistant') {
-      return message.user_id;
-    }
-    return '패널';
-  }, []);
-
-  const extractRound = useCallback((message) => {
-    if (!message) return null;
-    if (message.metadata?.round) {
-      return message.metadata.round;
-    }
-    const roundMatch = message.content?.match(/라운드\s*(\d+)/i) || message.content?.match(/Round\s*(\d+)/i);
-    if (roundMatch) {
-      return Number.parseInt(roundMatch[1], 10);
-    }
-    return null;
-  }, []);
+  }, [historicalMessages, liveMessages, normalizeMessage]);
 
   const personaEvents = useMemo(() => {
     const grouped = {};
     combinedMessages.forEach((message) => {
       if (!message?.content) return;
-      const persona = extractPersona(message);
+      const persona = message.persona || extractPersona(message);
       if (!grouped[persona]) {
         grouped[persona] = [];
       }
       grouped[persona].push({
         id: message.message_id,
         timestamp: message.timestamp,
-        round: extractRound(message),
+        round: message.round ?? extractRound(message),
         preview: message.content.replace(/\s+/g, ' ').slice(0, 140),
       });
     });
@@ -245,6 +271,25 @@ const Review = ({ reviewId, isSplitView = false, createRoomMutation }) => {
     );
   }
 
+  const roundsCompleted = review?.current_round || 0;
+  const debateConcluded = roundsCompleted >= MAX_DEBATE_ROUNDS || ['completed', 'failed'].includes(reviewStatus);
+
+  const handleRequestAnotherRound = useCallback(async () => {
+    if (!reviewId || debateConcluded) return;
+    setIsRequestingRound(true);
+    try {
+      await axios.post(`/api/reviews/${reviewId}/continue`);
+      toast.success('추가 라운드를 요청했습니다.');
+      await queryClient.invalidateQueries({ queryKey: ['review', reviewId] });
+    } catch (error) {
+      console.error('Failed to request additional debate round:', error);
+      const detail = error.response?.data?.detail || '추가 라운드 요청에 실패했습니다.';
+      toast.error(detail);
+    } finally {
+      setIsRequestingRound(false);
+    }
+  }, [debateConcluded, queryClient, reviewId]);
+
   return (
     <div className="flex flex-col h-full bg-bg relative overflow-hidden">
       <div className="flex-shrink-0 z-10">
@@ -323,17 +368,17 @@ const Review = ({ reviewId, isSplitView = false, createRoomMutation }) => {
 
         <ReviewTimeline statusEvents={statusEvents} personaEvents={personaEvents} />
 
-        {/* MessageList will show historical messages */}
-        <MessageList roomId={review?.room_id} createRoomMutation={createRoomMutation} />
-
-        {/* Render live messages as they arrive */}
-        {liveMessages.length > 0 && (
-          <div className="mt-6 space-y-4" aria-live="polite">
-            {liveMessages.map((msg) => (
-              <Message key={msg.message_id} message={msg} />
-            ))}
-          </div>
-        )}
+        <div className="mt-6">
+          <DebateTranscript
+            messages={combinedMessages}
+            onRequestRound={handleRequestAnotherRound}
+            canRequestRound={!debateConcluded && Boolean(reviewId)}
+            isRequestingRound={isRequestingRound}
+            totalRoundsCompleted={roundsCompleted}
+            maxRounds={MAX_DEBATE_ROUNDS}
+            isDebateConcluded={debateConcluded}
+          />
+        </div>
       </div>
 
       <div 

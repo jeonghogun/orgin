@@ -7,6 +7,8 @@ const statusLabels = {
   initial_turn_complete: '라운드 1 완료',
   rebuttal_turn_complete: '라운드 2 완료',
   synthesis_turn_complete: '라운드 3 완료',
+  round4_turn_complete: '라운드 4 완료',
+  no_new_arguments_stop: '추가 주장 없음으로 조기 종료',
   in_progress: '리뷰 진행 중',
   completed: '리뷰 완료',
   failed: '리뷰 실패',

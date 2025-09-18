@@ -104,7 +104,7 @@ class TestStorageServiceWithDB:
         """Test saving review metadata."""
         review_meta = ReviewMeta(
             review_id="review-db", room_id="room-db", topic="DB Topic", instruction="DB Instruction",
-            status="in_progress", total_rounds=3, current_round=1, created_at=123
+            status="in_progress", total_rounds=4, current_round=1, created_at=123
         )
         storage_service.save_review_meta(review_meta)
         
@@ -117,7 +117,7 @@ class TestStorageServiceWithDB:
         review_id = "review-db"
         mock_db_service.execute_query.return_value = [{
             "review_id": review_id, "room_id": "room-db", "topic": "DB Topic", "instruction": "DB Instruction",
-            "status": "in_progress", "total_rounds": 3, "current_round": 1, "created_at": 123, "completed_at": None
+            "status": "in_progress", "total_rounds": 4, "current_round": 1, "created_at": 123, "completed_at": None
         }]
         
         review_meta = storage_service.get_review_meta(review_id)

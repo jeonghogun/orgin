@@ -221,10 +221,10 @@ async def _create_review_and_start(storage_service: StorageService, review_servi
         room_id=generate_id(), name=f"검토: {topic}", owner_id=user_id,
         room_type=RoomType.REVIEW, parent_id=room_id,
     )
-    instruction = "이 주제에 대해 3 라운드에 걸쳐 심도 있게 토론해주세요."
+    instruction = "이 주제에 대해 최대 4 라운드에 걸쳐 심도 있게 토론하되, 추가 주장이 없으면 조기에 종료해주세요."
     review_meta = ReviewMeta(
         review_id=new_review_room.room_id, room_id=new_review_room.room_id,
-        topic=topic, instruction=instruction, total_rounds=3, created_at=get_current_timestamp(),
+        topic=topic, instruction=instruction, total_rounds=4, created_at=get_current_timestamp(),
     )
     storage_service.save_review_meta(review_meta)
     await review_service.start_review_process(

@@ -30,6 +30,10 @@ class LLMReviewRebuttal(BaseModel):
     Expected JSON structure for Round 2 (Rebuttal).
     """
     round: int
+    no_new_arguments: bool = Field(
+        default=False,
+        description="Set to true if the panelist has no meaningful rebuttal to add.",
+    )
     agreements: List[str] = Field(..., description="A list of round 1 arguments that are agreed with.")
     disagreements: List[Disagreement] = Field(..., description="A list of points of disagreement with reasoning.")
     additions: List[Addition] = Field(..., description="A list of new points or additions with reasoning.")
@@ -39,9 +43,34 @@ class LLMReviewSynthesis(BaseModel):
     Expected JSON structure for Round 3 (Synthesis).
     """
     round: int
+    no_new_arguments: bool = Field(
+        default=False,
+        description="Set to true if the panelist has nothing new to contribute for the alignment round.",
+    )
     executive_summary: str = Field(..., description="A high-level summary of the final synthesized position.")
     conclusion: str = Field(..., description="The detailed, comprehensive conclusion supporting the summary.")
     recommendations: List[str] = Field(..., description="A list of specific, actionable recommendations.")
+
+class LLMReviewResolution(BaseModel):
+    """
+    Expected JSON structure for Round 4 (Final Alignment).
+    """
+
+    round: int
+    no_new_arguments: bool = Field(
+        default=False,
+        description="Set to true if there are no further arguments beyond round 3.",
+    )
+    final_position: str = Field(..., description="The panelist's final recommendation or stance.")
+    consensus_highlights: List[str] = Field(
+        ..., description="A list of points that represent strong agreement across panelists."
+    )
+    open_questions: List[str] = Field(
+        ..., description="Outstanding risks or questions that remain unresolved."
+    )
+    next_steps: List[str] = Field(
+        ..., description="Concrete next actions proposed by the panelist."
+    )
 
 class LLMFinalReport(BaseModel):
     """

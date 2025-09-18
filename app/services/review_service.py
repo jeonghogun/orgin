@@ -2,6 +2,7 @@
 Review Service - Orchestrates the multi-agent review process using Celery.
 """
 import asyncio
+import json
 import logging
 import uuid
 from typing import Optional, List, Dict, Any
@@ -109,6 +110,41 @@ class ReviewService:
             ).model_dump_json(),
         )
 
+    def _log_status_event(self, review_id: str, status: str, *, timestamp: Optional[int] = None) -> None:
+        """Persist and broadcast a status update event for a review."""
+
+        ts = timestamp or get_current_timestamp()
+        event_payload = {"status": status}
+        try:
+            self.storage.log_review_event(
+                {
+                    "review_id": review_id,
+                    "ts": ts,
+                    "type": "status_update",
+                    "round": None,
+                    "actor": "system",
+                    "content": json.dumps(event_payload),
+                }
+            )
+        except Exception as log_error:
+            logger.warning(
+                "Failed to persist status event %s for review %s: %s",
+                status,
+                review_id,
+                log_error,
+                exc_info=True,
+            )
+
+        redis_pubsub_manager.publish_sync(
+            f"review_{review_id}",
+            WebSocketMessage(
+                type="status_update",
+                review_id=review_id,
+                ts=ts,
+                payload=event_payload,
+            ).model_dump_json(),
+        )
+
     def _run_mock_review(self, review_id: str, review_room_id: str, topic: str, instruction: str) -> None:
         """Generate a lightweight, synchronous review flow when no LLM providers are available."""
         logger.warning(
@@ -125,16 +161,9 @@ class ReviewService:
                 extra={"review_id": review_id, "error": str(update_error)},
             )
 
-        redis_pubsub_manager.publish_sync(
-            f"review_{review_id}",
-            WebSocketMessage(
-                type="status_update",
-                review_id=review_id,
-                payload={"status": "in_progress"},
-            ).model_dump_json(),
-        )
-
         round_timestamp = get_current_timestamp()
+        self._log_status_event(review_id, "processing", timestamp=round_timestamp)
+        round_timestamp += 1
 
         panel_scripts = {
             "AGI Optimist": {
@@ -184,6 +213,23 @@ class ReviewService:
                         f"{topic} 관련 사용자 행동 로그를 정량적으로 수집·분석하는 대시보드를 구축합니다.",
                     ],
                 },
+                "round4": {
+                    "final_position": (
+                        f"빠른 실험 문화를 유지하되 Skeptic 과 Neutralist 의 통제 구조를 결합하면 "
+                        f"{topic} 실험을 전사 신뢰 속에서 확장할 수 있습니다."
+                    ),
+                    "consensus_highlights": [
+                        "파일럿→확장 단계별 성공 지표를 선제적으로 정의한다.",
+                        "관찰자에게 모든 학습 로그와 리스크 대응 결과를 주기적으로 공유한다.",
+                    ],
+                    "open_questions": [
+                        "대규모 확장 시 필요한 추가 인력·예산 합의를 얼마나 빠르게 이끌지 논의가 필요합니다.",
+                    ],
+                    "next_steps": [
+                        "30일 이내 실험·리스크·거버넌스 태스크포스를 구성해 책임 소재를 명확히 합니다.",
+                        f"{topic} 관련 핵심 지표 대시보드와 실패 보고 양식을 표준화합니다.",
+                    ],
+                },
             },
             "AGI Skeptic": {
                 "tagline": "신중한 시각",
@@ -229,6 +275,22 @@ class ReviewService:
                     "recommendations": [
                         "라운드마다 위험 평가 템플릿을 작성해 의사결정에 활용하세요.",
                         f"{topic} 관련 규제 대응 가이드를 사전에 준비해 돌발 상황에 대비하세요.",
+                    ],
+                },
+                "round4": {
+                    "final_position": (
+                        f"{topic} 실험을 승인하려면 통제된 범위와 명확한 종료 조건을 먼저 확정해야 합니다."
+                    ),
+                    "consensus_highlights": [
+                        "모든 실험에 대한 데이터·보안 체크리스트를 운영한다.",
+                        "관찰자 보고 체계를 통해 리스크 로그를 실시간으로 공유한다.",
+                    ],
+                    "open_questions": [
+                        "실험 속도와 감사 주기 사이의 균형을 어떻게 맞출지 추가 합의가 필요합니다.",
+                    ],
+                    "next_steps": [
+                        "실험·리스크 이중 승인 프로세스를 문서화하고 전사 공지합니다.",
+                        "각 라운드 종료 시 투자·중단 기준을 재평가하는 의사결정 회의를 예약합니다.",
                     ],
                 },
             },
@@ -278,6 +340,22 @@ class ReviewService:
                         "리스크 대응과 실험 설계를 담당하는 역할을 구분하여 충돌을 줄이세요.",
                     ],
                 },
+                "round4": {
+                    "final_position": (
+                        f"세부 역할과 단계별 게이트를 명확히 하면 {topic} 실행에서 속도와 안전성을 동시에 달성할 수 있습니다."
+                    ),
+                    "consensus_highlights": [
+                        "실험·리스크·거버넌스 역할 분담표를 유지한다.",
+                        "관찰자와의 정기 공유로 조직 학습을 가속한다.",
+                    ],
+                    "open_questions": [
+                        "확장 단계에서 필요한 외부 파트너십 범위를 어디까지로 볼지 추가 논의가 필요합니다.",
+                    ],
+                    "next_steps": [
+                        "라운드 종료 직후 역할 분담표와 커뮤니케이션 채널을 확정해 배포합니다.",
+                        "분기별 전략 리뷰 세션을 열어 지표·리스크를 공동 점검합니다.",
+                    ],
+                },
             },
         }
 
@@ -315,6 +393,9 @@ class ReviewService:
                 extra={"review_id": review_id, "error": str(update_error)},
             )
 
+        self._log_status_event(review_id, "initial_turn_complete", timestamp=round_timestamp)
+        round_timestamp += 1
+
         # Round 2: rebuttals based on summaries
         for persona, script in panel_scripts.items():
             content_lines = [
@@ -344,6 +425,9 @@ class ReviewService:
                 "Failed to update current_round after round 2 in mock review.",
                 extra={"review_id": review_id, "error": str(update_error)},
             )
+
+        self._log_status_event(review_id, "rebuttal_turn_complete", timestamp=round_timestamp)
+        round_timestamp += 1
 
         # Round 3: final synthesis per panelist
         for persona, script in panel_scripts.items():
@@ -376,6 +460,46 @@ class ReviewService:
                 "Failed to update current_round after round 3 in mock review.",
                 extra={"review_id": review_id, "error": str(update_error)},
             )
+
+        self._log_status_event(review_id, "synthesis_turn_complete", timestamp=round_timestamp)
+        round_timestamp += 1
+
+        # Round 4: final alignment per panelist
+        for persona, script in panel_scripts.items():
+            content_lines = [
+                f"### 라운드 4 — {persona} ({script['tagline']})",
+                "",
+                "**최종 정렬**",
+                "",
+                script["round4"]["final_position"],
+                "",
+                "**강조된 합의**",
+            ]
+            content_lines.extend([f"- {point}" for point in script["round4"]["consensus_highlights"]])
+            content_lines.extend(["", "**남은 질문**"])
+            content_lines.extend([f"- {question}" for question in script["round4"]["open_questions"]])
+            content_lines.extend(["", "**다음 단계 제안**"])
+            content_lines.extend([f"- {step}" for step in script["round4"]["next_steps"]])
+            content_lines.extend(["", f"_요약 지침: {instruction}_"])
+
+            self._save_message_and_stream(
+                review_id,
+                review_room_id,
+                "\n".join(content_lines),
+                timestamp=round_timestamp,
+            )
+            round_timestamp += 1
+
+        try:
+            self.storage.update_review(review_id, {"current_round": 4})
+        except Exception as update_error:
+            logger.warning(
+                "Failed to update current_round after round 4 in mock review.",
+                extra={"review_id": review_id, "error": str(update_error)},
+            )
+
+        self._log_status_event(review_id, "round4_turn_complete", timestamp=round_timestamp)
+        round_timestamp += 1
 
         final_report = {
             "executive_summary": (
@@ -412,14 +536,18 @@ class ReviewService:
                 user_id="observer",
                 timestamp=round_timestamp,
             )
-            redis_pubsub_manager.publish_sync(
-                f"review_{review_id}",
-                WebSocketMessage(
-                    type="status_update",
-                    review_id=review_id,
-                    payload={"status": "completed"},
-                ).model_dump_json(),
+
+        round_timestamp += 1
+
+        try:
+            self.storage.update_review(review_id, {"status": "completed"})
+        except Exception as update_error:
+            logger.warning(
+                "Failed to update review status to completed in mock flow.",
+                extra={"review_id": review_id, "error": str(update_error)},
             )
+
+        self._log_status_event(review_id, "completed", timestamp=round_timestamp)
 
     async def create_interactive_review(
         self,
@@ -470,14 +598,14 @@ class ReviewService:
                 )
 
                 review_id = generate_id()
-                instruction = "이 주제에 대해 3 라운드에 걸쳐 심도 있게 토론해주세요."
+                instruction = "이 주제에 대해 최대 4 라운드에 걸쳐 심도 있게 토론하되, 추가 주장이 없으면 조기에 종료해주세요."
                 review_meta = ReviewMeta(
                     review_id=review_id,
                     room_id=room_id,
                     topic=topic,
                     instruction=instruction,
                     status="pending",
-                    total_rounds=3,
+                    total_rounds=4,
                     created_at=get_current_timestamp(),
                 )
                 self.storage.save_review_meta(review_meta)

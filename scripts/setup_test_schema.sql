@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS reviews (
     topic TEXT NOT NULL,
     instruction TEXT,
     status VARCHAR(50) DEFAULT 'pending',
-    total_rounds INTEGER NOT NULL DEFAULT 3,
+    total_rounds INTEGER NOT NULL DEFAULT 4,
     current_round INTEGER NOT NULL DEFAULT 0,
     created_at BIGINT NOT NULL,
     completed_at BIGINT,
