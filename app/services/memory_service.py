@@ -299,7 +299,7 @@ class MemoryService:
         try:
             summary, _ = await self.llm_service.invoke(
                 provider_name="openai",
-                model=settings.SMART_MODEL,
+                model=settings.LLM_MODEL,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 request_id="memory-promotion-summary"

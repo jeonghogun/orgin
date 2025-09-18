@@ -1,10 +1,8 @@
-"""
-Core module for secrets management.
+"""Core module for secrets management."""
 
-This provides an abstraction layer for retrieving secrets, allowing the application
-to be agnostic about the secret's source (e.g., environment variables, file, cloud secret manager).
-"""
+import os
 from typing import Protocol, Optional
+
 from app.config.settings import settings
 
 class SecretProvider(Protocol):
@@ -18,8 +16,12 @@ class EnvSecrets(SecretProvider):
     which are loaded from environment variables or a .env file.
     """
     def get(self, key: str) -> Optional[str]:
-        """Gets a secret from the application settings."""
-        return getattr(settings, key, None)
+        """Gets a secret from the application settings with environment fallback."""
+
+        value = getattr(settings, key, None)
+        if value is not None:
+            return value
+        return os.getenv(key)
 
 # Default provider instance
 env_secrets_provider = EnvSecrets()

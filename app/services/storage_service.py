@@ -1,12 +1,9 @@
-"""
-Storage Service - Unified interface for data persistence.
-This service is now fully synchronous.
-"""
+"""Storage Service - Unified interface for data persistence."""
 
 import json
 import time
 import logging
-from typing import Dict, Any, List, Optional, Literal, TypedDict, Final
+from typing import Dict, Any, List, Optional, Literal, TypedDict, Final, cast
 
 from app.models.enums import RoomType
 from app.models.schemas import (
@@ -45,6 +42,7 @@ class MessageRow(TypedDict):
 
 
 from app.core.secrets import SecretProvider, env_secrets_provider
+
 
 class StorageService:
     """Unified storage service for file system and Firebase"""
@@ -509,5 +507,31 @@ class StorageService:
         self.db.execute_update(query, params)
 
 
-# Global storage service instance
-storage_service: Final = StorageService(env_secrets_provider)
+_storage_service_instance: Optional[StorageService] = None
+
+
+def _get_or_create_storage_service() -> StorageService:
+    """Create the storage service lazily to avoid early database lookups."""
+
+    global _storage_service_instance
+    if _storage_service_instance is None:
+        _storage_service_instance = StorageService(env_secrets_provider)
+    return _storage_service_instance
+
+
+class _StorageServiceProxy:
+    """Lightweight proxy to defer instantiation until first real use."""
+
+    def __getattr__(self, name: str):  # type: ignore[override]
+        return getattr(_get_or_create_storage_service(), name)
+
+
+# Export a proxy that behaves like the concrete service for callers that import
+# ``storage_service`` directly (e.g. legacy routes and Celery tasks).
+storage_service: Final[StorageService] = cast(StorageService, _StorageServiceProxy())
+
+
+def get_storage_service() -> StorageService:
+    """Return the lazily-instantiated storage service instance."""
+
+    return _get_or_create_storage_service()

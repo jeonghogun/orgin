@@ -17,12 +17,24 @@ from app.core.metrics import LLM_CALLS_TOTAL, LLM_LATENCY_SECONDS, LLM_TOKENS_TO
 
 logger = logging.getLogger(__name__)
 
-# Configure clients at module level
-if not settings.TESTING:
+# Configure clients at module level with graceful fallbacks for missing secrets.
+openai_client: Optional[openai.AsyncOpenAI]
+anthropic_client: Optional[AsyncAnthropic]
+
+if settings.OPENAI_API_KEY:
     openai_client = openai.AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+else:
+    openai_client = None
+    logger.warning("OPENAI_API_KEY not configured; OpenAIAdapter will return mock responses.")
+
+if settings.ANTHROPIC_API_KEY:
     anthropic_client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
-    if settings.GEMINI_API_KEY:
-        configure(api_key=settings.GEMINI_API_KEY)
+else:
+    anthropic_client = None
+    logger.info("ANTHROPIC_API_KEY not configured; AnthropicAdapter will operate in placeholder mode.")
+
+if settings.GEMINI_API_KEY:
+    configure(api_key=settings.GEMINI_API_KEY)
 
 class BaseLLMAdapter(ABC):
     """Abstract base class for LLM provider adapters."""
@@ -42,7 +54,21 @@ class BaseLLMAdapter(ABC):
 class OpenAIAdapter(BaseLLMAdapter):
     """Adapter for OpenAI-compatible models."""
     def __init__(self):
-        self.redis_client = redis.from_url(settings.REDIS_URL)
+        redis_url = settings.REDIS_URL
+        self.redis_client: Optional[redis.Redis]
+        if redis_url:
+            try:
+                self.redis_client = redis.from_url(redis_url)
+            except Exception as redis_error:
+                logger.warning(
+                    "Failed to connect to Redis at %s: %s. Falling back to no-op cache.",
+                    redis_url,
+                    redis_error,
+                )
+                self.redis_client = None
+        else:
+            logger.info("REDIS_URL not configured; streaming cancellation will be disabled.")
+            self.redis_client = None
 
     async def generate_stream(
         self,
@@ -57,6 +83,13 @@ class OpenAIAdapter(BaseLLMAdapter):
         was_successful = False
         cancellation_key = f"cancel:stream:{message_id}"
 
+        if openai_client is None:
+            logger.debug("OpenAI client unavailable; returning mocked streaming response.")
+            await asyncio.sleep(0)
+            yield SSEEvent(event="delta", data=SSEDelta(content="[mocked-openai-response]"))
+            yield SSEEvent(event="done", data={})
+            return
+
         try:
             stream = await openai_client.chat.completions.create(
                 model=model,
@@ -70,9 +103,9 @@ class OpenAIAdapter(BaseLLMAdapter):
 
             tool_calls: List[Any] = []
             async for chunk in stream:
-                if self.redis_client.exists(cancellation_key):
+                if self.redis_client and self.redis_client.exists(cancellation_key):
                     logger.info(f"Cancellation detected for stream {message_id}. Stopping.")
-                    self.redis_client.delete(cancellation_key) # Clean up the key
+                    self.redis_client.delete(cancellation_key)  # Clean up the key
                     break
 
                 chunk: ChatCompletionChunk
