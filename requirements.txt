@@ -9,6 +9,7 @@ tenacity
 slowapi
 firebase-admin
 google-cloud-firestore
+google-cloud-storage
 psycopg2-binary
 pgvector
 redis

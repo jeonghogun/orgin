@@ -136,6 +136,8 @@ class Settings(BaseSettings):
     DATA_DIR: str = "data"
     LOGS_DIR: str = "logs"
     MEMORY_DB_PATH: str = "data/memory.db"
+    CLOUD_STORAGE_BUCKET_NAME: Optional[str] = None
+    CLOUD_STORAGE_SIGNED_URL_TTL: int = 3600  # 1 hour by default
 
     # --- Rate Limiting ---
     RATE_LIMIT_PER_MINUTE: int = 60

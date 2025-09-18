@@ -6,6 +6,7 @@ from fastapi.responses import RedirectResponse
 from app.api.dependencies import AUTH_DEPENDENCY
 from app.services.conversation_service import ConversationService, get_conversation_service
 from app.tasks.export_tasks import create_export
+from app.services.cloud_storage_service import get_cloud_storage_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -29,12 +30,10 @@ async def get_export_job(job_id: str, convo_service: ConversationService = Depen
         raise HTTPException(status_code=404, detail="Job not found.")
 
     if job["status"] == "done" and job["file_url"]:
-        # In a real app, this would be a signed URL to cloud storage.
-        # Here, it's a local file path, so we can't directly return it.
-        # We could serve it via StaticFiles, but that requires configuration.
-        # For simplicity, we'll just return the job info.
-        return job
-
+        cloud_storage = get_cloud_storage_service()
+        signed_url = cloud_storage.generate_signed_url(job["file_url"])
+        if signed_url:
+            job = {**job, "download_url": signed_url}
     return job
 
 @router.get("/export/jobs/{job_id}/download")
@@ -47,4 +46,9 @@ async def download_export(job_id: str, convo_service: ConversationService = Depe
     # or a signed S3 URL to securely serve the file.
     # Redirecting to a static path is not ideal but works for this demo.
     file_path = job["file_url"]
+    cloud_storage = get_cloud_storage_service()
+    signed_url = cloud_storage.generate_signed_url(file_path)
+    if signed_url:
+        return RedirectResponse(url=signed_url)
+
     return RedirectResponse(url=f"/{file_path}")

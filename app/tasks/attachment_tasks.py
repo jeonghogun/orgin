@@ -6,6 +6,7 @@ from pathlib import Path
 from app.celery_app import celery_app
 from app.services.rag_service import get_rag_service
 from app.services.conversation_service import get_conversation_service
+from app.services.cloud_storage_service import get_cloud_storage_service
 
 logger = logging.getLogger(__name__)
 
@@ -27,10 +28,14 @@ def process_attachment(attachment_id: str):
         logger.error(f"Attachment {attachment_id} not found.")
         return
 
-    file_path = Path(attachment["url"])
-    if not file_path.exists():
-        logger.error(f"File for attachment {attachment_id} not found at {file_path}")
+    cloud_storage = get_cloud_storage_service()
+    try:
+        file_path = cloud_storage.ensure_local_copy(attachment["url"])
+    except FileNotFoundError as exc:
+        logger.error(f"File for attachment {attachment_id} could not be retrieved: {exc}")
         return
+
+    cleanup_temp = file_path != Path(attachment["url"])
 
     text_content = ""
     if attachment["mime"] == "application/pdf":
@@ -47,6 +52,8 @@ def process_attachment(attachment_id: str):
 
     if not text_content.strip():
         logger.warning(f"No text content extracted from {file_path}")
+        if cleanup_temp:
+            file_path.unlink(missing_ok=True)
         return
 
     text_chunks = list(chunk_text(text_content))
@@ -55,7 +62,12 @@ def process_attachment(attachment_id: str):
         asyncio.run(rag_service.create_and_store_chunks(attachment_id, text_chunks))
     except Exception as e:
         logger.error(f"Async call to create_and_store_chunks failed: {e}")
+        if cleanup_temp:
+            file_path.unlink(missing_ok=True)
         return
+
+    if cleanup_temp:
+        file_path.unlink(missing_ok=True)
 
     logger.info(f"Finished RAG processing for attachment: {attachment_id}")
     return {"attachment_id": attachment_id, "status": "complete"}

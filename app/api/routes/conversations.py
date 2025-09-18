@@ -23,6 +23,7 @@ from app.services.conversation_service import ConversationService, get_conversat
 from app.services.llm_adapters import get_llm_adapter
 from app.services.memory_service import MemoryService, get_memory_service
 from app.services.rag_service import get_rag_service
+from app.services.cloud_storage_service import get_cloud_storage_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -231,6 +232,9 @@ async def export_thread(thread_id: str, format: str = Query("json", enum=["json"
 
     if format == "zip":
         zip_buffer = io.BytesIO()
+        cloud_storage = get_cloud_storage_service()
+        temp_files: List[Path] = []
+
         with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
             # Add conversation history as a markdown file
             md_content = f"# Thread: {thread_id}\n\n" + "\n\n---\n\n".join([f"**{msg['role'].title()}**:\n\n{msg['content']}" for msg in messages])
@@ -245,10 +249,24 @@ async def export_thread(thread_id: str, format: str = Query("json", enum=["json"
 
             for att_id in attachment_ids:
                 attachment = convo_service.get_attachment_by_id(att_id)
-                if attachment and Path(attachment["url"]).exists():
-                    zip_file.write(attachment["url"], arcname=f"attachments/{Path(attachment['url']).name}")
+                if not attachment:
+                    continue
+                try:
+                    local_path = cloud_storage.ensure_local_copy(attachment["url"])
+                except FileNotFoundError as exc:
+                    logger.warning("Attachment %s could not be added to export: %s", att_id, exc)
+                    continue
+
+                try:
+                    arcname = f"attachments/{Path(local_path).name}"
+                    zip_file.write(local_path, arcname=arcname)
+                finally:
+                    if local_path != Path(attachment["url"]):
+                        temp_files.append(local_path)
 
         zip_buffer.seek(0)
+        for temp_file in temp_files:
+            temp_file.unlink(missing_ok=True)
         return StreamingResponse(zip_buffer, media_type="application/zip", headers={"Content-Disposition": f"attachment; filename=\"thread_{thread_id}.zip\""})
 
     raise HTTPException(status_code=400, detail="Unsupported format")
