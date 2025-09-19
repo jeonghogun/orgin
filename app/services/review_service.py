@@ -588,7 +588,7 @@ class ReviewService:
         Interactively creates a review room, consolidating logic from the API layer.
         """
         try:
-            parent_room = self.storage.get_room(parent_id)
+            parent_room = await asyncio.to_thread(self.storage.get_room, parent_id)
             if not parent_room or parent_room.type != RoomType.SUB:
                 raise InvalidRequestError("Parent room must be a sub-room.")
 
@@ -617,7 +617,8 @@ class ReviewService:
 
             if context_sufficient:
                 room_id = generate_id()
-                new_room = self.storage.create_room(
+                new_room = await asyncio.to_thread(
+                    self.storage.create_room,
                     room_id=room_id,
                     name=f"검토: {topic}",
                     owner_id=user_id,
@@ -636,15 +637,16 @@ class ReviewService:
                     total_rounds=4,
                     created_at=get_current_timestamp(),
                 )
-                self.storage.save_review_meta(review_meta)
+                await asyncio.to_thread(self.storage.save_review_meta, review_meta)
 
                 intro_message = build_intro_message(topic, instruction)
-                self._save_message_and_stream(
-                    review_id=review_id,
-                    review_room_id=room_id,
-                    content=intro_message,
-                    user_id="observer",
+                await asyncio.to_thread(
+                    self._save_message_and_stream,
+                    review_id,
+                    room_id,
+                    intro_message,
                     role="assistant",
+                    user_id="observer",
                 )
 
                 trace_id = str(uuid.uuid4())
@@ -653,11 +655,12 @@ class ReviewService:
                 usable_panelists = [p for p in panel_configs if p.provider in available_providers]
 
                 if not usable_panelists:
-                    self._run_mock_review(
-                        review_id=review_id,
-                        review_room_id=room_id,
-                        topic=topic,
-                        instruction=instruction,
+                    await asyncio.to_thread(
+                        self._run_mock_review,
+                        review_id,
+                        room_id,
+                        topic,
+                        instruction,
                     )
                     self._notify_mock_celery_task(
                         review_id=review_id,

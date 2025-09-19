@@ -6,9 +6,13 @@ import asyncio
 import time
 from typing import Dict, Optional, Callable, Any
 from dataclasses import dataclass
-from collections import deque
 
-from app.core.errors import LLMError, should_retry_error, get_retry_delay
+from app.core.errors import (
+    LLMError,
+    LLMErrorCode,
+    should_retry_error,
+    get_retry_delay,
+)
 
 
 @dataclass
@@ -98,7 +102,7 @@ class LLMRetryManager:
                 # 회로차단기 확인
                 if not circuit_breaker.can_execute():
                     raise LLMError(
-                        error_code="PROVIDER_UNAVAILABLE",
+                        error_code=LLMErrorCode.PROVIDER_UNAVAILABLE,
                         provider=provider,
                         retryable=False,
                         error_message=f"Circuit breaker is OPEN for {provider}"
@@ -125,7 +129,7 @@ class LLMRetryManager:
                 # 알 수 없는 에러는 재시도하지 않음
                 circuit_breaker.record_failure()
                 raise LLMError(
-                    error_code="UNKNOWN_ERROR",
+                    error_code=LLMErrorCode.UNKNOWN_ERROR,
                     provider=provider,
                     retryable=False,
                     original_error=e,
@@ -155,7 +159,7 @@ class LLMRetryManager:
             try:
                 if not circuit_breaker.can_execute():
                     raise LLMError(
-                        error_code="PROVIDER_UNAVAILABLE",
+                        error_code=LLMErrorCode.PROVIDER_UNAVAILABLE,
                         provider=provider,
                         retryable=False,
                         error_message=f"Circuit breaker is OPEN for {provider}"
@@ -177,7 +181,7 @@ class LLMRetryManager:
             except Exception as e:
                 circuit_breaker.record_failure()
                 raise LLMError(
-                    error_code="UNKNOWN_ERROR",
+                    error_code=LLMErrorCode.UNKNOWN_ERROR,
                     provider=provider,
                     retryable=False,
                     original_error=e,

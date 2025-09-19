@@ -1,8 +1,6 @@
-"""
-Review-related API endpoints
-"""
+"""Review-related API endpoints."""
 
-import inspect
+import asyncio
 import json
 import logging
 import uuid
@@ -39,10 +37,7 @@ class CreateReviewRequest(BaseModel):
 
 
 async def _maybe_get_room(storage_service: StorageService, room_id: str):
-    room = storage_service.get_room(room_id)
-    if inspect.isawaitable(room):
-        room = await room
-    return room
+    return await asyncio.to_thread(storage_service.get_room, room_id)
 
 
 @router.get("/reviews", response_model=List[ReviewMeta])
@@ -57,7 +52,7 @@ async def get_reviews_by_room(
     if not room or room.owner_id != user_info.get("user_id"):
         raise HTTPException(status_code=404, detail="Room not found or access denied.")
 
-    reviews = storage_service.get_reviews_by_room(room_id)
+    reviews = await asyncio.to_thread(storage_service.get_reviews_by_room, room_id)
     return reviews
 
 
@@ -97,7 +92,8 @@ async def create_review_for_room(
     instruction = request.instruction or "이 주제를 바탕으로 심층 검토를 진행해주세요."
 
     try:
-        storage_service.create_room(
+        await asyncio.to_thread(
+            storage_service.create_room,
             room_id=review_room_id,
             name=f"Review: {request.topic}",
             owner_id=user_id,
@@ -120,7 +116,7 @@ async def create_review_for_room(
     )
 
     try:
-        storage_service.save_review_meta(review_meta)
+        await asyncio.to_thread(storage_service.save_review_meta, review_meta)
     except Exception as save_error:
         logger.error("Failed to persist review metadata for %s: %s", review_id, save_error, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to persist review metadata")
@@ -154,11 +150,11 @@ async def get_review(
     Get review information by its review_id or the room_id of the review room.
     """
     # Try fetching by review_id first
-    review = storage_service.get_review_meta(id)
+    review = await asyncio.to_thread(storage_service.get_review_meta, id)
 
     # If not found, try fetching by room_id
     if not review:
-        review = storage_service.get_review_meta_by_room_id(id)
+        review = await asyncio.to_thread(storage_service.get_review_meta_by_room_id, id)
 
     # If still not found, or if found but owner doesn't match, raise error
     if not review:
@@ -170,10 +166,16 @@ async def get_review(
         raise HTTPException(status_code=403, detail="Access denied to review")
 
     if review.status != "completed":
-        final_report = storage_service.get_final_report(review.review_id)
+        final_report = await asyncio.to_thread(
+            storage_service.get_final_report, review.review_id
+        )
         if final_report:
             try:
-                storage_service.update_review(review.review_id, {"status": "completed"})
+                await asyncio.to_thread(
+                    storage_service.update_review,
+                    review.review_id,
+                    {"status": "completed"},
+                )
                 review.status = "completed"
             except Exception as sync_error:
                 logger.warning(
@@ -188,14 +190,19 @@ async def get_review(
 from sse_starlette.sse import EventSourceResponse
 from app.services.redis_pubsub import redis_pubsub_manager
 
-async def review_event_generator(review_id: str, request: Request):
+async def review_event_generator(
+    review_id: str,
+    request: Request,
+    storage_service: StorageService,
+):
     """
     Yields server-sent events for a specific review's progress.
     Listens to a Redis Pub/Sub channel.
     """
     # First, send all historical events for this review
-    storage = get_storage_service()
-    historical_events = storage.get_review_events(review_id)
+    historical_events = await asyncio.to_thread(
+        storage_service.get_review_events, review_id
+    )
     for event in historical_events:
         yield dict(event="historical_event", data=json.dumps(event))
 
@@ -218,14 +225,16 @@ async def get_review_events_stream(
     Returns a Server-Sent Events (SSE) stream of review progress.
     """
     # First, verify the user has access to this review.
-    review = storage_service.get_review_meta(review_id)
+    review = await asyncio.to_thread(storage_service.get_review_meta, review_id)
     if not review:
         raise HTTPException(status_code=404, detail="Review not found")
     room = await _maybe_get_room(storage_service, review.room_id)
     if not room or room.owner_id != user_info.get("user_id"):
         raise HTTPException(status_code=403, detail="Access denied to review")
 
-    return EventSourceResponse(review_event_generator(review_id, request))
+    return EventSourceResponse(
+        review_event_generator(review_id, request, storage_service)
+    )
 
 
 @router.get("/reviews/{review_id}/report", response_class=JSONResponse)
@@ -235,7 +244,7 @@ async def get_review_report(
     storage_service: StorageService = Depends(get_storage_service),  # pyright: ignore[reportCallInDefaultInitializer]
 ) -> Dict[str, Any]:
     """Get the final consolidated review report."""
-    report = storage_service.get_final_report(review_id)
+    report = await asyncio.to_thread(storage_service.get_final_report, review_id)
     if not report:
         raise HTTPException(
             status_code=404, detail="Report not found. It may still be generating."

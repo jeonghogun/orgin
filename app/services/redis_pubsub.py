@@ -1,7 +1,11 @@
 import asyncio
 import logging
+from contextlib import asynccontextmanager
+from typing import AsyncIterator, Optional
+
 import redis.asyncio as redis
 from redis.exceptions import RedisError
+
 from app.config.settings import get_effective_redis_url
 from app.api.routes.websockets import manager as websocket_manager
 
@@ -42,6 +46,83 @@ class RedisPubSubManager:
             return
         await client.publish(channel, message)
         logger.info(f"Published to {channel}: {message[:100]}")
+
+    @asynccontextmanager
+    async def subscribe(self, channel: str) -> AsyncIterator[AsyncIterator[str]]:
+        """Yield an async iterator of messages for the requested channel."""
+        client = await self._get_redis_client()
+
+        if not client:
+            logger.warning("Redis is unavailable; yielding empty subscription for %s", channel)
+
+            async def _empty_iterator() -> AsyncIterator[str]:
+                if False:
+                    yield ""  # pragma: no cover - ensures generator nature
+
+            yield _empty_iterator()
+            return
+
+        pubsub = client.pubsub()
+        await pubsub.subscribe(channel)
+        queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
+        stop_event = asyncio.Event()
+
+        async def _reader():
+            try:
+                while not stop_event.is_set():
+                    try:
+                        message = await pubsub.get_message(
+                            ignore_subscribe_messages=True, timeout=1.0
+                        )
+                    except Exception as exc:  # pragma: no cover - defensive logging
+                        logger.error(
+                            "Error while reading from Redis Pub/Sub %s: %s",
+                            channel,
+                            exc,
+                            exc_info=True,
+                        )
+                        await asyncio.sleep(1)
+                        continue
+
+                    if message is None:
+                        continue
+
+                    data = message.get("data")
+                    if data is None:
+                        continue
+
+                    await queue.put(str(data))
+            except asyncio.CancelledError:
+                raise
+            finally:
+                await queue.put(None)
+
+        reader_task = asyncio.create_task(_reader())
+
+        async def _iterator() -> AsyncIterator[str]:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    break
+                yield item
+
+        try:
+            yield _iterator()
+        finally:
+            stop_event.set()
+            reader_task.cancel()
+            try:
+                await reader_task
+            except asyncio.CancelledError:
+                pass
+
+            try:
+                await pubsub.unsubscribe(channel)
+                await pubsub.close()
+            except Exception as exc:  # pragma: no cover - cleanup safety
+                logger.debug(
+                    "Error while closing Redis pubsub for %s: %s", channel, exc, exc_info=True
+                )
 
     async def _listener(self):
         """Listen for messages and broadcast to connected WebSockets."""

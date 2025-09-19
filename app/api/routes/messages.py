@@ -1,12 +1,13 @@
 """
 Message-related API endpoints
 """
-import inspect
+import asyncio
 import json
 import logging
 import re
 from datetime import datetime
 from typing import Any, Dict, Optional, List
+
 from fastapi import APIRouter, HTTPException, Request, Depends, File, UploadFile
 from fastapi.responses import StreamingResponse
 
@@ -58,10 +59,7 @@ router = APIRouter(prefix="", tags=["messages"])
 
 
 async def _maybe_get_room(storage_service: StorageService, room_id: str):
-    room = storage_service.get_room(room_id)
-    if inspect.isawaitable(room):
-        room = await room
-    return room
+    return await asyncio.to_thread(storage_service.get_room, room_id)
 
 async def _handle_fact_extraction(
     user_fact_service: UserFactService,
