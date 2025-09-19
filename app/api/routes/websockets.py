@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
 from app.api.dependencies import get_storage_service, require_auth_ws
@@ -11,6 +12,7 @@ router = APIRouter(tags=["websockets"])
 class ConnectionManager:
     def __init__(self):
         self.active_connections: dict[str, list[WebSocket]] = {}
+        self.sse_listeners: dict[str, list[asyncio.Queue[str]]] = {}
 
     async def connect(self, websocket: WebSocket, room_id: str):
         await websocket.accept()
@@ -26,13 +28,31 @@ class ConnectionManager:
                 del self.active_connections[room_id]
         logger.info(f"WebSocket disconnected from room {room_id}")
 
-    async def broadcast(self, message: str, room_id: str):
-        if room_id not in self.active_connections:
-            return
+    def register_sse_listener(self, channel_id: str) -> asyncio.Queue[str]:
+        """Register an asyncio queue as an SSE listener for the given channel."""
+        queue: asyncio.Queue[str] = asyncio.Queue()
+        listeners = self.sse_listeners.setdefault(channel_id, [])
+        listeners.append(queue)
+        return queue
 
+    def unregister_sse_listener(self, channel_id: str, queue: asyncio.Queue[str]) -> None:
+        listeners = self.sse_listeners.get(channel_id)
+        if not listeners:
+            return
+        try:
+            listeners.remove(queue)
+        except ValueError:
+            pass
+        if not listeners:
+            self.sse_listeners.pop(channel_id, None)
+
+    async def broadcast(self, message: str, room_id: str):
         logger.info(f"Broadcasting to room {room_id}: {message[:100]}")
+
+        # Broadcast to WebSocket clients first
+        connections = self.active_connections.get(room_id, [])
         failed_connections: list[WebSocket] = []
-        for connection in list(self.active_connections[room_id]):
+        for connection in list(connections):
             try:
                 await connection.send_text(message)
             except Exception as send_error:
@@ -46,6 +66,14 @@ class ConnectionManager:
 
         for connection in failed_connections:
             self.disconnect(connection, room_id)
+
+        # Fan-out to SSE listeners as well
+        for listener in list(self.sse_listeners.get(room_id, [])):
+            try:
+                listener.put_nowait(message)
+            except asyncio.QueueFull:
+                logger.warning("Dropping SSE listener for %s due to full queue", room_id)
+                self.unregister_sse_listener(room_id, listener)
 
 manager = ConnectionManager()
 

@@ -1,4 +1,5 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
+import { SSE } from 'sse.js';
 
 const MAX_RECONNECT_ATTEMPTS = 3;
 const INITIAL_RECONNECT_DELAY = 1000;
@@ -10,10 +11,11 @@ const INITIAL_RECONNECT_DELAY = 1000;
  * @param {object} eventListeners An object where keys are event names and values are handler functions.
  * e.g., { delta: (e) => { ... }, done: (e) => { ... }, error: (e) => { ... } }
  */
-const useEventSource = (url, eventListeners) => {
+const useEventSource = (url, eventListeners, options = {}) => {
   const eventSourceRef = useRef(null);
   const reconnectTimeoutRef = useRef(null);
   const reconnectAttemptsRef = useRef(0);
+  const [status, setStatus] = useState('idle');
 
   const closeConnection = useCallback(() => {
     if (eventSourceRef.current) {
@@ -23,20 +25,32 @@ const useEventSource = (url, eventListeners) => {
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
     }
+    setStatus((prev) => (prev === 'idle' ? prev : 'disconnected'));
   }, []);
 
   const connect = useCallback(() => {
-    if (!url) return;
-    
+    if (!url) {
+      closeConnection();
+      setStatus('idle');
+      return;
+    }
+
     closeConnection();
 
-    const es = new EventSource(url);
+    setStatus('connecting');
+
+    const shouldUsePolyfill = Boolean(
+      options && (options.method && options.method !== 'GET' || options.payload || options.headers)
+    );
+
+    const es = shouldUsePolyfill ? new SSE(url, options) : new EventSource(url, shouldUsePolyfill ? undefined : options);
     eventSourceRef.current = es;
 
     // Standard open event
     es.onopen = () => {
       console.log('SSE connection opened.');
       reconnectAttemptsRef.current = 0; // Reset attempts on successful connection
+      setStatus('connected');
       if (eventListeners.open) {
         eventListeners.open();
       }
@@ -88,22 +102,28 @@ const useEventSource = (url, eventListeners) => {
       if (!eventSourceRef.current) {
           return;
       }
-      
+
       if (reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS) {
         reconnectAttemptsRef.current++;
         const delay = INITIAL_RECONNECT_DELAY * Math.pow(2, reconnectAttemptsRef.current - 1);
         console.log(`Attempting to reconnect in ${delay}ms (attempt ${reconnectAttemptsRef.current})`);
+        setStatus('reconnecting');
         reconnectTimeoutRef.current = setTimeout(connect, delay);
       } else {
         console.error('Max reconnection attempts reached.');
         if (eventListeners.error) {
           eventListeners.error(new Error('Connection failed after multiple retries.'));
         }
+        setStatus('failed');
         closeConnection();
       }
     };
 
-  }, [url, eventListeners, closeConnection]);
+    if (shouldUsePolyfill && typeof es.stream === 'function') {
+      es.stream();
+    }
+
+  }, [url, eventListeners, closeConnection, options]);
 
   useEffect(() => {
     connect();
@@ -113,6 +133,7 @@ const useEventSource = (url, eventListeners) => {
   }, [connect, closeConnection]);
 
   // No return value needed, the hook manages the connection internally.
+  return { status };
 };
 
 export default useEventSource;

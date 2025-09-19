@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Any, Dict, Optional, List
 
 from fastapi import APIRouter, HTTPException, Request, Depends, File, UploadFile
-from fastapi.responses import StreamingResponse
+from sse_starlette.sse import EventSourceResponse
 
 from app.api.dependencies import (
     AUTH_DEPENDENCY,
@@ -191,7 +191,7 @@ async def _stream_immediate_response(
     content: str,
     memory_service: Optional[MemoryService] = None,
     background_tasks: Optional[BackgroundTaskService] = None,
-) -> StreamingResponse:
+) -> EventSourceResponse:
     ai_message = Message(
         message_id=generate_id(),
         room_id=room_id,
@@ -201,6 +201,7 @@ async def _stream_immediate_response(
         role="ai",
     )
     storage_service.save_message(ai_message)
+    await manager.broadcast(json.dumps({"type": "new_message", "payload": ai_message.model_dump()}), room_id)
 
     if memory_service and background_tasks:
         task_id = f"context_refresh:{room_id}:{ai_message.message_id}:immediate"
@@ -220,16 +221,15 @@ async def _stream_immediate_response(
             )
 
     async def generator():
-        yield json.dumps({"delta": content}) + "\n"
-        yield json.dumps(
-            {
-                "done": True,
-                "message_id": ai_message.message_id,
-                "meta": {"status": "completed", "chunk_count": 1},
-            }
-        ) + "\n"
+        yield {"event": "meta", "data": json.dumps({"status": "started"})}
+        yield {"event": "delta", "data": json.dumps({"delta": content})}
+        final_payload = {
+            "message_id": ai_message.message_id,
+            "meta": {"status": "completed", "chunk_count": 1},
+        }
+        yield {"event": "done", "data": json.dumps(final_payload)}
 
-    return StreamingResponse(generator(), media_type="application/x-ndjson")
+    return EventSourceResponse(generator())
 
 # --- Original Endpoints & Helpers ---
 
@@ -251,6 +251,41 @@ async def get_messages(
     except Exception as e:
         logger.error(f"Error getting messages for room {room_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to get messages")
+
+
+@router.get("/{room_id}/messages/events")
+async def stream_room_message_events(
+    request: Request,
+    room_id: str,
+    user_info: Dict[str, str] = AUTH_DEPENDENCY,
+    storage_service: StorageService = Depends(get_storage_service),
+):
+    """Stream real-time message events for a room via SSE."""
+    room = await _maybe_get_room(storage_service, room_id)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+
+    if not settings.AUTH_OPTIONAL and room.owner_id != user_info.get("user_id"):
+        raise HTTPException(status_code=403, detail="Access denied to room events")
+
+    listener_queue = manager.register_sse_listener(room_id)
+
+    async def event_generator():
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    message = await asyncio.wait_for(listener_queue.get(), timeout=15)
+                except asyncio.TimeoutError:
+                    yield {"event": "heartbeat", "data": "keep-alive"}
+                    continue
+
+                yield {"event": "new_message", "data": message}
+        finally:
+            manager.unregister_sse_listener(room_id, listener_queue)
+
+    return EventSourceResponse(event_generator())
 
 
 async def _create_review_and_start(storage_service: StorageService, review_service: ReviewService, room_id: str, user_id: str, topic: str, trace_id: str) -> str:
@@ -574,6 +609,7 @@ async def send_message_stream(
         content=content, timestamp=get_current_timestamp(),
     )
     storage_service.save_message(user_message)
+    await manager.broadcast(json.dumps({"type": "new_message", "payload": user_message.model_dump()}), room_id)
 
     def _schedule_context_refresh(trigger: str) -> None:
         task_id = f"context_refresh:{room_id}:{trigger}"
@@ -729,82 +765,92 @@ async def send_message_stream(
     async def stream_generator():
         ai_response_content = ""
         chunk_count = 0
-        # Gather hierarchical context including parent rooms and hybrid memories
+        stream_completed = False
+
+        yield {"event": "meta", "data": json.dumps({"status": "started"})}
+
         try:
-            hierarchical_context = await maybe_await(
-                memory_service.build_hierarchical_context_blocks(
-                    room_id=room_id,
-                    user_id=user_id,
-                    query=content,
-                    limit=getattr(settings, "HYBRID_RETURN_TOPN", 5),
+            try:
+                hierarchical_context = await maybe_await(
+                    memory_service.build_hierarchical_context_blocks(
+                        room_id=room_id,
+                        user_id=user_id,
+                        query=content,
+                        limit=getattr(settings, "HYBRID_RETURN_TOPN", 5),
+                    )
                 )
+            except Exception as context_error:
+                logger.warning(
+                    "Failed to build hierarchical context blocks (room=%s, user=%s): %s",
+                    room_id,
+                    user_id,
+                    context_error,
+                    exc_info=True,
+                )
+                hierarchical_context = []
+
+            if hierarchical_context:
+                memory_context = hierarchical_context
+            else:
+                memory_context = await maybe_await(
+                    memory_service.get_context(room_id, user_id)
+                )
+
+            stream = rag_service.generate_rag_response_stream(
+                room_id=room_id,
+                user_id=user_id,
+                user_message=content,
+                memory_context=memory_context,
+                message_id=user_message.message_id
             )
-        except Exception as context_error:
-            logger.warning(
-                "Failed to build hierarchical context blocks (room=%s, user=%s): %s",
+
+            async for chunk in stream:
+                if isinstance(chunk, dict):
+                    delta = chunk.get("delta")
+                    meta = chunk.get("meta")
+                else:
+                    delta = str(chunk)
+                    meta = None
+
+                if delta:
+                    ai_response_content += delta
+                    chunk_count += 1
+                    yield {"event": "delta", "data": json.dumps({"delta": delta})}
+
+                if meta:
+                    yield {"event": "meta", "data": json.dumps(meta)}
+
+            stream_completed = True
+        except Exception as stream_error:
+            logger.error(
+                "Error during streaming response for room %s: %s",
                 room_id,
-                user_id,
-                context_error,
+                stream_error,
                 exc_info=True,
             )
-            hierarchical_context = []
+            yield {"event": "error", "data": json.dumps({"error": "An error occurred during streaming."})}
+        finally:
+            if stream_completed:
+                ai_message = Message(
+                    message_id=generate_id(),
+                    room_id=room_id,
+                    user_id="ai",
+                    content=ai_response_content,
+                    timestamp=get_current_timestamp(),
+                    role="assistant"
+                )
+                storage_service.save_message(ai_message)
+                await manager.broadcast(json.dumps({"type": "new_message", "payload": ai_message.model_dump()}), room_id)
 
-        if hierarchical_context:
-            memory_context = hierarchical_context
-        else:
-            memory_context = await maybe_await(
-                memory_service.get_context(room_id, user_id)
-            )
+                _schedule_context_refresh(f"assistant:{ai_message.message_id}")
 
-        # Use the streaming RAG service
-        stream = rag_service.generate_rag_response_stream(
-            room_id=room_id,
-            user_id=user_id,
-            user_message=content,
-            memory_context=memory_context,
-            message_id=user_message.message_id
-        )
+                final_payload = {
+                    "message_id": ai_message.message_id,
+                    "meta": {"status": "completed", "chunk_count": chunk_count},
+                }
+                yield {"event": "done", "data": json.dumps(final_payload)}
 
-        async for chunk in stream:
-            payload: Dict[str, Any] = {}
-            if isinstance(chunk, dict):
-                delta = chunk.get("delta")
-                meta = chunk.get("meta")
-            else:
-                delta = str(chunk)
-                meta = None
-
-            if delta:
-                ai_response_content += delta
-                chunk_count += 1
-                payload["delta"] = delta
-            if meta:
-                payload["meta"] = meta
-
-            if payload:
-                yield json.dumps(payload) + "\n"
-
-        # After the stream is finished, save the full AI message
-        ai_message = Message(
-            message_id=generate_id(),
-            room_id=room_id,
-            user_id="ai",
-            content=ai_response_content,
-            timestamp=get_current_timestamp(),
-            role="assistant"
-        )
-        storage_service.save_message(ai_message)
-
-        _schedule_context_refresh(f"assistant:{ai_message.message_id}")
-
-        # Send a final "done" message
-        yield json.dumps({
-            "done": True,
-            "message_id": ai_message.message_id,
-            "meta": {"status": "completed", "chunk_count": chunk_count},
-        }) + "\n"
-
-    return StreamingResponse(stream_generator(), media_type="application/x-ndjson")
+    return EventSourceResponse(stream_generator())
 
 
 from pydantic import BaseModel

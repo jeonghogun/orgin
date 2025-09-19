@@ -38,51 +38,87 @@ const StreamingStatusIndicator = ({ status }) => {
   );
 };
 
-const streamMessageApi = async ({ roomId, content, onChunk, onIdReceived, onMeta }) => {
-  const response = await fetch(`/api/rooms/${roomId}/messages/stream`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content }),
-  });
+const streamMessageApi = ({ roomId, content, onChunk, onIdReceived, onMeta }) =>
+  new Promise((resolve, reject) => {
+    const source = new SSE(`/api/rooms/${roomId}/messages/stream`, {
+      headers: { 'Content-Type': 'application/json' },
+      method: 'POST',
+      payload: JSON.stringify({ content }),
+    });
 
-  if (!response.ok) {
-    const errorData = await response.json();
-    throw new Error(errorData.detail || 'Failed to start stream');
-  }
+    let settled = false;
 
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
+    const cleanup = () => {
+      if (!settled) {
+        settled = true;
+        source.close();
+      }
+    };
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop(); // Keep the last, potentially incomplete line
-
-    for (const line of lines) {
-      if (line.trim() === '') continue;
+    source.addEventListener('meta', (event) => {
+      if (!event?.data) return;
       try {
-        const parsed = JSON.parse(line);
+        const parsed = JSON.parse(event.data);
+        onMeta?.(parsed);
+      } catch (error) {
+        console.error('Failed to parse meta event from stream:', error);
+      }
+    });
+
+    source.addEventListener('delta', (event) => {
+      if (!event?.data) return;
+      try {
+        const parsed = JSON.parse(event.data);
+        if (typeof parsed.delta === 'string') {
+          onChunk(parsed.delta);
+        }
+      } catch (error) {
+        onChunk(event.data);
+      }
+    });
+
+    source.addEventListener('done', (event) => {
+      try {
+        const parsed = event?.data ? JSON.parse(event.data) : {};
         if (parsed.meta) {
           onMeta?.(parsed.meta);
         }
-        if (parsed.delta) {
-          onChunk(parsed.delta);
-        }
-        if (parsed.done) {
+        if (parsed.message_id) {
           onIdReceived(parsed.message_id);
-          onMeta?.({ status: 'completed', chunk_count: parsed.meta?.chunk_count, message_id: parsed.message_id });
-          return; // Stream is finished
         }
-      } catch (e) {
-        console.error('Failed to parse stream chunk:', line, e);
+        cleanup();
+        resolve(parsed);
+      } catch (error) {
+        cleanup();
+        reject(error);
       }
-    }
-  }
-};
+    });
+
+    source.addEventListener('error', (event) => {
+      let message = '실시간 응답을 가져오는 중 문제가 발생했습니다.';
+      if (event?.data) {
+        try {
+          const parsed = JSON.parse(event.data);
+          if (parsed?.error) {
+            message = parsed.error;
+          }
+        } catch (error) {
+          console.error('Failed to parse stream error payload:', error);
+        }
+      }
+      cleanup();
+      reject(new Error(message));
+    });
+
+    source.onerror = (error) => {
+      if (!settled) {
+        cleanup();
+        reject(error instanceof Error ? error : new Error('네트워크 연결이 끊어졌습니다.'));
+      }
+    };
+
+    source.stream();
+  });
 
 const uploadFileApi = async ({ roomId, file }) => {
   const formData = new FormData();

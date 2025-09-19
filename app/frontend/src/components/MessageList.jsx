@@ -8,7 +8,7 @@ import Message from './Message';
 import ConnectionStatusBanner from './common/ConnectionStatusBanner';
 import ContextSummaryCard from './ContextSummaryCard';
 import { ROOM_TYPES } from '../constants';
-import useWebSocket from '../hooks/useWebSocket';
+import useEventSource from '../hooks/useEventSource';
 
 
 const fetchMessages = async (roomId) => {
@@ -43,22 +43,36 @@ const MessageList = ({ roomId, currentRoom, createRoomMutation, interactiveRevie
   });
 
   const handleNewMessage = useCallback((message) => {
-    // Update the query cache with the new message from WebSocket
     queryClient.setQueryData(['messages', roomId], (oldData) => {
       if (!oldData) return [message];
-      // Avoid duplicates
-      if (oldData.some(m => m.message_id === message.message_id)) {
+      if (oldData.some((m) => m.message_id === message.message_id)) {
         return oldData;
       }
       return [...oldData, message];
     });
   }, [queryClient, roomId]);
 
-  // Construct WebSocket URL.
-  // The backend websocket endpoint is at /ws/rooms/{room_id} for room messages
-  // We will connect if a roomId is present. The backend's AUTH_OPTIONAL=True will allow connection.
-  const wsUrl = roomId ? `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws/rooms/${roomId}` : null;
-  const { connectionStatus } = useWebSocket(wsUrl, handleNewMessage, null); // Passing null for the token
+  const eventHandlers = useMemo(() => ({
+    new_message: (event) => {
+      if (!event?.data) return;
+      try {
+        const parsed = JSON.parse(event.data);
+        if (parsed.type === 'new_message' && parsed.payload) {
+          handleNewMessage(parsed.payload);
+        }
+      } catch (err) {
+        console.error('Failed to parse SSE payload:', err);
+      }
+    },
+    heartbeat: () => {},
+    error: (err) => {
+      console.error('SSE error for room messages:', err);
+      toast.error('실시간 메시지 스트림 연결에 문제가 발생했어요. 잠시 후 다시 시도해주세요.');
+    }
+  }), [handleNewMessage]);
+
+  const eventsUrl = roomId ? `/api/rooms/${roomId}/messages/events` : null;
+  const { status: connectionStatus } = useEventSource(eventsUrl, eventHandlers);
 
 
   const { data: messages = [], isLoading } = useQuery({

@@ -1,31 +1,40 @@
 #!/bin/bash
 
-# This script is modified to run correctly in the isolated execution environment.
+set -euo pipefail
 
 echo "Setting up test environment..."
-# The reset script needs to be called with its full path.
-# Assuming a test DB is managed by the environment, we might not even need this.
-# I'll comment it out for now to see if the tests can run without it.
-# echo "Resetting test database..."
-# /app/scripts/reset_test_db.sh
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+cd "$REPO_ROOT"
+
+# Ensure Python can resolve project modules while still respecting any existing configuration.
+export PYTHONPATH="${PYTHONPATH:-$REPO_ROOT}"
+
+# Provide a sensible default for DATABASE_URL when one isn't supplied by the environment.
+export DATABASE_URL="${DATABASE_URL:-postgresql://user:password@localhost:5433/test_origin_db}"
+
+if [ -n "${PYTHON:-}" ] && command -v "$PYTHON" >/dev/null 2>&1; then
+    PYTHON_EXEC="$(command -v "$PYTHON")"
+elif [ -n "${VIRTUAL_ENV:-}" ]; then
+    PYTHON_EXEC="$(command -v python)"
+elif command -v python3 >/dev/null 2>&1; then
+    PYTHON_EXEC="$(command -v python3)"
+elif command -v python >/dev/null 2>&1; then
+    PYTHON_EXEC="$(command -v python)"
+else
+    echo "Unable to locate a Python interpreter." >&2
+    exit 1
+fi
 
 echo "Running tests..."
-# The virtual environment is not used in this container.
-# Set the PYTHONPATH to the root of the repository.
-export PYTHONPATH=/app
-# The DATABASE_URL should be provided by the environment, but we set it just in case.
-export DATABASE_URL="postgresql://user:password@localhost:5433/test_origin_db"
-
-# Define the correct python executable
-PYTHON_EXEC="/home/jules/.pyenv/shims/python"
-
-# Run pytest using the specific python executable to ensure correct dependencies.
 if [ $# -eq 0 ]; then
     echo "Running all tests..."
-    $PYTHON_EXEC -m pytest /app/tests
+    "$PYTHON_EXEC" -m pytest tests
 else
-    echo "Running specific tests: $@"
-    $PYTHON_EXEC -m pytest "/app/tests/$@"
+    echo "Running specific tests: $*"
+    "$PYTHON_EXEC" -m pytest "$@"
 fi
 
 echo "Test run complete!"

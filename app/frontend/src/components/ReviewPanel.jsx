@@ -1,11 +1,11 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
-import useWebSocket from '../hooks/useWebSocket';
 import axios from 'axios';
 
 import { useQuery } from '@tanstack/react-query';
 import LoadingSpinner from './common/LoadingSpinner';
 import ErrorMessage from './common/ErrorMessage';
+import useEventSource from '../hooks/useEventSource';
 
 const fetchReport = async (reviewId) => {
   const { data } = await axios.get(`/api/reviews/${reviewId}/report`);
@@ -17,20 +17,34 @@ const ReviewPanel = () => {
   const [reviewStatus, setReviewStatus] = useState('pending');
   const [socketError, setSocketError] = useState(null);
 
-  const handleSocketMessage = useCallback((message) => {
-    if (message.type === 'status_update' && message.payload && message.payload.status) {
-      setReviewStatus(message.payload.status);
+  const eventHandlers = useMemo(() => ({
+    live_event: (event) => {
+      try {
+        const payload = JSON.parse(event.data);
+        if (payload.type === 'status_update' && payload.payload?.status) {
+          setReviewStatus(payload.payload.status);
+        }
+      } catch (err) {
+        console.error('Failed to parse live review event:', err);
+      }
+    },
+    historical_event: (event) => {
+      try {
+        const payload = JSON.parse(event.data);
+        if (payload.type === 'status_update' && payload.payload?.status) {
+          setReviewStatus(payload.payload.status);
+        }
+      } catch (err) {
+        console.error('Failed to parse historical review event:', err);
+      }
+    },
+    error: (err) => {
+      setSocketError(err.message || 'An unknown stream error occurred.');
     }
-    if (message.event === 'error') {
-        setSocketError(message.data?.error || 'An unknown socket error occurred.');
-    }
-  }, []);
+  }), []);
 
-  const placeholderToken = "your-placeholder-jwt-here";
-  const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-  const wsUrl = `${wsProtocol}://${window.location.host}/ws/reviews/${reviewId}`;
-
-  const { connectionStatus } = useWebSocket(wsUrl, handleSocketMessage, placeholderToken);
+  const sseUrl = reviewId ? `/api/reviews/${reviewId}/events` : null;
+  const { status: connectionStatus } = useEventSource(sseUrl, eventHandlers);
 
   const { data: report, isLoading: isReportLoading, error: reportError } = useQuery({
     queryKey: ['reviewReport', reviewId],
@@ -69,17 +83,19 @@ const ReviewPanel = () => {
     return null;
   };
 
+  const showConnectionBanner = connectionStatus && !['connected', 'connecting', 'idle'].includes(connectionStatus);
+
   return (
     <div className="review-panel">
-      {connectionStatus !== 'connected' && (
+      {showConnectionBanner && (
         <div className="connection-banner error">
-          WebSocket disconnected. Attempting to reconnect... ({connectionStatus})
+          실시간 스트림 연결 상태: {connectionStatus}
         </div>
       )}
       <h2>Review Status</h2>
       <p>Review ID: {reviewId}</p>
       <p>Status: <strong>{reviewStatus}</strong></p>
-      {socketError && <ErrorMessage error={socketError} message="WebSocket Error" />}
+      {socketError && <ErrorMessage error={socketError} message="Stream Error" />}
 
       {renderReport()}
     </div>

@@ -60,6 +60,7 @@ class Message(Base):
     content_searchable = Column(Text, nullable=False)
     timestamp = Column(BigInteger, nullable=False)
     embedding = Column(VECTOR(1536), nullable=True)
+    ts = Column(TSVECTOR, nullable=True)
 
     room = relationship('Room', back_populates='messages')
 
@@ -219,9 +220,14 @@ class UserFact(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
     user_id = Column(Text, nullable=False, index=True)
     kind = Column(Text, nullable=False)
-    key = Column(Text, nullable=False)
+    fact_type = Column(Text, nullable=False)
     value_json = Column(JSONB, nullable=False)
-    confidence = Column(Float, nullable=True)
+    normalized_value = Column(Text, nullable=False)
+    source_message_id = Column(String(255), nullable=True)
+    pending_review = Column(Boolean, nullable=False, server_default='false')
+    latest = Column(Boolean, nullable=False, server_default='true')
+    sensitivity = Column(String(50), nullable=False, server_default='low')
+    confidence = Column(Float, nullable=False, server_default='1.0')
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
 
