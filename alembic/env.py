@@ -25,11 +25,8 @@ if config.config_file_name is not None:
 
 # add your model's MetaData object here
 # for 'autogenerate' support
-# from myapp import mymodel
-# target_metadata = mymodel.Base.metadata
-# Since we are not using SQLAlchemy ORM for model definition,
-# we set target_metadata to None. Migrations will be written manually.
-target_metadata = None
+from app.models.orm_models import Base
+target_metadata = Base.metadata
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:

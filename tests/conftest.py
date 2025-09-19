@@ -11,9 +11,13 @@ import pytest
 import uuid
 import time
 import json
+from contextlib import closing
 from datetime import datetime, timezone
 from typing import Any, Dict, Generator, List, Optional
 from unittest.mock import Mock
+
+import psycopg2
+import redis
 from fastapi.testclient import TestClient
 
 # 프로젝트 루트를 Python 경로에 추가
@@ -45,6 +49,51 @@ async def mock_llm_invoke(*args, **kwargs):
         '{"summary": "Mocked response", "provider": "' + str(provider) + '", "request_id": "' + str(request_id) + '"}'
     )
     return json_response, {}
+
+
+def _truncate_database(database_url: str) -> None:
+    """Remove all data from the public schema to isolate tests."""
+    if not database_url:
+        return
+    try:
+        with closing(psycopg2.connect(database_url)) as conn:
+            conn.autocommit = True
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT tablename
+                    FROM pg_tables
+                    WHERE schemaname = 'public'
+                      AND tablename NOT IN ('alembic_version');
+                    """
+                )
+                tables = [row[0] for row in cur.fetchall()]
+                if not tables:
+                    return
+                quoted = ", ".join(f'"{table}"' for table in tables)
+                cur.execute("SET session_replication_role = 'replica';")
+                try:
+                    cur.execute(f"TRUNCATE TABLE {quoted} RESTART IDENTITY CASCADE;")
+                finally:
+                    cur.execute("SET session_replication_role = 'origin';")
+    except psycopg2.Error:
+        # Database may not be available for pure unit tests; ignore cleanup failures.
+        return
+
+
+def _flush_redis(redis_url: str) -> None:
+    if not redis_url:
+        return
+    try:
+        client = redis.Redis.from_url(redis_url)
+        client.flushdb()
+    except redis.exceptions.RedisError:
+        return
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
 
 @pytest.fixture(scope="session")
 def test_environment():
@@ -114,6 +163,17 @@ def isolated_test_env(test_environment):
                 del os.environ[key]
         except KeyError:
             pass
+
+
+@pytest.fixture(scope="function", autouse=True)
+def clean_persistence_state(isolated_test_env):
+    """Ensure database and Redis state are isolated for every test."""
+    _truncate_database(isolated_test_env.get('database_url'))
+    _flush_redis(isolated_test_env.get('redis_url'))
+    yield
+    _truncate_database(isolated_test_env.get('database_url'))
+    _flush_redis(isolated_test_env.get('redis_url'))
+
 
 @pytest.fixture(scope="function")
 def app_settings(isolated_test_env):

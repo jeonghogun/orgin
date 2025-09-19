@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo, useCallback } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 import { useMessages, useGenerationSettings, setMessages, addMessage, appendStreamChunk } from '../../store/useConversationStore';
@@ -15,6 +15,7 @@ const ChatView = ({ threadId }) => {
   const [viewingMessageHistory, setViewingMessageHistory] = useState(null);
   const [exportJob, setExportJob] = useState(null);
   const [activeStreamUrl, setActiveStreamUrl] = useState(null);
+  const [activeMessageId, setActiveMessageId] = useState(null);
 
   const messages = useMessages(threadId);
   const { model, temperature, maxTokens } = useGenerationSettings();
@@ -70,6 +71,7 @@ const ChatView = ({ threadId }) => {
       });
       addMessage(threadId, { id: messageId, role: 'assistant', content: '', status: 'draft', model: variables.model, created_at: Math.floor(Date.now() / 1000) });
       setAttachments([]);
+      setActiveMessageId(messageId);
       setActiveStreamUrl(`/api/convo/messages/${messageId}/stream`);
     },
   });
@@ -78,10 +80,10 @@ const ChatView = ({ threadId }) => {
 
   const streamEventHandlers = useMemo(() => ({
     delta: (event) => {
-      const messageId = activeStreamUrl?.split('/')[4];
+      const envelope = parseRealtimeEvent(event);
+      const messageId = envelope?.payload?.message_id || activeMessageId;
       if (!messageId) return;
 
-      const envelope = parseRealtimeEvent(event);
       const chunk = envelope?.payload?.delta || envelope?.payload?.content || envelope?.payload?.text;
       if (typeof chunk === 'string' && chunk.trim() !== '') {
         appendStreamChunk(threadId, messageId, chunk);
@@ -89,10 +91,11 @@ const ChatView = ({ threadId }) => {
     },
     done: (event) => {
       const envelope = parseRealtimeEvent(event);
-      const status = envelope?.payload?.meta?.status || envelope?.meta?.status;
+      const status = envelope?.payload?.status || envelope?.meta?.status;
       if (status === 'failed') {
         toast.error('응답 생성이 완료되지 못했습니다. 다시 시도해주세요.');
       }
+      setActiveMessageId(null);
       setActiveStreamUrl(null);
       queryClient.invalidateQueries({ queryKey: ['messages', threadId] });
     },
@@ -101,9 +104,10 @@ const ChatView = ({ threadId }) => {
       const errorMessage = envelope?.payload?.error || '실시간 응답을 가져오는 중 문제가 발생했어요. 잠시 후 다시 시도해주세요.';
       console.error('Streaming error received:', envelope || event);
       toast.error(errorMessage);
+      setActiveMessageId(null);
       setActiveStreamUrl(null);
     }
-  }), [threadId, activeStreamUrl, appendStreamChunk, queryClient]);
+  }), [threadId, activeMessageId, appendStreamChunk, queryClient]);
 
   useEventSource(activeStreamUrl, streamEventHandlers);
 

@@ -96,6 +96,7 @@ tests/                     # 통합 테스트 디렉토리
 ### 📖 상세 문서
 - **[개발자 온보딩 가이드](./DEVELOPER_ONBOARDING.md)**: 새로운 개발자를 위한 빠른 시작 가이드
 - **[Phase 1-6.5 통합 보고서](./PHASE_1_6_5_INTEGRATION_REPORT.md)**: 모든 Phase별 구현 내용과 기술적 세부사항 (리팩토링 요약 및 North Star 분석 포함)
+- **[운영 런북](./OPERATIONS_RUNBOOK.md)**: 배포 전 점검, 모니터링, 사고 대응 절차 요약
 
 ## 🚀 설치 및 실행
 
@@ -118,6 +119,7 @@ cp .env.example .env
 OPENAI_API_KEY=your_openai_api_key
 GOOGLE_API_KEY=your_google_api_key
 GOOGLE_CSE_ID=your_custom_search_engine_id
+ENCRYPTION_KEY=$(openssl rand -base64 32)  # 운영 환경에서는 고정 키를 사용하세요
 ```
 
 ### 3. 애플리케이션 실행
@@ -147,6 +149,14 @@ opentelemetry-instrument \
 ### 4. 브라우저 접속
 ```
 http://127.0.0.1:8000
+```
+
+### 5. 프론트엔드 개발 및 테스트
+```bash
+cd app/frontend
+npm install --legacy-peer-deps
+npm run dev      # 개발 서버
+npm run test:e2e # Playwright 기반 E2E 테스트
 ```
 
 ### 5. API 문서

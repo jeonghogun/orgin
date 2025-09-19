@@ -21,7 +21,8 @@ from sqlalchemy import (
     Float,
     LargeBinary
 )
-from sqlalchemy.dialects.postgresql import JSONB, VECTOR, TSVECTOR, UUID
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR, UUID, ARRAY
+from sqlalchemy import Text
 from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
@@ -37,16 +38,18 @@ class Room(Base):
     parent_id = Column(String(255), ForeignKey('rooms.room_id', ondelete='CASCADE'))
     # NOTE: The initial migration used BIGINT for timestamps. The application logic seems to handle this.
     # Using DateTime with timezone=True for better SQLAlchemy semantics.
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
-    message_count = Column(Integer, default=0, nullable=False)
+    created_at = Column(BigInteger, nullable=False)
+    updated_at = Column(BigInteger, nullable=False)
+    message_count = Column(Integer, nullable=False, server_default='0')
 
     # Relationships from existing models
     parent = relationship('Room', remote_side=[room_id], back_populates='children')
     children = relationship('Room', back_populates='parent')
     conversation_threads = relationship('ConversationThread', back_populates='sub_room')
+    memories = relationship('Memory', back_populates='room', cascade="all, delete-orphan")
     messages = relationship('Message', back_populates='room', cascade="all, delete-orphan")
     reviews = relationship('Review', back_populates='room', cascade="all, delete-orphan")
+    conversation_contexts = relationship('ConversationContext', back_populates='room', cascade="all, delete-orphan")
 
 class Message(Base):
     __tablename__ = 'messages'
@@ -59,10 +62,53 @@ class Message(Base):
     # The 'content_searchable' column holds the plaintext for FTS
     content_searchable = Column(Text, nullable=False)
     timestamp = Column(BigInteger, nullable=False)
-    embedding = Column(VECTOR(1536), nullable=True)
+    embedding = Column(Text, nullable=True)  # VECTOR(1536) 대신 Text 사용
     ts = Column(TSVECTOR, nullable=True)
 
     room = relationship('Room', back_populates='messages')
+
+
+class Memory(Base):
+    __tablename__ = 'memories'
+    memory_id = Column(String(255), primary_key=True)
+    user_id = Column(String(255), nullable=False, index=True)
+    room_id = Column(String(255), ForeignKey('rooms.room_id', ondelete='CASCADE'), nullable=False, index=True)
+    key = Column(Text, nullable=False)
+    value = Column(Text, nullable=False)
+    embedding = Column(Text, nullable=False)  # VECTOR(1536) 대신 Text 사용
+    importance = Column(Float, nullable=True, server_default='1.0')
+    expires_at = Column(BigInteger, nullable=True)
+    created_at = Column(BigInteger, nullable=False)
+
+    room = relationship('Room', back_populates='memories')
+
+
+class UserProfile(Base):
+    __tablename__ = 'user_profiles'
+    user_id = Column(String(255), primary_key=True)
+    role = Column(String(50), nullable=False, server_default='user')
+    name = Column(LargeBinary, nullable=True)
+    preferences = Column(LargeBinary, nullable=True)
+    conversation_style = Column(String(255), nullable=True, server_default='casual')
+    interests = Column(ARRAY(Text), nullable=False, server_default='{}')
+    created_at = Column(BigInteger, nullable=False)
+    updated_at = Column(BigInteger, nullable=False)
+    auto_fact_extraction_enabled = Column(Boolean, nullable=False, server_default='true')
+
+
+class ConversationContext(Base):
+    __tablename__ = 'conversation_contexts'
+    context_id = Column(String(255), primary_key=True)
+    room_id = Column(String(255), ForeignKey('rooms.room_id', ondelete='CASCADE'), nullable=False, index=True)
+    user_id = Column(String(255), nullable=False, index=True)
+    summary = Column(Text, nullable=True)
+    key_topics = Column(ARRAY(Text), nullable=True)
+    sentiment = Column(String(50), nullable=True)
+    created_at = Column(BigInteger, nullable=False)
+    updated_at = Column(BigInteger, nullable=False)
+
+    room = relationship('Room', back_populates='conversation_contexts')
+
 
 class Review(Base):
     __tablename__ = 'reviews'
@@ -107,6 +153,43 @@ class ReviewMetric(Base):
 
     review = relationship('Review', back_populates='metrics')
 
+
+class AuditLog(Base):
+    __tablename__ = 'audit_logs'
+    log_id = Column(Integer, primary_key=True, autoincrement=True)
+    timestamp = Column(BigInteger, nullable=False, index=True)
+    admin_user_id = Column(String(255), nullable=False, index=True)
+    action = Column(String(255), nullable=False)
+    details = Column(JSONB, nullable=True)
+    trace_id = Column(String(255), nullable=True)
+
+
+class KpiSnapshot(Base):
+    __tablename__ = 'kpi_snapshots'
+    snapshot_id = Column(Integer, primary_key=True, autoincrement=True)
+    snapshot_date = Column(Date, nullable=False, index=True)
+    metric_name = Column(String(100), nullable=False)
+    value = Column(Float, nullable=False)
+    details = Column(JSONB, nullable=True)
+
+
+class ProviderConfig(Base):
+    __tablename__ = 'provider_configs'
+    provider_name = Column(String(100), primary_key=True)
+    model = Column(String(100), nullable=False)
+    timeout_ms = Column(Integer, nullable=False)
+    retries = Column(Integer, nullable=False)
+    enabled = Column(Boolean, nullable=False, server_default='true')
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class SystemSetting(Base):
+    __tablename__ = 'system_settings'
+    key = Column(String(100), primary_key=True)
+    value_json = Column(JSONB, nullable=False)
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
 # --- Tables from Report Tables Migration ---
 
 class PanelReport(Base):
@@ -147,6 +230,8 @@ class ConversationThread(Base):
     # Relationships
     sub_room = relationship('Room', back_populates='conversation_threads')
     messages = relationship('ConversationMessage', back_populates='thread', cascade="all, delete-orphan")
+    attachments = relationship('Attachment', back_populates='thread', cascade="all, delete-orphan")
+    export_jobs = relationship('ExportJob', back_populates='thread', cascade="all, delete-orphan")
 
 class ConversationMessage(Base):
     __tablename__ = 'conversation_messages'
@@ -167,6 +252,7 @@ class ConversationMessage(Base):
 class Attachment(Base):
     __tablename__ = 'attachments'
     id = Column(String, primary_key=True)
+    thread_id = Column(String, ForeignKey('conversation_threads.id', ondelete='CASCADE'), nullable=True, index=True)
     kind = Column(String, nullable=False)
     name = Column(String, nullable=False)
     mime = Column(String, nullable=False)
@@ -175,6 +261,7 @@ class Attachment(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
 
     # Relationships
+    thread = relationship('ConversationThread', back_populates='attachments')
     chunks = relationship('AttachmentChunk', back_populates='attachment', cascade="all, delete-orphan")
 
 class AttachmentChunk(Base):
@@ -182,7 +269,7 @@ class AttachmentChunk(Base):
     id = Column(String, primary_key=True)
     attachment_id = Column(String, ForeignKey('attachments.id', ondelete='CASCADE'), nullable=False, index=True)
     chunk_text = Column(Text, nullable=False)
-    embedding = Column(VECTOR(1536), nullable=True)
+    embedding = Column(Text, nullable=True)  # VECTOR(1536) 대신 Text 사용
 
     # Relationships
     attachment = relationship('Attachment', back_populates='chunks')
@@ -198,6 +285,8 @@ class ExportJob(Base):
     error_message = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    thread = relationship('ConversationThread', back_populates='export_jobs')
 
 # --- Tables added during stabilization audit to sync with migrations ---
 

@@ -24,6 +24,7 @@ from app.models.conversation_schemas import (
 from pydantic import BaseModel, Field
 from app.services.conversation_service import ConversationService, get_conversation_service
 from app.services.llm_adapters import get_llm_adapter
+from app.services.realtime_service import RealtimeService
 from app.services.memory_service import MemoryService, get_memory_service
 from app.services.rag_service import get_rag_service
 from app.services.cloud_storage_service import get_cloud_storage_service
@@ -181,55 +182,123 @@ async def stream_message(
 
     async def event_generator():
         SSE_SESSIONS_ACTIVE.inc()
-        content, meta, total_tokens = "", {}, 0
-        stream_successful = False
+        content, usage_meta, total_tokens = "", {}, 0
+        chunk_count = 0
+        stream_completed = False
         error_sent = False
-        try:
-            # Send an initial ping to confirm connection
-            yield {"event": "ping", "data": json.dumps({"message": "Connection established"})}
 
-            async for sse_event in adapter.generate_stream(message_id=message_id, messages=messages_for_llm, model=draft_message.get("model", "gpt-4o-mini"), temperature=0.7, max_tokens=2048):
+        def _serialize(event_type: str, payload: Dict[str, Any], meta: Optional[Dict[str, Any]] = None) -> str:
+            payload_with_id = {"message_id": message_id, **payload}
+            meta_with_id: Dict[str, Any] = {"message_id": message_id}
+            if meta:
+                meta_with_id.update(meta)
+            return RealtimeService.format_event(event_type, payload_with_id, meta_with_id)
+
+        def _as_dict(raw: Any) -> Dict[str, Any]:
+            if raw is None:
+                return {}
+            if hasattr(raw, "model_dump"):
+                return raw.model_dump()  # type: ignore[call-arg]
+            if isinstance(raw, dict):
+                return raw
+            if isinstance(raw, str):
+                try:
+                    parsed = json.loads(raw)
+                    return parsed if isinstance(parsed, dict) else {"text": raw}
+                except json.JSONDecodeError:
+                    return {"text": raw}
+            if isinstance(raw, bytes):
+                try:
+                    decoded = raw.decode("utf-8")
+                except UnicodeDecodeError:
+                    return {"binary": True}
+                return _as_dict(decoded)
+            return {"value": raw}
+
+        try:
+            yield {"event": "ping", "data": _serialize("ping", {"message": "Connection established"})}
+
+            async for sse_event in adapter.generate_stream(
+                message_id=message_id,
+                messages=messages_for_llm,
+                model=draft_message.get("model", "gpt-4o-mini"),
+                temperature=0.7,
+                max_tokens=2048,
+            ):
                 if await request.is_disconnected():
                     logger.warning(f"Client disconnected from stream {message_id}")
-                    # Yield a specific error for disconnection and stop
                     if not error_sent:
-                        yield {"event": "error", "data": json.dumps({"error": "Client disconnected"})}
+                        yield {"event": "error", "data": _serialize("error", {"error": "Client disconnected"})}
                         error_sent = True
                     break
 
-                if sse_event.event == "delta":
-                    content += sse_event.data.content
-                elif sse_event.event == "usage":
-                    if hasattr(sse_event.data, 'model_dump'):
-                        meta = sse_event.data.model_dump()
-                    else:
-                        meta = sse_event.data
-                    total_tokens = meta.get("total_tokens", 0)
+                event_type = sse_event.event
+                data_dict = _as_dict(sse_event.data)
 
-                if hasattr(sse_event.data, 'model_dump_json'):
-                    yield {"event": sse_event.event, "data": sse_event.data.model_dump_json()}
-                else:
-                    yield {"event": sse_event.event, "data": json.dumps(sse_event.data)}
+                if event_type == "delta":
+                    chunk = data_dict.get("content") or data_dict.get("delta") or data_dict.get("text")
+                    if isinstance(chunk, str) and chunk:
+                        chunk_count += 1
+                        content += chunk
+                        yield {
+                            "event": "delta",
+                            "data": _serialize(
+                                "delta",
+                                {"delta": chunk, "content": chunk, "text": chunk},
+                                {"chunk_index": chunk_count},
+                            ),
+                        }
+                    continue
 
-            # After the loop, if no error was sent, send the done event.
+                if event_type == "usage":
+                    usage_meta = data_dict
+                    total_tokens = usage_meta.get("total_tokens", 0)
+                    yield {"event": "usage", "data": _serialize("usage", {"usage": usage_meta}, usage_meta)}
+                    continue
+
+                if event_type == "error":
+                    payload = data_dict if data_dict else {"error": "An error occurred during streaming."}
+                    yield {"event": "error", "data": _serialize("error", payload)}
+                    error_sent = True
+                    break
+
+                if event_type == "done":
+                    stream_completed = True
+                    continue
+
+                # Forward other event types (e.g., tool calls) with metadata for observability
+                yield {"event": event_type, "data": _serialize(event_type, data_dict)}
+
             if not error_sent:
-                yield {"event": "done", "data": json.dumps({"message": "Stream completed successfully"})}
-                stream_successful = True
+                stream_completed = True
 
-        except Exception as e:
-            logger.error(f"Error during SSE stream for {message_id}: {e}", exc_info=True)
+        except Exception as exc:
+            logger.error(f"Error during SSE stream for {message_id}: {exc}", exc_info=True)
             if not error_sent:
-                yield {"event": "error", "data": json.dumps({"error": "An error occurred during streaming."})}
+                yield {"event": "error", "data": _serialize("error", {"error": "An error occurred during streaming."})}
                 error_sent = True
 
         finally:
             SSE_SESSIONS_ACTIVE.dec()
-            if stream_successful:
-                convo_service.update_message(message_id, content, "complete", meta)
+            if stream_completed and not error_sent:
+                convo_service.update_message(message_id, content, "complete", usage_meta)
                 if total_tokens > 0 and user_id != "anonymous":
                     convo_service.increment_token_usage(user_id, total_tokens)
 
-            # Always clean up the user cache
+                yield {
+                    "event": "done",
+                    "data": _serialize(
+                        "done",
+                        {
+                            "status": "completed",
+                            "message_id": message_id,
+                            "total_tokens": total_tokens,
+                            "chunk_count": chunk_count,
+                        },
+                        {"status": "completed", "chunk_count": chunk_count},
+                    ),
+                }
+
             redis_client = convo_service.redis_client
             if redis_client:
                 try:

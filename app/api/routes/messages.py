@@ -1,12 +1,10 @@
-"""
-Message-related API endpoints
-"""
+"""Message-related API endpoints."""
+
 import asyncio
 import json
 import logging
-import re
 from datetime import datetime
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Request, Depends, File, UploadFile
 from sse_starlette.sse import EventSourceResponse
@@ -37,9 +35,8 @@ from app.services.llm_service import LLMService
 from app.services.fact_extractor_service import FactExtractorService
 from app.services.user_fact_service import UserFactService
 from app.services.cache_service import CacheService
-from app.services.intent_classifier_service import IntentClassifierService, FactQueryType
+from app.services.intent_classifier_service import IntentClassifierService
 from app.services.background_task_service import BackgroundTaskService
-from app.services.fact_types import FactType
 from app.utils.helpers import (
     generate_id,
     get_current_timestamp,
@@ -50,6 +47,15 @@ from app.models.enums import RoomType
 from app.models.schemas import Message, ReviewMeta
 from app.config.settings import settings
 from app.services.realtime_service import get_realtime_service, RealtimeService
+from app.services.message_pipeline import (
+    build_fact_query_response,
+    build_fact_query_success_response,
+    build_quick_intent_response,
+    classify_intent,
+    ensure_fact_extraction,
+    schedule_context_refresh,
+    stream_immediate_response,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -60,195 +66,6 @@ router = APIRouter(prefix="", tags=["messages"])
 
 async def _maybe_get_room(storage_service: StorageService, room_id: str):
     return await asyncio.to_thread(storage_service.get_room, room_id)
-
-async def _handle_fact_extraction(
-    user_fact_service: UserFactService,
-    fact_extractor_service: FactExtractorService,
-    message: Message
-):
-    """Orchestrates extracting, normalizing, and saving facts from a message."""
-    try:
-        if message.role != "user": return
-        user_profile = await maybe_await(
-            user_fact_service.get_user_profile(message.user_id)
-        )
-        if user_profile and not user_profile.auto_fact_extraction_enabled:
-            logger.info(f"Fact extraction disabled for user {message.user_id}. Skipping.")
-            return
-
-        raw_facts = await maybe_await(
-            fact_extractor_service.extract_facts_from_message(
-                message.content, str(message.message_id)
-            )
-        )
-        if not raw_facts: return
-        
-        logger.info(f"Extracted {len(raw_facts)} potential facts from message {message.message_id}")
-        for fact in raw_facts:
-            try:
-                fact_type_enum = FactType(fact['type'])
-                normalized_value = fact_extractor_service.normalize_value(fact_type_enum, fact['value'])
-                sensitivity = fact_extractor_service.get_sensitivity(fact_type_enum)
-                logger.info(f"=== SAVING FACT === User: {message.user_id}, Type: {fact['type']}, Value: {fact['value']}")
-                await maybe_await(
-                    user_fact_service.save_fact(
-                        user_id=message.user_id,
-                        fact=fact,
-                        normalized_value=normalized_value,
-                        source_message_id=str(message.message_id),
-                        sensitivity=sensitivity.value,
-                        room_id=message.room_id,
-                    )
-                )
-                logger.info(f"=== FACT SAVED SUCCESSFULLY === User: {message.user_id}, Type: {fact['type']}")
-            except ValueError:
-                logger.warning(f"Skipping fact with unknown type: {fact.get('type')}")
-                continue
-        logger.info(f"Successfully processed facts for message {message.message_id}")
-    except Exception as e:
-        logger.error(f"Error during background fact extraction for message {message.message_id}: {e}", exc_info=True)
-
-async def _detect_fact_query_improved(content: str, intent_classifier: IntentClassifierService) -> Optional[FactType]:
-    """LLM 기반 사실 질문 감지 (fallback으로 키워드 기반)"""
-    try:
-        # LLM 기반 분류 시도
-        fact_type = await maybe_await(
-            intent_classifier.get_fact_query_type(content)
-        )
-        if fact_type and fact_type != FactQueryType.NONE:
-            # FactQueryType을 FactType으로 변환
-            type_mapping = {
-                FactQueryType.USER_NAME: FactType.USER_NAME,
-                FactQueryType.JOB: FactType.JOB,
-                FactQueryType.HOBBY: FactType.HOBBY,
-                FactQueryType.MBTI: FactType.MBTI,
-                FactQueryType.GOAL: FactType.GOAL
-            }
-            return type_mapping.get(fact_type)
-    except Exception as e:
-        logger.warning(f"LLM fact query detection failed: {e}, falling back to keywords")
-    
-    # Fallback: 키워드 기반 감지
-    return _detect_fact_query_keywords(content)
-
-def _detect_fact_query_keywords(content: str) -> Optional[FactType]:
-    """키워드 기반 사실 질문 감지 (fallback)"""
-    content = content.lower().strip().replace("?", "").replace(".", "")
-    query_map: Dict[FactType, List[str]] = {
-        FactType.USER_NAME: [
-            "내 이름", "제 이름", "내이름", "제이름", "내 이름이 뭐", "이름이 뭐",
-            "내 이름 기억", "내가 누구", "내가 누구야"
-        ],
-        FactType.JOB: ["내 직업", "제 직업", "직업이 뭐", "무슨 일", "내직업"],
-        FactType.MBTI: ["내 mbti", "제 mbti", "mbti가 뭐"],
-        FactType.HOBBY: ["내 취미", "제 취미", "취미가 뭐"],
-        FactType.GOAL: ["내 목표", "제 목표", "목표가 뭐"],
-    }
-    for fact_type, keywords in query_map.items():
-        for keyword in keywords:
-            if keyword in content:
-                return fact_type
-    return None
-
-
-NAME_EXTRACTION_PATTERNS = [
-    re.compile(r"(?:내|제|저의)\s*이름(?:은|은요|은지)?\s*([\w가-힣]+)", re.IGNORECASE),
-    re.compile(r"(?:나를|저를)\s*([\w가-힣]+)\s*라고\s*불러", re.IGNORECASE),
-    re.compile(r"(?:이름은)\s*([\w가-힣]+)", re.IGNORECASE),
-]
-NAME_EXTRACTION_SUFFIXES = ("입니다", "이에요", "예요", "이야", "야", "라고", "라고요", "라고해")
-
-
-def _extract_user_name(text: str) -> Optional[str]:
-    if not text:
-        return None
-    if "이름" not in text and "불러" not in text:
-        return None
-    for pattern in NAME_EXTRACTION_PATTERNS:
-        match = pattern.search(text)
-        if not match:
-            continue
-        candidate = match.group(1).strip()
-        candidate = re.sub(r"[\s,.;!?]+$", "", candidate)
-        for suffix in NAME_EXTRACTION_SUFFIXES:
-            if candidate.endswith(suffix):
-                candidate = candidate[: -len(suffix)]
-        candidate = candidate.strip()
-        if not candidate:
-            continue
-        if any(char.isdigit() for char in candidate):
-            continue
-        if len(candidate) < 2 or len(candidate) > 10:
-            continue
-        return candidate
-    return None
-
-
-async def _stream_immediate_response(
-    room_id: str,
-    user_id: str,
-    storage_service: StorageService,
-    content: str,
-    memory_service: Optional[MemoryService] = None,
-    background_tasks: Optional[BackgroundTaskService] = None,
-    realtime_service: Optional[RealtimeService] = None,
-) -> EventSourceResponse:
-    ai_message = Message(
-        message_id=generate_id(),
-        room_id=room_id,
-        user_id="ai",
-        content=content,
-        timestamp=get_current_timestamp(),
-        role="ai",
-    )
-    storage_service.save_message(ai_message)
-    if realtime_service:
-        await realtime_service.publish(room_id, "new_message", ai_message.model_dump())
-
-    if memory_service and background_tasks:
-        task_id = f"context_refresh:{room_id}:{ai_message.message_id}:immediate"
-        try:
-            background_tasks.create_background_task(
-                task_id,
-                memory_service.refresh_context,
-                room_id,
-                user_id,
-            )
-        except Exception as refresh_error:
-            logger.warning(
-                "Failed to schedule context refresh for immediate stream response (room=%s): %s",
-                room_id,
-                refresh_error,
-                exc_info=True,
-            )
-
-    async def generator():
-        yield {
-            "event": "meta",
-            "data": RealtimeService.format_event("meta", {"status": "started"}),
-        }
-        yield {
-            "event": "delta",
-            "data": RealtimeService.format_event(
-                "delta",
-                {"delta": content},
-                {"chunk_index": 1, "delivery": "immediate"},
-            ),
-        }
-        final_payload = {
-            "message_id": ai_message.message_id,
-            "meta": {"status": "completed", "chunk_count": 1},
-        }
-        yield {
-            "event": "done",
-            "data": RealtimeService.format_event(
-                "done",
-                final_payload,
-                {"chunk_count": 1, "delivery": "immediate"},
-            ),
-        }
-
-    return EventSourceResponse(generator())
 
 # --- Original Endpoints & Helpers ---
 
@@ -357,6 +174,7 @@ async def send_message(
     fact_extractor_service: FactExtractorService = Depends(get_fact_extractor_service),
     user_fact_service: UserFactService = Depends(get_user_fact_service),
     cache_service: CacheService = Depends(get_cache_service),
+    background_tasks: BackgroundTaskService = Depends(get_background_task_service),
     realtime_service: RealtimeService = Depends(get_realtime_service),
 ):
     """Send a message to a room"""
@@ -380,91 +198,34 @@ async def send_message(
         await realtime_service.publish(room_id, "new_message", message.model_dump())
 
         # --- V2 Fact Extraction & Retrieval Logic ---
-        # Extract facts immediately for better context awareness
-        logger.info(f"=== FACT EXTRACTION START === Message: {message.message_id}, Content: {content}")
-        try:
-            await _handle_fact_extraction(user_fact_service, fact_extractor_service, message)
-            logger.info(f"=== FACT EXTRACTION SUCCESS === Message: {message.message_id}")
-            try:
-                background_task_service = get_background_task_service()
-                task_id = f"fact_extraction_{message.message_id}_async"
-                background_task_service.create_background_task(
-                    task_id,
-                    _handle_fact_extraction,
-                    user_fact_service,
-                    fact_extractor_service,
-                    message,
-                )
-                logger.info(f"=== BACKGROUND TASK STARTED === Task: {task_id}")
-            except Exception as bg_error:
-                logger.error(f"=== BACKGROUND TASK FAILED === Error: {bg_error}", exc_info=True)
-        except Exception as e:
-            logger.error(f"=== FACT EXTRACTION FAILED === Message: {message.message_id}, Error: {e}", exc_info=True)
-            try:
-                background_task_service = get_background_task_service()
-                task_id = f"fact_extraction_{message.message_id}"
-                background_task_service.create_background_task(
-                    task_id,
-                    _handle_fact_extraction,
-                    user_fact_service,
-                    fact_extractor_service,
-                    message,
-                )
-                logger.info(f"=== BACKGROUND TASK STARTED === Task: {task_id}")
-            except Exception as bg_error:
-                logger.error(f"=== BACKGROUND TASK FAILED === Error: {bg_error}", exc_info=True)
-        
-        # LLM 기반 사실 질문 감지
+        await ensure_fact_extraction(
+            message=message,
+            user_fact_service=user_fact_service,
+            fact_extractor_service=fact_extractor_service,
+            background_tasks=background_tasks,
+            execute_inline=True,
+        )
+
         intent_classifier = get_intent_classifier_service()
-        queried_fact_type = await _detect_fact_query_improved(content, intent_classifier)
-        if queried_fact_type:
-            logger.info(f"Fact query for user {user_id}, type: {queried_fact_type.value}")
-            facts_to_format = []
-            cache_key = f"fact_query:{user_id}:{queried_fact_type.value}"
-            cached_facts = await maybe_await(cache_service.get(cache_key))
+        _, fact_response = await build_fact_query_response(
+            content=content,
+            user_id=user_id,
+            user_fact_service=user_fact_service,
+            cache_service=cache_service,
+            intent_classifier=intent_classifier,
+        )
+        if fact_response:
+            logger.info(
+                "Fact query handled for user %s in room %s", user_id, room_id
+            )
+            return await build_fact_query_success_response(
+                room_id=room_id,
+                message=message,
+                ai_content=fact_response,
+                storage_service=storage_service,
+                realtime_service=realtime_service,
+            )
 
-            if cached_facts:
-                facts_to_format = cached_facts
-            else:
-                if queried_fact_type == FactType.USER_NAME:
-                    profile = await maybe_await(
-                        user_fact_service.get_user_profile(user_id)
-                    )
-                    if profile and profile.name: facts_to_format = [profile.name]
-                else:
-                    user_facts = await maybe_await(
-                        user_fact_service.list_facts(
-                            user_id=user_id,
-                            fact_type=queried_fact_type,
-                            latest_only=True,
-                        )
-                    )
-                    if user_facts:
-                        facts_to_format = [
-                            fact.get('content') or fact.get('value')
-                            for fact in user_facts
-                            if fact.get('content') or fact.get('value')
-                        ]
-                if facts_to_format:
-                    await maybe_await(
-                        cache_service.set(cache_key, facts_to_format, ttl=3600)
-                    )
-
-            ai_content = f"'{queried_fact_type.value}'에 대해 알려주신 정보가 아직 없어요."
-            if facts_to_format:
-                fact_string = "', '".join(map(str, facts_to_format))
-                if queried_fact_type == FactType.USER_NAME:
-                    ai_content = f"당신의 이름은 '{facts_to_format[0]}'(으)로 기억하고 있어요."
-                else:
-                    ai_content = f"회원님의 '{queried_fact_type.value}' 정보는 '{fact_string}'입니다."
-            
-            ai_message = Message(message_id=generate_id(), room_id=room_id, user_id="ai", content=ai_content, timestamp=get_current_timestamp(), role="ai")
-            storage_service.save_message(ai_message)
-            await realtime_service.publish(room_id, "new_message", ai_message.model_dump())
-            return create_success_response(data={"message": message.model_dump(), "ai_response": ai_message.model_dump()})
-
-        # Fact extraction already executed above (or scheduled via background tasks on failure).
-        
         # --- Original Intent/Action Processing Logic ---
         current_room = await _maybe_get_room(storage_service, room_id)
         if current_room and current_room.type == RoomType.REVIEW:
@@ -478,7 +239,7 @@ async def send_message(
             )
         )
         intent_from_client = body.get("intent")
-        
+
         ai_content = ""
         intent = ""
         entities = {}
@@ -489,61 +250,24 @@ async def send_message(
         elif intent_from_client:
             intent = intent_from_client
         else:
-            intent_result = await maybe_await(
-                intent_service.classify_intent(content, message.message_id)
+            intent, entities = await classify_intent(
+                intent_service, content, message.message_id
             )
-            intent = intent_result["intent"]
-            entities = intent_result.get("entities", {})
 
         logger.info(f"Intent: {intent}, Entities: {entities}")
 
-        if intent == "name_set":
-            name_value = ""
-            if isinstance(entities, dict):
-                entity_name = entities.get("name")
-                if isinstance(entity_name, str):
-                    name_value = entity_name.strip()
-            if not name_value:
-                name_value = _extract_user_name(content)
+        quick_response = await build_quick_intent_response(
+            intent=intent,
+            content=content,
+            user_id=user_id,
+            entities=entities,
+            user_fact_service=user_fact_service,
+            cache_service=cache_service,
+            search_service=search_service,
+        )
 
-            if name_value:
-                await maybe_await(
-                    user_fact_service.update_user_profile(user_id, {"name": name_value})
-                )
-                await maybe_await(
-                    cache_service.delete(
-                        f"fact_query:{user_id}:{FactType.USER_NAME.value}"
-                    )
-                )
-                ai_content = f"알겠습니다, {name_value}님! 앞으로 그렇게 불러드릴게요."
-            else:
-                ai_content = "이름을 정확히 알려주시면 기억해 둘게요."
-        elif intent == "name_get":
-            profile = await maybe_await(
-                user_fact_service.get_user_profile(user_id)
-            )
-            if profile and profile.name:
-                ai_content = f"당신의 이름은 '{profile.name}'으로 기억하고 있어요."
-            else:
-                ai_content = "아직 이름을 모르고 있어요. 알려주시면 기억해 둘게요!"
-        elif intent == "time":
-            ai_content = search_service.now_kst()
-        elif intent == "weather":
-            location = entities.get("location") or "서울"
-            ai_content = search_service.weather(location)
-        elif intent == "wiki":
-            topic = entities.get("topic") or "인공지능"
-            ai_content = await maybe_await(search_service.wiki(topic))
-        elif intent == "search":
-            query = entities.get("query") or "AI"
-            items = await maybe_await(search_service.search(query, 3))
-            if items:
-                lines = [f"🔎 '{query}' 검색 결과:"]
-                for i, item in enumerate(items, 1):
-                    lines.append(f"{i}. {item['title']}\n{item['link']}\n{item['snippet']}")
-                ai_content = "\n\n".join(lines)
-            else:
-                ai_content = f"'{query}'에 대한 검색 결과를 찾을 수 없습니다."
+        if quick_response is not None:
+            ai_content = quick_response
         elif intent == "review":
             if not current_room or current_room.type != RoomType.SUB:
                 ai_content = "검토 기능은 서브룸에서만 시작할 수 있습니다."
@@ -633,150 +357,56 @@ async def send_message_stream(
     storage_service.save_message(user_message)
     await realtime_service.publish(room_id, "new_message", user_message.model_dump())
 
-    def _schedule_context_refresh(trigger: str) -> None:
-        task_id = f"context_refresh:{room_id}:{trigger}"
-        try:
-            background_tasks.create_background_task(
-                task_id,
-                memory_service.refresh_context,
-                room_id,
-                user_id,
-            )
-        except Exception as refresh_error:
-            logger.warning(
-                "Failed to schedule context refresh (task=%s): %s",
-                task_id,
-                refresh_error,
-                exc_info=True,
-            )
-
-    _schedule_context_refresh(f"user:{user_message.message_id}")
-    
-    # Start fact extraction as a background task so it doesn't block the response
-    background_tasks.create_background_task(
-        f"fact_extraction_{user_message.message_id}",
-        _handle_fact_extraction,
-        user_fact_service, fact_extractor_service, user_message
+    schedule_context_refresh(
+        background_tasks,
+        memory_service,
+        room_id,
+        user_id,
+        f"user:{user_message.message_id}",
     )
 
-    # Handle fact queries ("내 이름이 뭐야?" 등) before streaming
-    queried_fact_type = await _detect_fact_query_improved(content, intent_classifier)
-    if queried_fact_type:
-        facts_to_format: List[str] = []
-        cache_key = f"fact_query:{user_id}:{queried_fact_type.value}"
-        cached_facts = await maybe_await(cache_service.get(cache_key))
+    await ensure_fact_extraction(
+        message=user_message,
+        user_fact_service=user_fact_service,
+        fact_extractor_service=fact_extractor_service,
+        background_tasks=background_tasks,
+        execute_inline=False,
+    )
 
-        if cached_facts:
-            facts_to_format = cached_facts
-        else:
-            if queried_fact_type == FactType.USER_NAME:
-                profile = await maybe_await(
-                    user_fact_service.get_user_profile(user_id)
-                )
-                if profile and profile.name:
-                    facts_to_format = [profile.name]
-            else:
-                user_facts = await maybe_await(
-                    user_fact_service.list_facts(
-                        user_id=user_id,
-                        fact_type=queried_fact_type,
-                        latest_only=True,
-                    )
-                )
-                if user_facts:
-                    facts_to_format = [
-                        fact.get("content") or fact.get("value")
-                        for fact in user_facts
-                        if fact.get("content") or fact.get("value")
-                    ]
-        if facts_to_format:
-            await maybe_await(cache_service.set(cache_key, facts_to_format, ttl=3600))
-
-        ai_content = f"'{queried_fact_type.value}'에 대해 알려주신 정보가 아직 없어요."
-        if facts_to_format:
-            fact_string = "', '".join(map(str, facts_to_format))
-            if queried_fact_type == FactType.USER_NAME:
-                ai_content = f"당신의 이름은 '{facts_to_format[0]}'(으)로 기억하고 있어요."
-            else:
-                ai_content = f"회원님의 '{queried_fact_type.value}' 정보는 '{fact_string}'입니다."
-
-        return await _stream_immediate_response(
+    _, fact_response = await build_fact_query_response(
+        content=content,
+        user_id=user_id,
+        user_fact_service=user_fact_service,
+        cache_service=cache_service,
+        intent_classifier=intent_classifier,
+    )
+    if fact_response:
+        return await stream_immediate_response(
             room_id=room_id,
             user_id=user_id,
             storage_service=storage_service,
-            content=ai_content,
+            content=fact_response,
             memory_service=memory_service,
             background_tasks=background_tasks,
             realtime_service=realtime_service,
         )
 
-    # Intent-based handling for quick responses (time, weather, name etc.)
-    intent = ""
-    entities: Dict[str, Any] = {}
-    try:
-        intent_result = await maybe_await(
-            intent_service.classify_intent(content, user_message.message_id)
-        )
-        intent = intent_result["intent"]
-        entities = intent_result.get("entities", {})
-    except Exception as intent_error:
-        logger.warning(f"Intent classification fallback in stream path failed: {intent_error}")
+    intent, entities = await classify_intent(
+        intent_service, content, user_message.message_id
+    )
 
-    direct_response: Optional[str] = None
-
-    if intent == "name_set":
-        name_value = ""
-        if isinstance(entities, dict):
-            entity_name = entities.get("name")
-            if isinstance(entity_name, str):
-                name_value = entity_name.strip()
-        if not name_value:
-            name_value = _extract_user_name(content) or ""
-
-        if name_value:
-            await maybe_await(
-                user_fact_service.update_user_profile(user_id, {"name": name_value})
-            )
-            await maybe_await(
-                cache_service.delete(
-                    f"fact_query:{user_id}:{FactType.USER_NAME.value}"
-                )
-            )
-            direct_response = f"알겠습니다, {name_value}님! 앞으로 그렇게 불러드릴게요."
-        else:
-            direct_response = "이름을 정확히 알려주시면 기억해 둘게요."
-    elif intent == "name_get":
-        profile = await maybe_await(
-            user_fact_service.get_user_profile(user_id)
-        )
-        if profile and profile.name:
-            direct_response = f"당신의 이름은 '{profile.name}'으로 기억하고 있어요."
-        else:
-            direct_response = "아직 이름을 모르고 있어요. 알려주시면 기억해 둘게요!"
-    elif intent == "time":
-        direct_response = search_service.now_kst()
-    elif intent == "weather":
-        location = entities.get("location") if isinstance(entities, dict) else None
-        direct_response = search_service.weather(location or "서울")
-    elif intent == "wiki":
-        topic = entities.get("topic") if isinstance(entities, dict) else None
-        direct_response = await maybe_await(
-            search_service.wiki(topic or "인공지능")
-        )
-    elif intent == "search":
-        query = entities.get("query") if isinstance(entities, dict) else None
-        search_query = query or "AI"
-        items = await maybe_await(search_service.search(search_query, 3))
-        if items:
-            lines = [f"🔎 '{search_query}' 검색 결과:"]
-            for i, item in enumerate(items, 1):
-                lines.append(f"{i}. {item['title']}\n{item['link']}\n{item['snippet']}")
-            direct_response = "\n\n".join(lines)
-        else:
-            direct_response = f"'{search_query}'에 대한 검색 결과를 찾을 수 없습니다."
+    direct_response = await build_quick_intent_response(
+        intent=intent,
+        content=content,
+        user_id=user_id,
+        entities=entities,
+        user_fact_service=user_fact_service,
+        cache_service=cache_service,
+        search_service=search_service,
+    )
 
     if direct_response is not None:
-        return await _stream_immediate_response(
+        return await stream_immediate_response(
             room_id=room_id,
             user_id=user_id,
             storage_service=storage_service,
@@ -894,7 +524,13 @@ async def send_message_stream(
                 storage_service.save_message(ai_message)
                 await realtime_service.publish(room_id, "new_message", ai_message.model_dump())
 
-                _schedule_context_refresh(f"assistant:{ai_message.message_id}")
+                schedule_context_refresh(
+                    background_tasks,
+                    memory_service,
+                    room_id,
+                    user_id,
+                    f"assistant:{ai_message.message_id}",
+                )
 
                 final_payload = {
                     "message_id": ai_message.message_id,

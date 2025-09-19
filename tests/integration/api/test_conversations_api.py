@@ -44,20 +44,27 @@ def test_full_message_and_stream_flow(authenticated_client: TestClient):
             response.raise_for_status()
 
             events = []
+            current_event = None
             for line in response.iter_lines():
                 if line.startswith("event:"):
-                    event_type = line.split(":", 1)[1].strip()
-                if line.startswith("data:"):
-                    data = json.loads(line.split(":", 1)[1].strip())
-                    events.append({"event": event_type, "data": data})
+                    current_event = line.split(":", 1)[1].strip()
+                if line.startswith("data:") and current_event:
+                    envelope = json.loads(line.split(":", 1)[1].strip())
+                    events.append({"event": current_event, "data": envelope})
 
-            # Filter out ping events and empty done events
-            filtered_events = [e for e in events if e["event"] != "ping" and not (e["event"] == "done" and not e["data"])]
+            filtered_events = [
+                e for e in events
+                if e["event"] != "ping"
+            ]
             assert len(filtered_events) == 4
-            assert filtered_events[0]["event"] == "delta"
-            assert filtered_events[1]["event"] == "delta"
-            assert filtered_events[2]["event"] == "usage"
-            assert filtered_events[3]["event"] == "done"
+            first_delta, second_delta, usage_event, done_event = filtered_events
+            assert first_delta["event"] == "delta"
+            assert first_delta["data"]["payload"]["delta"] == "Test "
+            assert second_delta["data"]["payload"]["delta"] == "response."
+            assert usage_event["event"] == "usage"
+            assert usage_event["data"]["payload"]["usage"]["total_tokens"] == 7
+            assert done_event["event"] == "done"
+            assert done_event["data"]["payload"]["status"] == "completed"
 
     res = authenticated_client.get(f"/api/convo/threads/{thread_id}/messages")
     messages = res.json()

@@ -21,10 +21,34 @@ jobs:
         run: |
           flake8 app tests
           pyright app
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '20'
+      - name: Install frontend dependencies
+        working-directory: ./app/frontend
+        run: npm ci
+      - name: Check frontend for disallowed alerts
+        working-directory: ./app/frontend
+        run: npm run lint:no-alert
 
   migration-check:
     runs-on: ubuntu-latest
     needs: lint
+    services:
+      test-db:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: test_origin_db
+        ports:
+          - 5435:5432
+        options: >-
+          --health-cmd "pg_isready -U test_user -d test_origin_db"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v3
       - name: Set up Python
@@ -33,9 +57,16 @@ jobs:
           python-version: '3.12'
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
+      - name: Apply migrations against ephemeral database
+        env:
+          DATABASE_URL: postgresql://test_user:test_password@localhost:5435/test_origin_db
+          DB_ENCRYPTION_KEY: "test-key-for-ci-32-bytes-long"
+        run: |
+          export PYTHONPATH=$PWD
+          alembic upgrade head
       - name: Check for migration consistency
         env:
-          # We need a dummy DB_ENCRYPTION_KEY for models to load
+          DATABASE_URL: postgresql://test_user:test_password@localhost:5435/test_origin_db
           DB_ENCRYPTION_KEY: "test-key-for-ci-32-bytes-long"
         run: |
           export PYTHONPATH=$PWD
@@ -133,3 +164,76 @@ jobs:
           context: .
           push: true
           tags: your-dockerhub-repo/origin-project:latest
+
+  performance-smoke:
+    runs-on: ubuntu-latest
+    needs: [test]
+    services:
+      test-db:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: test_origin_db
+        ports:
+          - 5436:5432
+        options: >-
+          --health-cmd "pg_isready -U test_user -d test_origin_db"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+      test-redis:
+        image: redis:7-alpine
+        ports:
+          - 6381:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+      - name: Apply migrations for performance smoke
+        env:
+          DATABASE_URL: postgresql://test_user:test_password@localhost:5436/test_origin_db
+          DB_ENCRYPTION_KEY: "test-key-for-ci-32-bytes-long"
+        run: |
+          export PYTHONPATH=$PWD
+          alembic upgrade head
+      - name: Start API server
+        env:
+          DATABASE_URL: postgresql://test_user:test_password@localhost:5436/test_origin_db
+          REDIS_URL: redis://localhost:6381/0
+          DB_ENCRYPTION_KEY: "test-key-for-ci-32-bytes-long"
+          AUTH_OPTIONAL: "True"
+          OPENAI_API_KEY: "test-key-for-ci"
+          GEMINI_API_KEY: "test-key-for-ci"
+          ANTHROPIC_API_KEY: "test-key-for-ci"
+          PYTHONPATH: .
+        run: |
+          uvicorn app.main:app --host 0.0.0.0 --port 8000 &
+          echo $! > uvicorn.pid
+          for i in {1..30}; do
+            if curl -sSf http://127.0.0.1:8000/health >/dev/null; then
+              break
+            fi
+            sleep 2
+          done
+      - name: Run Locust smoke test
+        env:
+          LOCUST_HOST: http://127.0.0.1:8000
+          LOCUST_JWT_TOKEN: test-jwt-token
+        run: |
+          ./scripts/run_locust_smoke.sh
+      - name: Stop API server
+        if: always()
+        run: |
+          if [ -f uvicorn.pid ]; then
+            kill $(cat uvicorn.pid) || true
+          fi

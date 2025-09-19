@@ -25,26 +25,45 @@ class EncryptionManager:
     def __init__(self):
         self.encryption_key = self._get_or_create_key()
         self.cipher_suite = Fernet(self.encryption_key)
-    
-    def _get_or_create_key(self) -> bytes:
-        """암호화 키 가져오기 또는 생성"""
-        key = settings.ENCRYPTION_KEY
-        
-        if key:
-            # 기존 키가 있으면 base64 디코딩
+
+    def _normalise_key(self, key: str) -> Optional[bytes]:
+        """Validate and normalise a Fernet key string."""
+
+        key_bytes = key.encode()
+        try:
+            Fernet(key_bytes)
+            return key_bytes
+        except (ValueError, TypeError):
             try:
-                return base64.urlsafe_b64decode(key.encode())
-            except Exception as e:
-                logger.warning(f"Invalid encryption key format: {e}")
-        
-        # 새 키 생성
-        new_key = Fernet.generate_key()
-        logger.info("New encryption key generated")
-        
-        # 환경 변수에 저장 (실제 운영에서는 안전한 방법 사용)
-        os.environ["ENCRYPTION_KEY"] = new_key.decode()
-        
-        return new_key
+                decoded = base64.urlsafe_b64decode(key_bytes)
+                reencoded = base64.urlsafe_b64encode(decoded)
+                Fernet(reencoded)
+                return reencoded
+            except Exception as exc:
+                logger.error("Invalid encryption key provided: %s", exc)
+        return None
+
+    def _get_or_create_key(self) -> bytes:
+        """Return a stable encryption key or raise if misconfigured."""
+
+        candidate = settings.ENCRYPTION_KEY or os.getenv("ENCRYPTION_KEY")
+        if candidate:
+            normalised = self._normalise_key(candidate)
+            if normalised:
+                return normalised
+            raise ValueError("ENCRYPTION_KEY is not a valid Fernet key")
+
+        if settings.TESTING or settings.DEBUG:
+            logger.warning(
+                "ENCRYPTION_KEY not provided. Generating ephemeral key for test/debug runs."
+            )
+            new_key = Fernet.generate_key()
+            os.environ["ENCRYPTION_KEY"] = new_key.decode()
+            return new_key
+
+        raise RuntimeError(
+            "ENCRYPTION_KEY must be configured in production environments."
+        )
     
     def encrypt(self, data: str) -> str:
         """데이터 암호화"""

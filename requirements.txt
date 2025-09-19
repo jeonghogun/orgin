@@ -1,50 +1,50 @@
-fastapi
-uvicorn[standard]
-ulid-py
-openai
-python-dotenv
-python-ulid
-pydantic-settings
-tenacity
-slowapi
-firebase-admin
-google-cloud-firestore
-google-cloud-storage
-psycopg2-binary
-pgvector
-redis
-celery
-asgiref
-gunicorn
-alembic
-PyYAML>=6.0.1
-prometheus-fastapi-instrumentator
-google-generativeai
-gevent
-anthropic
-python-multipart
-sse-starlette
-pypdf2
-rank-bm25
-tiktoken
+fastapi==0.110.2
+uvicorn[standard]==0.29.0
+ulid-py==1.1.0
+openai==1.30.1
+python-dotenv==1.0.1
+python-ulid==1.1.0
+pydantic-settings==2.2.1
+tenacity==8.2.3
+slowapi==0.1.9
+firebase-admin==6.5.0
+google-cloud-firestore==2.16.0
+google-cloud-storage==2.16.0
+psycopg2-binary==2.9.9
+pgvector==0.2.5
+redis==5.0.4
+celery==5.3.6
+asgiref==3.8.1
+gunicorn==21.2.0
+alembic==1.13.1
+PyYAML==6.0.1
+prometheus-fastapi-instrumentator==6.1.0
+google-generativeai==0.5.2
+gevent==24.2.1
+anthropic==0.26.1
+python-multipart==0.0.9
+sse-starlette==1.6.5
+PyPDF2==3.0.1
+rank-bm25==0.2.2
+tiktoken==0.7.0
 
 # APM and Monitoring
-newrelic
-ddtrace
-psutil
+newrelic==9.7.0
+ddtrace==2.8.4
+psutil==5.9.8
 
 # Security
-cryptography
+cryptography==42.0.7
 
 # HTTP Client
-aiohttp
+aiohttp==3.9.5
 
 # Fact System V2 Dependencies
-prometheus-client
-uuid6
+prometheus-client==0.20.0
+uuid6==2024.7.10
 
 # OpenTelemetry Dependencies
-opentelemetry-api
-opentelemetry-sdk
-opentelemetry-instrumentation-logging
-opentelemetry-exporter-otlp
+opentelemetry-api==1.24.0
+opentelemetry-sdk==1.24.0
+opentelemetry-instrumentation-logging==0.45b0
+opentelemetry-exporter-otlp==1.24.0
