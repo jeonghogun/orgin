@@ -1,15 +1,15 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useParams, useNavigate, useLocation } from 'react-router-dom';
 import { QueryClient, QueryClientProvider, useMutation, useQueryClient, useQuery } from '@tanstack/react-query';
 import axios from 'axios';
-import toast from 'react-hot-toast';
 
 import SearchPanel from './components/conversation/SearchPanel';
 import { AppProvider } from './context/AppContext';
 import Main from './pages/Main';
 import ErrorBoundary from './components/common/ErrorBoundary';
 import useKeyboardShortcuts from './hooks/useKeyboardShortcuts';
-import { addThread, addMessage, startRoomCreation } from './store/useConversationStore';
+import toast from 'react-hot-toast';
+import { addThread } from './store/useConversationStore';
 import { ROOM_TYPES } from './constants';
 
 // This component uses hooks that require Router context (like useNavigate)
@@ -100,68 +100,14 @@ function AppContent() {
   useKeyboardShortcuts(shortcuts);
 
   // 룸 생성 mutation 추가
-  const createRoomMutation = useMutation({
-    mutationFn: async ({ name, type, parentId }) => {
-      const { data } = await axios.post('/api/rooms', { name, type, parent_id: parentId });
-      return data;
-    },
-    onSuccess: (newRoom) => {
-      queryClient.invalidateQueries({ queryKey: ['rooms'] });
-      navigate(`/rooms/${newRoom.room_id}`);
-    },
-    onError: (error) => {
-      console.error('Failed to create room:', error);
-      toast.error(error.response?.data?.detail || 'Could not create room.');
-    },
-  });
-
-  // 룸 생성 시작 함수
-  const initiateRoomCreation = useCallback((parentId, type) => {
-    const promptText = type === ROOM_TYPES.SUB ? "어떤 세부룸을 만들까요?" : "어떤 주제로 검토룸을 열까요?";
-    startRoomCreation(parentId, type, promptText);
-  }, []);
-
-  const interactiveReviewRoomMutation = useMutation({
-    mutationFn: async ({ parentId, topic, history }) => {
-      const { data } = await axios.post(`/api/rooms/${parentId}/create-review-room`, { topic, history });
-      return data;
-    },
-    onSuccess: (data, { parentId }) => {
-      if (data.status === 'created') {
-        // Add the new room to cache and navigate immediately
-        queryClient.setQueryData(['rooms'], (oldRooms = []) => {
-          if (!Array.isArray(oldRooms)) return oldRooms;
-          const exists = oldRooms.some(room => room.room_id === data.room.room_id);
-          if (exists) return oldRooms;
-          return [...oldRooms, data.room];
-        });
-        // Remove immediate invalidation to prevent timing issues
-        // queryClient.invalidateQueries({ queryKey: ['rooms'] });
-        navigate(`/rooms/${data.room.room_id}`);
-      } else if (data.status === 'needs_more_context') {
-        addMessage(parentId, {
-          id: `ai_prompt_${Date.now()}`,
-          role: 'assistant',
-          content: data.question,
-          status: 'complete',
-          created_at: Math.floor(Date.now() / 1000),
-        });
-      }
-    },
-    onError: (error) => {
-      console.error('Failed to create review room interactively:', error);
-      toast.error(error.response?.data?.detail || 'Could not create review room.');
-    },
-  });
-
   return (
-    <AppProvider value={{ handleNewThread, createRoomMutation, initiateRoomCreation, interactiveReviewRoomMutation }}>
+    <AppProvider value={{ handleNewThread, createThreadMutation }}>
       {isSearchOpen && <GlobalSearchModal onClose={() => setIsSearchOpen(false)} />}
       <ErrorBoundary>
         <Routes>
-          <Route path="/" element={<Main createRoomMutation={createRoomMutation} interactiveReviewRoomMutation={interactiveReviewRoomMutation} />} />
-          <Route path="/rooms/:roomId" element={<Main createRoomMutation={createRoomMutation} interactiveReviewRoomMutation={interactiveReviewRoomMutation} />} />
-          <Route path="/rooms/:roomId/threads/:threadId" element={<Main createRoomMutation={createRoomMutation} interactiveReviewRoomMutation={interactiveReviewRoomMutation} />} />
+          <Route path="/" element={<Main />} />
+          <Route path="/rooms/:roomId" element={<Main />} />
+          <Route path="/rooms/:roomId/threads/:threadId" element={<Main />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </ErrorBoundary>

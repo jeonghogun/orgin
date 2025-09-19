@@ -1,9 +1,11 @@
 import React, { useState, useRef } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { SSE } from 'sse.js';
 import { useAppContext } from '../context/AppContext';
-import { useRoomCreationRequest, clearRoomCreation, useReviewRoomCreation } from '../store/useConversationStore';
+import { useRoomCreationRequest, clearRoomCreation, useReviewRoomCreation, addMessage } from '../store/useConversationStore';
+import { parseRealtimeEvent, withFallbackMeta } from '../utils/realtime';
 
 // Use fetch for true streaming response
 const createInitialStreamStatus = () => ({
@@ -56,56 +58,47 @@ const streamMessageApi = ({ roomId, content, onChunk, onIdReceived, onMeta }) =>
     };
 
     source.addEventListener('meta', (event) => {
-      if (!event?.data) return;
-      try {
-        const parsed = JSON.parse(event.data);
-        onMeta?.(parsed);
-      } catch (error) {
-        console.error('Failed to parse meta event from stream:', error);
+      const envelope = parseRealtimeEvent(event);
+      if (!envelope) return;
+      const normalized = withFallbackMeta(envelope);
+      const payload = { ...(normalized.payload || {}) };
+      if (normalized.meta?.chunk_index !== undefined && payload.chunk_index === undefined) {
+        payload.chunk_index = normalized.meta.chunk_index;
       }
+      if (normalized.meta?.chunk_count !== undefined && payload.chunk_count === undefined) {
+        payload.chunk_count = normalized.meta.chunk_count;
+      }
+      if (normalized.meta?.status && !payload.status) {
+        payload.status = normalized.meta.status;
+      }
+      onMeta?.(payload);
     });
 
     source.addEventListener('delta', (event) => {
-      if (!event?.data) return;
-      try {
-        const parsed = JSON.parse(event.data);
-        if (typeof parsed.delta === 'string') {
-          onChunk(parsed.delta);
-        }
-      } catch (error) {
-        onChunk(event.data);
+      const envelope = parseRealtimeEvent(event);
+      const chunk = envelope?.payload?.delta || envelope?.payload?.content || envelope?.payload?.text;
+      if (typeof chunk === 'string') {
+        onChunk(chunk);
       }
     });
 
     source.addEventListener('done', (event) => {
-      try {
-        const parsed = event?.data ? JSON.parse(event.data) : {};
-        if (parsed.meta) {
-          onMeta?.(parsed.meta);
-        }
-        if (parsed.message_id) {
-          onIdReceived(parsed.message_id);
-        }
-        cleanup();
-        resolve(parsed);
-      } catch (error) {
-        cleanup();
-        reject(error);
+      const envelope = parseRealtimeEvent(event) || {};
+      const normalized = withFallbackMeta(envelope);
+      const payload = normalized.payload || {};
+      if (payload.meta) {
+        onMeta?.(payload.meta);
       }
+      if (payload.message_id) {
+        onIdReceived(payload.message_id);
+      }
+      cleanup();
+      resolve(payload);
     });
 
     source.addEventListener('error', (event) => {
-      let message = '실시간 응답을 가져오는 중 문제가 발생했습니다.';
-      if (event?.data) {
-        try {
-          const parsed = JSON.parse(event.data);
-          if (parsed?.error) {
-            message = parsed.error;
-          }
-        } catch (error) {
-          console.error('Failed to parse stream error payload:', error);
-        }
-      }
+      const envelope = parseRealtimeEvent(event);
+      const message = envelope?.payload?.error || '실시간 응답을 가져오는 중 문제가 발생했습니다.';
       cleanup();
       reject(new Error(message));
     });
@@ -132,9 +125,10 @@ const uploadFileApi = async ({ roomId, file }) => {
 import { useChatInputState } from '../hooks/useChatInputState';
 import { ROOM_TYPES } from '../constants';
 
-const ChatInput = ({ roomId, roomData, disabled = false, createRoomMutation, interactiveReviewRoomMutation }) => {
+const ChatInput = ({ roomId, roomData, disabled = false }) => {
   const fileInputRef = useRef(null);
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const { showError } = useAppContext();
   const [isComposing, setIsComposing] = useState(false);
   const [streamStatus, setStreamStatus] = useState(createInitialStreamStatus());
@@ -151,6 +145,49 @@ const ChatInput = ({ roomId, roomData, disabled = false, createRoomMutation, int
 
   const roomCreationRequest = useRoomCreationRequest();
   const reviewRoomCreation = useReviewRoomCreation();
+
+  const createRoomMutation = useMutation({
+    mutationFn: async ({ name, type, parentId }) => {
+      const { data } = await axios.post('/api/rooms', { name, type, parent_id: parentId });
+      return data;
+    },
+    onSuccess: (newRoom) => {
+      queryClient.invalidateQueries({ queryKey: ['rooms'] });
+      navigate(`/rooms/${newRoom.room_id}`);
+    },
+    onError: (error) => {
+      showError(error?.response?.data?.detail || 'Could not create room.');
+    }
+  });
+
+  const interactiveReviewRoomMutation = useMutation({
+    mutationFn: async ({ parentId, topic, history }) => {
+      const { data } = await axios.post(`/api/rooms/${parentId}/create-review-room`, { topic, history });
+      return data;
+    },
+    onSuccess: (data, { parentId }) => {
+      if (data.status === 'created') {
+        queryClient.setQueryData(['rooms'], (oldRooms = []) => {
+          if (!Array.isArray(oldRooms)) return oldRooms;
+          const exists = oldRooms.some(room => room.room_id === data.room.room_id);
+          if (exists) return oldRooms;
+          return [...oldRooms, data.room];
+        });
+        navigate(`/rooms/${data.room.room_id}`);
+      } else if (data.status === 'needs_more_context') {
+        addMessage(parentId, {
+          id: `ai_prompt_${Date.now()}`,
+          role: 'assistant',
+          content: data.question,
+          status: 'complete',
+          created_at: Math.floor(Date.now() / 1000),
+        });
+      }
+    },
+    onError: (error) => {
+      showError(error?.response?.data?.detail || 'Could not create review room.');
+    },
+  });
 
   const streamMutation = useMutation({
     mutationFn: streamMessageApi,

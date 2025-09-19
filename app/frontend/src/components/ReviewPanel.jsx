@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import LoadingSpinner from './common/LoadingSpinner';
 import ErrorMessage from './common/ErrorMessage';
 import useEventSource from '../hooks/useEventSource';
+import { parseRealtimeEvent, withFallbackMeta } from '../utils/realtime';
 
 const fetchReport = async (reviewId) => {
   const { data } = await axios.get(`/api/reviews/${reviewId}/report`);
@@ -17,31 +18,24 @@ const ReviewPanel = () => {
   const [reviewStatus, setReviewStatus] = useState('pending');
   const [socketError, setSocketError] = useState(null);
 
-  const eventHandlers = useMemo(() => ({
-    live_event: (event) => {
-      try {
-        const payload = JSON.parse(event.data);
-        if (payload.type === 'status_update' && payload.payload?.status) {
-          setReviewStatus(payload.payload.status);
-        }
-      } catch (err) {
-        console.error('Failed to parse live review event:', err);
+  const eventHandlers = useMemo(() => {
+    const handleStatusUpdate = (event) => {
+      const envelope = parseRealtimeEvent(event);
+      if (!envelope) return;
+      const normalized = withFallbackMeta(envelope);
+      if (normalized.type === 'status_update' && normalized.payload?.status) {
+        setReviewStatus(normalized.payload.status);
       }
-    },
-    historical_event: (event) => {
-      try {
-        const payload = JSON.parse(event.data);
-        if (payload.type === 'status_update' && payload.payload?.status) {
-          setReviewStatus(payload.payload.status);
-        }
-      } catch (err) {
-        console.error('Failed to parse historical review event:', err);
+    };
+
+    return {
+      live_event: handleStatusUpdate,
+      historical_event: handleStatusUpdate,
+      error: (err) => {
+        setSocketError(err.message || 'An unknown stream error occurred.');
       }
-    },
-    error: (err) => {
-      setSocketError(err.message || 'An unknown stream error occurred.');
-    }
-  }), []);
+    };
+  }, []);
 
   const sseUrl = reviewId ? `/api/reviews/${reviewId}/events` : null;
   const { status: connectionStatus } = useEventSource(sseUrl, eventHandlers);

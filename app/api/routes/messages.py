@@ -48,8 +48,8 @@ from app.utils.helpers import (
 )
 from app.models.enums import RoomType
 from app.models.schemas import Message, ReviewMeta
-from app.api.routes.websockets import manager
 from app.config.settings import settings
+from app.services.realtime_service import get_realtime_service, RealtimeService
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +191,7 @@ async def _stream_immediate_response(
     content: str,
     memory_service: Optional[MemoryService] = None,
     background_tasks: Optional[BackgroundTaskService] = None,
+    realtime_service: Optional[RealtimeService] = None,
 ) -> EventSourceResponse:
     ai_message = Message(
         message_id=generate_id(),
@@ -201,7 +202,8 @@ async def _stream_immediate_response(
         role="ai",
     )
     storage_service.save_message(ai_message)
-    await manager.broadcast(json.dumps({"type": "new_message", "payload": ai_message.model_dump()}), room_id)
+    if realtime_service:
+        await realtime_service.publish(room_id, "new_message", ai_message.model_dump())
 
     if memory_service and background_tasks:
         task_id = f"context_refresh:{room_id}:{ai_message.message_id}:immediate"
@@ -221,13 +223,30 @@ async def _stream_immediate_response(
             )
 
     async def generator():
-        yield {"event": "meta", "data": json.dumps({"status": "started"})}
-        yield {"event": "delta", "data": json.dumps({"delta": content})}
+        yield {
+            "event": "meta",
+            "data": RealtimeService.format_event("meta", {"status": "started"}),
+        }
+        yield {
+            "event": "delta",
+            "data": RealtimeService.format_event(
+                "delta",
+                {"delta": content},
+                {"chunk_index": 1, "delivery": "immediate"},
+            ),
+        }
         final_payload = {
             "message_id": ai_message.message_id,
             "meta": {"status": "completed", "chunk_count": 1},
         }
-        yield {"event": "done", "data": json.dumps(final_payload)}
+        yield {
+            "event": "done",
+            "data": RealtimeService.format_event(
+                "done",
+                final_payload,
+                {"chunk_count": 1, "delivery": "immediate"},
+            ),
+        }
 
     return EventSourceResponse(generator())
 
@@ -259,6 +278,7 @@ async def stream_room_message_events(
     room_id: str,
     user_info: Dict[str, str] = AUTH_DEPENDENCY,
     storage_service: StorageService = Depends(get_storage_service),
+    realtime_service: RealtimeService = Depends(get_realtime_service),
 ):
     """Stream real-time message events for a room via SSE."""
     room = await _maybe_get_room(storage_service, room_id)
@@ -268,7 +288,7 @@ async def stream_room_message_events(
     if not settings.AUTH_OPTIONAL and room.owner_id != user_info.get("user_id"):
         raise HTTPException(status_code=403, detail="Access denied to room events")
 
-    listener_queue = manager.register_sse_listener(room_id)
+    listener_queue = realtime_service.register_listener(room_id)
 
     async def event_generator():
         try:
@@ -283,7 +303,7 @@ async def stream_room_message_events(
 
                 yield {"event": "new_message", "data": message}
         finally:
-            manager.unregister_sse_listener(room_id, listener_queue)
+            realtime_service.unregister_listener(room_id, listener_queue)
 
     return EventSourceResponse(event_generator())
 
@@ -337,6 +357,7 @@ async def send_message(
     fact_extractor_service: FactExtractorService = Depends(get_fact_extractor_service),
     user_fact_service: UserFactService = Depends(get_user_fact_service),
     cache_service: CacheService = Depends(get_cache_service),
+    realtime_service: RealtimeService = Depends(get_realtime_service),
 ):
     """Send a message to a room"""
     logger.info(f"=== MESSAGE ENDPOINT CALLED === Room: {room_id}")
@@ -356,7 +377,7 @@ async def send_message(
             content=content, timestamp=get_current_timestamp(),
         )
         storage_service.save_message(message)
-        await manager.broadcast(json.dumps({"type": "new_message", "payload": message.model_dump()}), room_id)
+        await realtime_service.publish(room_id, "new_message", message.model_dump())
 
         # --- V2 Fact Extraction & Retrieval Logic ---
         # Extract facts immediately for better context awareness
@@ -439,7 +460,7 @@ async def send_message(
             
             ai_message = Message(message_id=generate_id(), room_id=room_id, user_id="ai", content=ai_content, timestamp=get_current_timestamp(), role="ai")
             storage_service.save_message(ai_message)
-            await manager.broadcast(json.dumps({"type": "new_message", "payload": ai_message.model_dump()}), room_id)
+            await realtime_service.publish(room_id, "new_message", ai_message.model_dump())
             return create_success_response(data={"message": message.model_dump(), "ai_response": ai_message.model_dump()})
 
         # Fact extraction already executed above (or scheduled via background tasks on failure).
@@ -560,7 +581,7 @@ async def send_message(
             content=ai_content, timestamp=get_current_timestamp(), role="ai"
         )
         storage_service.save_message(ai_message)
-        await manager.broadcast(json.dumps({"type": "new_message", "payload": ai_message.model_dump()}), room_id)
+        await realtime_service.publish(room_id, "new_message", ai_message.model_dump())
 
         suggestion = await _check_and_suggest_review(
             room_id, user_id, storage_service, memory_service, llm_service
@@ -591,6 +612,7 @@ async def send_message_stream(
     intent_service: IntentService = Depends(get_intent_service),
     cache_service: CacheService = Depends(get_cache_service),
     intent_classifier: IntentClassifierService = Depends(get_intent_classifier_service),
+    realtime_service: RealtimeService = Depends(get_realtime_service),
 ):
     """
     Stream a message to a room. This endpoint now supports true streaming.
@@ -609,7 +631,7 @@ async def send_message_stream(
         content=content, timestamp=get_current_timestamp(),
     )
     storage_service.save_message(user_message)
-    await manager.broadcast(json.dumps({"type": "new_message", "payload": user_message.model_dump()}), room_id)
+    await realtime_service.publish(room_id, "new_message", user_message.model_dump())
 
     def _schedule_context_refresh(trigger: str) -> None:
         task_id = f"context_refresh:{room_id}:{trigger}"
@@ -685,6 +707,7 @@ async def send_message_stream(
             content=ai_content,
             memory_service=memory_service,
             background_tasks=background_tasks,
+            realtime_service=realtime_service,
         )
 
     # Intent-based handling for quick responses (time, weather, name etc.)
@@ -760,6 +783,7 @@ async def send_message_stream(
             content=direct_response,
             memory_service=memory_service,
             background_tasks=background_tasks,
+            realtime_service=realtime_service,
         )
 
     async def stream_generator():
@@ -767,7 +791,14 @@ async def send_message_stream(
         chunk_count = 0
         stream_completed = False
 
-        yield {"event": "meta", "data": json.dumps({"status": "started"})}
+        yield {
+            "event": "meta",
+            "data": RealtimeService.format_event(
+                "meta",
+                {"status": "started"},
+                {"delivery": "stream"},
+            ),
+        }
 
         try:
             try:
@@ -815,10 +846,24 @@ async def send_message_stream(
                 if delta:
                     ai_response_content += delta
                     chunk_count += 1
-                    yield {"event": "delta", "data": json.dumps({"delta": delta})}
+                    yield {
+                        "event": "delta",
+                        "data": RealtimeService.format_event(
+                            "delta",
+                            {"delta": delta},
+                            {"chunk_index": chunk_count, "delivery": "stream"},
+                        ),
+                    }
 
                 if meta:
-                    yield {"event": "meta", "data": json.dumps(meta)}
+                    yield {
+                        "event": "meta",
+                        "data": RealtimeService.format_event(
+                            "meta",
+                            meta,
+                            {"chunk_index": chunk_count, "delivery": "stream"},
+                        ),
+                    }
 
             stream_completed = True
         except Exception as stream_error:
@@ -828,7 +873,14 @@ async def send_message_stream(
                 stream_error,
                 exc_info=True,
             )
-            yield {"event": "error", "data": json.dumps({"error": "An error occurred during streaming."})}
+            yield {
+                "event": "error",
+                "data": RealtimeService.format_event(
+                    "error",
+                    {"error": "An error occurred during streaming."},
+                    {"delivery": "stream"},
+                ),
+            }
         finally:
             if stream_completed:
                 ai_message = Message(
@@ -840,7 +892,7 @@ async def send_message_stream(
                     role="assistant"
                 )
                 storage_service.save_message(ai_message)
-                await manager.broadcast(json.dumps({"type": "new_message", "payload": ai_message.model_dump()}), room_id)
+                await realtime_service.publish(room_id, "new_message", ai_message.model_dump())
 
                 _schedule_context_refresh(f"assistant:{ai_message.message_id}")
 
@@ -848,7 +900,14 @@ async def send_message_stream(
                     "message_id": ai_message.message_id,
                     "meta": {"status": "completed", "chunk_count": chunk_count},
                 }
-                yield {"event": "done", "data": json.dumps(final_payload)}
+                yield {
+                    "event": "done",
+                    "data": RealtimeService.format_event(
+                        "done",
+                        final_payload,
+                        {"chunk_count": chunk_count, "delivery": "stream"},
+                    ),
+                }
 
     return EventSourceResponse(stream_generator())
 

@@ -1,7 +1,9 @@
 from fastapi import FastAPI, Depends
 from fastapi.testclient import TestClient
 from typing import Dict, Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
+
+import pytest
 import firebase_admin
 
 from app.api.dependencies import require_auth
@@ -9,12 +11,13 @@ from app.config.settings import settings
 
 from firebase_admin import credentials
 
-# Initialize a dummy Firebase app for testing if not already initialized
-if not firebase_admin._apps:
-    cred = credentials.ApplicationDefault()
-    firebase_admin.initialize_app(cred, {
-        'projectId': 'test-project-id',
-    })
+
+@pytest.fixture(autouse=True)
+def stub_firebase(monkeypatch):
+    monkeypatch.setattr(credentials, "ApplicationDefault", MagicMock(return_value=MagicMock()))
+    monkeypatch.setattr(firebase_admin, "initialize_app", MagicMock())
+    # Ensure firebase_admin behaves as if an app already exists to avoid SDK lookups
+    monkeypatch.setattr(firebase_admin, "_apps", {"test": object()}, raising=False)
 
 # Create a dummy app to test the dependency
 test_app = FastAPI()

@@ -6,64 +6,65 @@ import pytest
 import unittest
 
 from app.services.conversation_service import ConversationService
-from app.models.conversation_schemas import ConversationThreadCreate
+from app.models.conversation_schemas import ConversationThread, ConversationThreadCreate
+
 
 @pytest.fixture
-def mock_db_service():
-    db = MagicMock()
-    db.execute_query = MagicMock()
-    db.execute_update = MagicMock()
-    db.execute_returning = MagicMock()
-    return db
+def mock_repo():
+    repo = MagicMock()
+    repo.create_thread = MagicMock()
+    repo.touch_room = MagicMock()
+    repo.list_threads = MagicMock()
+    repo.create_message = MagicMock()
+    repo.update_message_content = MagicMock()
+    repo.search_messages = MagicMock()
+    repo.list_messages = MagicMock()
+    repo.list_all_messages = MagicMock()
+    repo.get_message = MagicMock()
+    repo.create_export_job = MagicMock()
+    repo.get_export_job = MagicMock()
+    repo.update_export_job = MagicMock()
+    repo.get_attachment = MagicMock()
+    repo.create_attachment = MagicMock()
+    repo.get_room_hierarchy = MagicMock()
+    repo.list_message_versions = MagicMock()
+    return repo
 
 @pytest.fixture
 def mock_redis_client():
     return MagicMock()
 
 @pytest.fixture
-def conversation_service(monkeypatch, mock_db_service, mock_redis_client):
-    monkeypatch.setattr("app.services.conversation_service.get_database_service", lambda: mock_db_service)
+def conversation_service(monkeypatch, mock_repo, mock_redis_client):
+    monkeypatch.setattr("app.services.conversation_service.get_conversation_repository", lambda: mock_repo)
     monkeypatch.setattr("redis.from_url", lambda url: mock_redis_client)
     return ConversationService()
 
-def test_create_thread(conversation_service, mock_db_service):
+def test_create_thread(conversation_service, mock_repo):
     thread_data = ConversationThreadCreate(title="Test Thread")
-    now_dt = datetime.now(timezone.utc)
-    mock_db_service.execute_returning.return_value = [{
-        "id": "thr_abc",
-        "sub_room_id": "sub123",
-        "user_id": "user456",
-        "title": "Test Thread",
-        "pinned": False,
-        "archived": False,
-        "created_at": now_dt,
-        "updated_at": now_dt,
-    }]
+    mock_repo.create_thread.return_value = ConversationThread(
+        id="thr_abc",
+        sub_room_id="sub123",
+        user_id="user456",
+        title="Test Thread",
+        pinned=False,
+        archived=False,
+        created_at=int(datetime.now(timezone.utc).timestamp()),
+        updated_at=int(datetime.now(timezone.utc).timestamp()),
+    )
 
     result = conversation_service.create_thread(room_id="sub123", user_id="user456", thread_data=thread_data)
 
-    mock_db_service.execute_returning.assert_called_once()
-    insert_args, _ = mock_db_service.execute_returning.call_args
-    insert_query, insert_params = insert_args[0], insert_args[1]
-
-    assert "INSERT INTO conversation_threads" in insert_query
-    assert insert_params[1] == "sub123"
-    mock_db_service.execute_update.assert_called_once()
+    mock_repo.create_thread.assert_called_once_with("sub123", "user456", "Test Thread")
+    mock_repo.touch_room.assert_called_once_with("sub123")
     assert result.title == "Test Thread"
 
-def test_get_threads_by_room_with_filters(conversation_service, mock_db_service):
-    mock_db_service.execute_query.return_value = []
-    import asyncio
+
+def test_get_threads_by_room_with_filters(conversation_service, mock_repo):
+    mock_repo.list_threads.return_value = asyncio.sleep(0, [])
     asyncio.run(conversation_service.get_threads_by_room(room_id="sub123", query="search", pinned=True, archived=False))
 
-    mock_db_service.execute_query.assert_called_once()
-    args, _ = mock_db_service.execute_query.call_args
-    query, params = args[0], args[1]
-
-    assert "ILIKE %s" in query
-    assert "pinned = %s" in query
-    assert "archived = %s" in query
-    assert params == ("sub123", "%search%", True, False)
+    mock_repo.list_threads.assert_called_once_with("sub123", query_text="search", pinned=True, archived=False)
 
 def test_increment_token_usage(conversation_service, mock_redis_client):
     mock_redis_client.incrby.return_value = 100
@@ -74,7 +75,7 @@ def test_increment_token_usage(conversation_service, mock_redis_client):
     mock_redis_client.expire.assert_called_once_with(unittest.mock.ANY, 86400)
     assert new_usage == 100
 
-def test_create_new_message_version(conversation_service, mock_db_service):
+def test_create_new_message_version(conversation_service, mock_repo):
     """
     Test that creating a new version of a message correctly sets the parentId.
     """
@@ -95,21 +96,21 @@ def test_create_new_message_version(conversation_service, mock_db_service):
     assert kwargs["content"] == "New content"
     assert kwargs["meta"]["parentId"] == "msg_orig"
 
-def test_create_message(conversation_service, mock_db_service):
+def test_create_message(conversation_service, mock_repo):
     """
     Test that create_message constructs the correct SQL query.
     """
     now_dt = datetime.now(timezone.utc)
-    mock_db_service.execute_returning.return_value = [{
+    mock_repo.create_message.return_value = {
         "id": "msg_123",
         "thread_id": "thr_123",
         "role": "user",
         "content": "Hello",
         "model": "gpt-4o",
         "status": "complete",
-        "created_at": now_dt,
+        "created_at": int(now_dt.timestamp()),
         "meta": {"some": "data", "model": "gpt-4o"}
-    }]
+    }
     result = conversation_service.create_message(
         thread_id="thr_123",
         role="user",
@@ -119,16 +120,14 @@ def test_create_message(conversation_service, mock_db_service):
         meta={"some": "data"}
     )
 
-    mock_db_service.execute_returning.assert_called()
-    call_args, _ = mock_db_service.execute_returning.call_args
-    insert_query, params = call_args[0], call_args[1]
-
-    assert "INSERT INTO conversation_messages" in insert_query
-    assert "(id, thread_id, user_id, role, content, model, status, meta)" in insert_query
-    assert params[1] == "thr_123"
-    assert params[2] == "anonymous"
-    assert params[3] == "user"
-    assert params[4] == "Hello"
-    mock_db_service.execute_update.assert_called()
+    mock_repo.create_message.assert_called_once_with(
+        "thr_123",
+        "user",
+        "Hello",
+        status="complete",
+        model="gpt-4o",
+        meta={"some": "data"},
+        user_id="anonymous",
+    )
     assert result["thread_id"] == "thr_123"
     assert result["meta"]["model"] == "gpt-4o"

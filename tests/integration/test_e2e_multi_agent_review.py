@@ -77,7 +77,7 @@ def test_e2e_multi_agent_review(clean_authenticated_client: TestClient):
         assert "instruction" in report
         assert "executive_summary" in report
         assert "alternatives" in report
-        assert "recommendation" in report
+        assert "recommendations" in report
         
         # Verify report content matches what we sent
         assert report["topic"] == "Future of AI"

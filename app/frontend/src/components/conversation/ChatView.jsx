@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 import { useMessages, useGenerationSettings, setMessages, addMessage, appendStreamChunk } from '../../store/useConversationStore';
 import useEventSource from '../../hooks/useEventSource';
+import { parseRealtimeEvent } from '../../utils/realtime';
 import RoomHeader from '../RoomHeader';
 import ChatTimeline from './ChatTimeline';
 import Composer from './Composer';
@@ -76,36 +77,31 @@ const ChatView = ({ threadId }) => {
   // --- SSE Handling via custom hook ---
 
   const streamEventHandlers = useMemo(() => ({
-    delta: (e) => {
-      if (!e.data || e.data.trim() === '') return;
+    delta: (event) => {
       const messageId = activeStreamUrl?.split('/')[4];
       if (!messageId) return;
 
-      let content;
-      try {
-        // Try to parse as JSON first
-        const data = JSON.parse(e.data);
-        // Extract content from a potential JSON structure
-        content = data.content || data.text || '';
-      } catch (error) {
-        // If parsing fails, assume it's a plain text chunk
-        content = e.data;
-      }
-
-      if (content) {
-        appendStreamChunk(threadId, messageId, content);
+      const envelope = parseRealtimeEvent(event);
+      const chunk = envelope?.payload?.delta || envelope?.payload?.content || envelope?.payload?.text;
+      if (typeof chunk === 'string' && chunk.trim() !== '') {
+        appendStreamChunk(threadId, messageId, chunk);
       }
     },
-    done: (e) => {
-      setActiveStreamUrl(null); // Stop the connection
+    done: (event) => {
+      const envelope = parseRealtimeEvent(event);
+      const status = envelope?.payload?.meta?.status || envelope?.meta?.status;
+      if (status === 'failed') {
+        toast.error('응답 생성이 완료되지 못했습니다. 다시 시도해주세요.');
+      }
+      setActiveStreamUrl(null);
       queryClient.invalidateQueries({ queryKey: ['messages', threadId] });
     },
-    error: (e) => {
-      // It's better to show an error to the user.
-      // For now, just log it and stop the stream.
-      console.error("Streaming error received:", e);
-      toast.error('실시간 응답을 가져오는 중 문제가 발생했어요. 잠시 후 다시 시도해주세요.');
-      setActiveStreamUrl(null); // Stop trying to reconnect on fatal error
+    error: (event) => {
+      const envelope = parseRealtimeEvent(event);
+      const errorMessage = envelope?.payload?.error || '실시간 응답을 가져오는 중 문제가 발생했어요. 잠시 후 다시 시도해주세요.';
+      console.error('Streaming error received:', envelope || event);
+      toast.error(errorMessage);
+      setActiveStreamUrl(null);
     }
   }), [threadId, activeStreamUrl, appendStreamChunk, queryClient]);
 

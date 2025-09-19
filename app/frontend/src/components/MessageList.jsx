@@ -9,6 +9,7 @@ import ConnectionStatusBanner from './common/ConnectionStatusBanner';
 import ContextSummaryCard from './ContextSummaryCard';
 import { ROOM_TYPES } from '../constants';
 import useEventSource from '../hooks/useEventSource';
+import { parseRealtimeEvent } from '../utils/realtime';
 
 
 const fetchMessages = async (roomId) => {
@@ -25,7 +26,7 @@ const promoteMemory = async ({ mainRoomId, subRoomId }) => {
   return data;
 };
 
-const MessageList = ({ roomId, currentRoom, createRoomMutation, interactiveReviewRoomMutation }) => {
+const MessageList = ({ roomId, currentRoom }) => {
   const messagesEndRef = useRef(null);
   const queryClient = useQueryClient();
 
@@ -54,14 +55,9 @@ const MessageList = ({ roomId, currentRoom, createRoomMutation, interactiveRevie
 
   const eventHandlers = useMemo(() => ({
     new_message: (event) => {
-      if (!event?.data) return;
-      try {
-        const parsed = JSON.parse(event.data);
-        if (parsed.type === 'new_message' && parsed.payload) {
-          handleNewMessage(parsed.payload);
-        }
-      } catch (err) {
-        console.error('Failed to parse SSE payload:', err);
+      const envelope = parseRealtimeEvent(event);
+      if (envelope?.type === 'new_message' && envelope.payload) {
+        handleNewMessage(envelope.payload);
       }
     },
     heartbeat: () => {},
@@ -126,15 +122,13 @@ const MessageList = ({ roomId, currentRoom, createRoomMutation, interactiveRevie
             <div className="text-meta text-muted">Start the conversation!</div>
           </div>
         </div>
-        <div className="p-4 border-t border-border">
-          <ChatInput
-            roomId={roomId}
-            roomData={currentRoom}
-            disabled={!roomId}
-            createRoomMutation={createRoomMutation}
-            interactiveReviewRoomMutation={interactiveReviewRoomMutation}
-          />
-        </div>
+      <div className="p-4 border-t border-border">
+        <ChatInput
+          roomId={roomId}
+          roomData={currentRoom}
+          disabled={!roomId}
+        />
+      </div>
       </div>
     );
   }
@@ -175,8 +169,6 @@ const MessageList = ({ roomId, currentRoom, createRoomMutation, interactiveRevie
           roomId={roomId}
           roomData={currentRoom}
           disabled={!roomId}
-          createRoomMutation={createRoomMutation}
-          interactiveReviewRoomMutation={interactiveReviewRoomMutation}
         />
       </div>
     </div>

@@ -1,30 +1,21 @@
 """Service layer for handling conversation logic backed by raw SQL."""
-import asyncio
-import json
 import logging
 import time
-from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any
 
 import redis
 from redis.exceptions import RedisError
-from psycopg2.extras import Json
 
 from app.config.settings import get_effective_redis_url, settings
-from app.models.conversation_schemas import (
-    Attachment,
-    ConversationMessage,
-    ConversationThread,
-    ConversationThreadCreate,
-)
-from app.services.database_service import DatabaseService, get_database_service
+from app.models.conversation_schemas import Attachment, ConversationThread, ConversationThreadCreate
+from app.services.conversation_repository import ConversationRepository, get_conversation_repository
 from app.utils.helpers import generate_id
 
 logger = logging.getLogger(__name__)
 
 class ConversationService:
-    def __init__(self):
-        self.db: DatabaseService = get_database_service()
+    def __init__(self, repository: Optional[ConversationRepository] = None):
+        self.repository = repository or get_conversation_repository()
         self._redis_client: Optional[redis.Redis] = None
         self._redis_url_signature: Optional[str] = None
 
@@ -110,84 +101,26 @@ class ConversationService:
         return int(usage) if usage else 0
 
     def create_thread(self, room_id: str, user_id: str, thread_data: ConversationThreadCreate) -> ConversationThread:
-        thread_id = f"thr_{generate_id()}"
-        insert_query = """
-            INSERT INTO conversation_threads (id, sub_room_id, user_id, title, pinned, archived)
-            VALUES (%s, %s, %s, %s, %s, %s)
-            RETURNING id, sub_room_id, user_id, title, pinned, archived, created_at, updated_at
-        """
-        params = (thread_id, room_id, user_id, thread_data.title, False, False)
-        rows = self.db.execute_returning(insert_query, params)
-        if not rows:
-            raise RuntimeError("Failed to create conversation thread")
-
-        # Touch the parent room to keep ordering consistent for the UI.
+        thread = self.repository.create_thread(room_id, user_id, thread_data.title)
         try:
-            self.db.execute_update(
-                "UPDATE rooms SET updated_at = %s WHERE room_id = %s",
-                (int(time.time()), room_id),
-            )
+            self.repository.touch_room(room_id)
         except Exception as exc:
             logger.warning("Failed to bump parent room timestamp for %s: %s", room_id, exc)
-        return self._map_thread_row(rows[0])
+        return thread
 
     async def get_threads_by_room(self, room_id: str, query: Optional[str] = None, pinned: Optional[bool] = None, archived: Optional[bool] = None) -> List[ConversationThread]:
-        sql_query = "SELECT id, sub_room_id, user_id, title, pinned, archived, created_at, updated_at FROM conversation_threads WHERE sub_room_id = %s"
-        params: List[Any] = [room_id]
-        if query:
-            sql_query += " AND title ILIKE %s"
-            params.append(f"%{query}%")
-        if pinned is not None:
-            sql_query += " AND pinned = %s"
-            params.append(pinned)
-        if archived is not None:
-            sql_query += " AND archived = %s"
-            params.append(archived)
-        sql_query += " ORDER BY updated_at DESC"
-        results = await asyncio.to_thread(self.db.execute_query, sql_query, tuple(params))
-        return [self._map_thread_row(row) for row in results]
+        return await self.repository.list_threads(room_id, query_text=query, pinned=pinned, archived=archived)
 
     def create_message(self, thread_id: str, role: str, content: str, status: str = "draft", model: Optional[str] = None, meta: Optional[Dict[str, Any]] = None, user_id: str = "anonymous") -> Dict[str, Any]:
-        message_id = f"msg_{generate_id()}"
-        meta_payload: Dict[str, Any] = meta.copy() if isinstance(meta, dict) else {}
-        meta_payload.setdefault("userId", user_id)
-        if model and "model" not in meta_payload:
-            meta_payload["model"] = model
-        insert_query = """
-            INSERT INTO conversation_messages (id, thread_id, user_id, role, content, model, status, meta)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING id, thread_id, user_id, role, content, model, status, created_at, meta
-        """
-        params = (
-            message_id,
+        return self.repository.create_message(
             thread_id,
-            user_id,
             role,
             content,
-            model,
-            status,
-            Json(meta_payload) if meta_payload else None,
+            status=status,
+            model=model,
+            meta=meta,
+            user_id=user_id,
         )
-        rows = self.db.execute_returning(insert_query, params)
-        if not rows:
-            raise RuntimeError("Failed to create conversation message")
-
-        self.db.execute_update("UPDATE conversation_threads SET updated_at = NOW() WHERE id = %s", (thread_id,))
-
-        db_row = rows[0]
-        normalized_meta = self._deserialize_meta(db_row.get("meta"))
-        created_at = self._normalize_timestamp(db_row.get("created_at"))
-        return {
-            "id": db_row["id"],
-            "thread_id": db_row["thread_id"],
-            "user_id": db_row.get("user_id"),
-            "role": db_row["role"],
-            "content": db_row["content"],
-            "status": db_row["status"],
-            "model": db_row.get("model"),
-            "meta": normalized_meta,
-            "created_at": created_at,
-        }
 
     def update_thread(
         self,
@@ -218,50 +151,16 @@ class ConversationService:
         if "is_archived" in merged_updates and "archived" not in merged_updates:
             merged_updates["archived"] = merged_updates["is_archived"]
 
-        updates_sql: List[str] = []
-        params: List[Any] = []
-
-        if "title" in merged_updates and merged_updates["title"] is not None:
-            updates_sql.append("title = %s")
-            params.append(merged_updates["title"])
-        if "pinned" in merged_updates and merged_updates["pinned"] is not None:
-            updates_sql.append("pinned = %s")
-            params.append(bool(merged_updates["pinned"]))
-        if "archived" in merged_updates and merged_updates["archived"] is not None:
-            updates_sql.append("archived = %s")
-            params.append(bool(merged_updates["archived"]))
-
-        if not updates_sql:
-            return self.get_thread_by_id(thread_id)
-
-        updates_sql.append("updated_at = NOW()")
-        query = (
-            "UPDATE conversation_threads SET "
-            + ", ".join(updates_sql)
-            + " WHERE id = %s RETURNING id, sub_room_id, user_id, title, pinned, archived, created_at, updated_at"
-        )
-        params.append(thread_id)
-        rows = self.db.execute_returning(query, tuple(params))
-        if not rows:
-            return None
-        return self._map_thread_row(rows[0])
+        return self.repository.update_thread(thread_id, merged_updates)
 
     def delete_thread(self, thread_id: str) -> bool:
-        deleted = self.db.execute_update("DELETE FROM conversation_threads WHERE id = %s", (thread_id,))
-        return deleted > 0
+        return self.repository.delete_thread(thread_id)
 
     def get_thread_by_id(self, thread_id: str) -> Optional[ConversationThread]:
-        query = "SELECT id, sub_room_id, user_id, title, pinned, archived, created_at, updated_at FROM conversation_threads WHERE id = %s"
-        rows = self.db.execute_query(query, (thread_id,))
-        if not rows:
-            return None
-        return self._map_thread_row(rows[0])
+        return self.repository.get_thread(thread_id)
 
     def update_message(self, message_id: str, content: str, status: str, meta: Dict[str, Any]) -> None:
-        meta_payload = Json(meta) if meta else None
-        query = "UPDATE conversation_messages SET content = %s, status = %s, meta = %s WHERE id = %s"
-        params = (content, status, meta_payload, message_id)
-        self.db.execute_update(query, params)
+        self.repository.update_message_content(message_id, content, status, meta)
 
     def search_messages(
         self,
@@ -270,49 +169,16 @@ class ConversationService:
         thread_id: Optional[str] = None,
         limit: int = 20,
     ) -> Dict[str, Any]:
-        """Perform a simple text search across conversation messages."""
-
-        sql_query = (
-            "SELECT id, thread_id, user_id, role, content, model, status, created_at, meta "
-            "FROM conversation_messages WHERE content ILIKE %s"
-        )
-        params: List[Any] = [f"%{query}%"]
-
-        if thread_id:
-            sql_query += " AND thread_id = %s"
-            params.append(thread_id)
-
-        sql_query += " ORDER BY created_at DESC LIMIT %s"
-        params.append(limit)
-
-        rows = self.db.execute_query(sql_query, tuple(params))
-        results = [self._map_message_row(row) for row in rows]
-        return {"query": query, "total_results": len(results), "results": results}
+        return self.repository.search_messages(query, thread_id=thread_id, limit=limit)
 
     def get_messages_by_thread(self, thread_id: str, cursor: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
-        sql_query = "SELECT id, thread_id, user_id, role, content, model, status, created_at, meta FROM conversation_messages WHERE thread_id = %s"
-        params: List[Any] = [thread_id]
-        if cursor:
-            sql_query += " AND created_at < %s"
-            params.append(self._cursor_to_datetime(cursor))
-        sql_query += " ORDER BY created_at DESC LIMIT %s"
-        params.append(limit)
-        results = self.db.execute_query(sql_query, tuple(params))
-        return [self._map_message_row(row) for row in results]
+        return self.repository.list_messages(thread_id, cursor=cursor, limit=limit)
 
     async def get_all_messages_by_thread(self, thread_id: str) -> List[Dict[str, Any]]:
-        query = "SELECT id, thread_id, user_id, role, content, model, status, created_at, meta FROM conversation_messages WHERE thread_id = %s ORDER BY created_at ASC"
-        params = (thread_id,)
-        results = await asyncio.to_thread(self.db.execute_query, query, params)
-        return [self._map_message_row(row) for row in results]
+        return await self.repository.list_all_messages(thread_id)
 
     def get_message_by_id(self, message_id: str) -> Optional[Dict[str, Any]]:
-        query = "SELECT id, thread_id, user_id, role, content, model, status, created_at, meta FROM conversation_messages WHERE id = %s"
-        params = (message_id,)
-        results = self.db.execute_query(query, params)
-        if not results:
-            return None
-        return self._map_message_row(results[0])
+        return self.repository.get_message(message_id)
 
     def create_new_message_version(self, original_message_id: str, new_content: str) -> Optional[Dict[str, Any]]:
         """Creates a new version of a user message, linking it to the original."""
@@ -334,176 +200,25 @@ class ConversationService:
         return new_message
 
     def get_attachment_by_id(self, attachment_id: str) -> Optional[Dict[str, Any]]:
-        query = "SELECT id, thread_id, kind, name, mime, size, url, created_at FROM attachments WHERE id = %s"
-        params = (attachment_id,)
-        results = self.db.execute_query(query, params)
-        return results[0] if results else None
+        return self.repository.get_attachment(attachment_id)
 
     def create_export_job(self, thread_id: str, user_id: str, format: str) -> Dict[str, Any]:
-        job_id = f"exp_{generate_id()}"
-        query = """
-            INSERT INTO export_jobs (id, thread_id, user_id, format)
-            VALUES (%s, %s, %s, %s)
-            RETURNING id, status
-        """
-        rows = self.db.execute_returning(query, (job_id, thread_id, user_id, format))
-        if not rows:
-            raise RuntimeError("Failed to create export job")
-        return {"id": rows[0]["id"], "status": rows[0]["status"]}
+        return self.repository.create_export_job(thread_id, user_id, format)
 
     def get_export_job(self, job_id: str) -> Optional[Dict[str, Any]]:
-        query = "SELECT id, thread_id, user_id, format, status, file_url, error_message, created_at, updated_at FROM export_jobs WHERE id = %s"
-        params = (job_id,)
-        results = self.db.execute_query(query, params)
-        return results[0] if results else None
+        return self.repository.get_export_job(job_id)
 
     def update_export_job_status(self, job_id: str, status: str, file_url: Optional[str] = None, error_message: Optional[str] = None):
-        query = "UPDATE export_jobs SET status = %s, file_url = %s, error_message = %s, updated_at = NOW() WHERE id = %s"
-        params = (status, file_url, error_message, job_id)
-        self.db.execute_update(query, params)
+        self.repository.update_export_job(job_id, status, file_url=file_url, error_message=error_message)
 
     def get_room_hierarchy(self, thread_id: str) -> Dict[str, Optional[str]]:
-        """
-        Given a thread_id, finds the sub_room_id and its parent main_room_id.
-        """
-        thread_query = "SELECT sub_room_id FROM conversation_threads WHERE id = %s"
-        thread_result = self.db.execute_query(thread_query, (thread_id,))
-        if not thread_result:
-            return {"current_room": None, "parent_room": None}
-
-        room_id = thread_result[0].get("sub_room_id")
-        if not room_id:
-            return {"current_room": None, "parent_room": None}
-
-        # Second, get the parent_id from the rooms table
-        room_query = "SELECT parent_id FROM rooms WHERE room_id = %s"
-        room_result = self.db.execute_query(room_query, (room_id,))
-
-        parent_room_id = None
-        if room_result:
-            parent_room_id = room_result[0].get("parent_id")
-
-        return {"current_room": room_id, "parent_room": parent_room_id}
+        return self.repository.get_room_hierarchy(thread_id)
 
     def get_message_versions(self, message_id: str) -> List[Dict[str, Any]]:
-        """
-        Retrieves all versions of a message by traversing the parentId chain.
-        """
-        versions = []
-        current_id = message_id
-        for _ in range(20): # Safety break to prevent infinite loops
-            msg = self.get_message_by_id(current_id)
-            if not msg:
-                break
-            versions.append(msg)
-            meta = msg.get("meta")
-            if meta and isinstance(meta, dict) and meta.get("parentId"):
-                current_id = meta["parentId"]
-            else:
-                break
-        return list(reversed(versions)) # Return oldest first
+        return self.repository.list_message_versions(message_id)
 
     def create_attachment(self, attachment_data: Dict[str, Any], thread_id: Optional[str] = None) -> Attachment:
-        attachment_id = f"att_{generate_id()}"
-        insert_query = """
-            INSERT INTO attachments (id, thread_id, kind, name, mime, size, url)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            RETURNING id, thread_id, kind, name, mime, size, url, created_at
-        """
-        params = (
-            attachment_id,
-            thread_id,
-            attachment_data["kind"],
-            attachment_data["name"],
-            attachment_data["mime"],
-            attachment_data["size"],
-            attachment_data["url"],
-        )
-        rows = self.db.execute_returning(insert_query, params)
-        if not rows:
-            raise RuntimeError("Failed to create attachment")
-        row = rows[0]
-        payload = {
-            "id": row["id"],
-            "thread_id": row.get("thread_id"),
-            "kind": row["kind"],
-            "name": row["name"],
-            "mime": row["mime"],
-            "size": row["size"],
-            "url": row["url"],
-            "created_at": self._normalize_timestamp(row.get("created_at")),
-        }
-        return Attachment(**payload)
-
-    # ----- Internal helpers -----
-
-    def _normalize_timestamp(self, value: Any) -> int:
-        if value is None:
-            return 0
-        if isinstance(value, (int, float)):
-            return int(value)
-        if isinstance(value, datetime):
-            dt = value.astimezone(timezone.utc)
-            return int(dt.timestamp())
-        if isinstance(value, str):
-            try:
-                return int(value)
-            except ValueError:
-                try:
-                    dt = datetime.fromisoformat(value)
-                except ValueError:
-                    return 0
-                return int(dt.replace(tzinfo=timezone.utc if dt.tzinfo is None else dt.tzinfo).timestamp())
-        return 0
-
-    def _cursor_to_datetime(self, cursor: str) -> datetime:
-        try:
-            ts = int(cursor)
-        except (TypeError, ValueError):
-            return datetime.now(timezone.utc)
-        return datetime.fromtimestamp(ts, tz=timezone.utc)
-
-    def _deserialize_meta(self, meta_value: Any) -> Dict[str, Any]:
-        if meta_value is None:
-            return {}
-        if isinstance(meta_value, dict):
-            return meta_value
-        if isinstance(meta_value, str):
-            try:
-                return json.loads(meta_value)
-            except json.JSONDecodeError:
-                return {}
-        return {}
-
-    def _map_thread_row(self, row: Dict[str, Any]) -> ConversationThread:
-        return ConversationThread(
-            id=row["id"],
-            sub_room_id=row["sub_room_id"],
-            user_id=row.get("user_id", ""),
-            title=row["title"],
-            pinned=row.get("pinned", False),
-            archived=row.get("archived", False),
-            created_at=self._normalize_timestamp(row.get("created_at")),
-            updated_at=self._normalize_timestamp(row.get("updated_at")),
-        )
-
-    def _map_message_row(self, row: Dict[str, Any]) -> Dict[str, Any]:
-        meta = self._deserialize_meta(row.get("meta"))
-        if "userId" not in meta and "user_id" in row:
-            meta["userId"] = row["user_id"]
-        if row.get("model") and "model" not in meta:
-            meta["model"] = row["model"]
-        created_at = self._normalize_timestamp(row.get("created_at"))
-        return {
-            "id": row["id"],
-            "thread_id": row["thread_id"],
-            "role": row["role"],
-            "content": row["content"],
-            "model": row.get("model"),
-            "status": row.get("status", "draft"),
-            "created_at": created_at,
-            "meta": meta,
-        }
+        return self.repository.create_attachment(attachment_data, thread_id=thread_id)
 
 # Global service instance
 conversation_service: "ConversationService" = None

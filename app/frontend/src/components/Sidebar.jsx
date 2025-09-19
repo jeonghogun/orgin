@@ -188,7 +188,7 @@ const RoomItem = memo(({ room, level, parentRoom = null, onRenameClick, onDelete
 });
 
 const Sidebar = memo(() => {
-  const { sidebarOpen, setSidebarOpen, initiateRoomCreation, showError, handleRoomSelect } = useAppContext();
+  const { sidebarOpen, setSidebarOpen, showError, handleRoomSelect } = useAppContext();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 

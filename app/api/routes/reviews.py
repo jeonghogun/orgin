@@ -24,6 +24,54 @@ from app.models.enums import RoomType
 
 logger = logging.getLogger(__name__)
 
+# Unified realtime helpers expect normalized payloads.
+def _format_review_event_payload(event: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize persisted review events into a consistent envelope."""
+    raw_content = event.get("content")
+    payload: Dict[str, Any] = {}
+    if isinstance(raw_content, str) and raw_content:
+        try:
+            payload = json.loads(raw_content)
+        except json.JSONDecodeError:
+            payload = {"message": raw_content}
+    elif isinstance(raw_content, dict):
+        payload = raw_content
+
+    meta = {
+        "ts": event.get("ts"),
+        "round": event.get("round"),
+        "actor": event.get("actor"),
+        "review_id": event.get("review_id"),
+    }
+
+    return {
+        "type": event.get("type", "unknown"),
+        "payload": payload,
+        "meta": {k: v for k, v in meta.items() if v is not None},
+    }
+
+
+def _parse_live_review_message(message: str) -> Dict[str, Any]:
+    """Parse Redis Pub/Sub payloads into the realtime envelope schema."""
+    try:
+        parsed = json.loads(message)
+    except json.JSONDecodeError:
+        return {"type": "unknown", "payload": {"raw": message}, "meta": {}}
+
+    payload = parsed.get("payload") or {}
+    meta = {
+        "ts": parsed.get("ts"),
+        "review_id": parsed.get("review_id"),
+        "version": parsed.get("version"),
+    }
+
+    return {
+        "type": parsed.get("type", "unknown"),
+        "payload": payload,
+        "meta": {k: v for k, v in meta.items() if v is not None},
+    }
+
+
 # Create router
 router = APIRouter(tags=["reviews"])
 
@@ -189,6 +237,7 @@ async def get_review(
 
 from sse_starlette.sse import EventSourceResponse
 from app.services.redis_pubsub import redis_pubsub_manager
+from app.services.realtime_service import realtime_service
 
 async def review_event_generator(
     review_id: str,
@@ -204,15 +253,30 @@ async def review_event_generator(
         storage_service.get_review_events, review_id
     )
     for event in historical_events:
-        yield dict(event="historical_event", data=json.dumps(event))
+        payload = _format_review_event_payload(event)
+        yield dict(
+            event="historical_event",
+            data=realtime_service.format_event(
+                payload["type"],
+                payload["payload"],
+                {**payload["meta"], "delivery": "historical"},
+            ),
+        )
 
     # Now, listen for live events from Redis Pub/Sub
     async with redis_pubsub_manager.subscribe(f"review_{review_id}") as subscriber:
         async for message in subscriber:
             if await request.is_disconnected():
                 break
-            # Messages from redis_pubsub_manager are already JSON strings
-            yield dict(event="live_event", data=message)
+            structured = _parse_live_review_message(message)
+            yield dict(
+                event="live_event",
+                data=realtime_service.format_event(
+                    structured["type"],
+                    structured["payload"],
+                    {**structured["meta"], "delivery": "live"},
+                ),
+            )
 
 @router.get("/reviews/{review_id}/events")
 async def get_review_events_stream(

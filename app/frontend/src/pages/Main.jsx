@@ -3,12 +3,10 @@ import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import axios from 'axios';
 import Sidebar from '../components/Sidebar';
-import ThreadList from '../components/conversation/ThreadList';
 import ChatView from '../components/conversation/ChatView';
 import MessageList from '../components/MessageList';
-import { ROOM_TYPES } from '../constants';
 
-const Main = ({ createRoomMutation, interactiveReviewRoomMutation }) => {
+const Main = () => {
   const { threadId, roomId } = useParams();
 
   // 현재 선택된 룸 정보 가져오기
@@ -23,7 +21,6 @@ const Main = ({ createRoomMutation, interactiveReviewRoomMutation }) => {
   });
 
   const currentRoom = rooms.find(room => room.room_id === roomId);
-  const isMainRoom = currentRoom?.type === ROOM_TYPES.MAIN;
 
   return (
     <div className="flex h-screen bg-bg text-text">
@@ -40,7 +37,7 @@ const Main = ({ createRoomMutation, interactiveReviewRoomMutation }) => {
                   {threadId && roomId ? (
                       <ChatView key={threadId} threadId={threadId} currentRoom={currentRoom} />
                   ) : roomId ? (
-                      <MessageList roomId={roomId} currentRoom={currentRoom} createRoomMutation={createRoomMutation} interactiveReviewRoomMutation={interactiveReviewRoomMutation} />
+                      <MessageList roomId={roomId} currentRoom={currentRoom} />
                   ) : (
                       <div className="flex items-center justify-center h-full">
                           <div className="text-center">

@@ -7,7 +7,7 @@ import redis.asyncio as redis
 from redis.exceptions import RedisError
 
 from app.config.settings import get_effective_redis_url
-from app.api.routes.websockets import manager as websocket_manager
+from app.services.realtime_service import realtime_service
 
 logger = logging.getLogger(__name__)
 
@@ -143,8 +143,8 @@ class RedisPubSubManager:
                     channel = message['channel']
                     review_id = channel.split('_', 1)[1]
                     data = message['data']
-                    logger.info(f"Message received from Redis on {channel}, broadcasting to WebSocket room {review_id}")
-                    await websocket_manager.broadcast(data, review_id)
+                    logger.info(f"Message received from Redis on {channel}, broadcasting to real-time channel {review_id}")
+                    await realtime_service.broadcast_raw(review_id, data)
             except Exception as e:
                 logger.error(f"Error in Redis Pub/Sub listener: {e}", exc_info=True)
                 # Add a small delay to prevent rapid-fire errors

@@ -109,7 +109,7 @@ async def test_full_review_flow_e2e(mock_start_review, mock_openai_invoke, mock_
     report_data = report_res.json()["data"]
     assert report_data is not None
     assert report_data["topic"] == review_topic
-    assert "recommendation" in report_data
+    assert "recommendations" in report_data
 
     print(f"E2E review flow for {review_id} completed and report validated successfully.")
 
