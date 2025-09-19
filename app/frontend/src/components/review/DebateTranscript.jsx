@@ -76,6 +76,7 @@ const DebateTranscript = ({
   totalRoundsCompleted = 0,
   maxRounds = 4,
   isDebateConcluded = false,
+  requestRoundUnavailableReason = '추가 라운드 요청 기능은 준비 중입니다.',
 }) => {
   const transcriptEndRef = useRef(null);
 
@@ -121,6 +122,7 @@ const DebateTranscript = ({
     }
   }, [messages.length]);
 
+  const showRequestControls = canRequestRound || isRequestingRound;
   const buttonDisabled = !canRequestRound || isRequestingRound || isDebateConcluded;
   const buttonLabel = isDebateConcluded
     ? 'Debate Concluded'
@@ -185,16 +187,20 @@ const DebateTranscript = ({
 
       <footer className="flex flex-col gap-3 border-t border-border/60 bg-panel-elev px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-xs text-muted">
-          최대 {maxRounds}라운드까지 추가 진행을 요청할 수 있습니다.
+          {showRequestControls
+            ? `최대 ${maxRounds}라운드까지 추가 진행을 요청할 수 있습니다.`
+            : requestRoundUnavailableReason}
         </p>
-        <button
-          type="button"
-          onClick={onRequestRound}
-          disabled={buttonDisabled}
-          className="inline-flex items-center justify-center rounded-button bg-accent px-4 py-2 text-sm font-semibold text-white transition-colors duration-150 hover:bg-accent-weak disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {buttonLabel}
-        </button>
+        {showRequestControls && (
+          <button
+            type="button"
+            onClick={onRequestRound}
+            disabled={buttonDisabled}
+            className="inline-flex items-center justify-center rounded-button bg-accent px-4 py-2 text-sm font-semibold text-white transition-colors duration-150 hover:bg-accent-weak disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {buttonLabel}
+          </button>
+        )}
       </footer>
     </section>
   );

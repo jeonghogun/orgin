@@ -20,6 +20,8 @@ const Review = ({ reviewId, isSplitView = false, createRoomMutation }) => {
   const queryClient = useQueryClient();
   const [isRequestingRound, setIsRequestingRound] = useState(false);
   const MAX_DEBATE_ROUNDS = 4;
+  const reviewContinuationEnabled =
+    String(import.meta.env.VITE_ENABLE_REVIEW_CONTINUATION || '').toLowerCase() === 'true';
 
   const { data: review, isLoading } = useQuery({
     queryKey: ['review', reviewId],
@@ -275,6 +277,10 @@ const Review = ({ reviewId, isSplitView = false, createRoomMutation }) => {
   const debateConcluded = roundsCompleted >= MAX_DEBATE_ROUNDS || ['completed', 'failed'].includes(reviewStatus);
 
   const handleRequestAnotherRound = useCallback(async () => {
+    if (!reviewContinuationEnabled) {
+      toast.error('추가 라운드 요청 기능은 현재 비활성화되어 있습니다.');
+      return;
+    }
     if (!reviewId || debateConcluded) return;
     setIsRequestingRound(true);
     try {
@@ -288,7 +294,7 @@ const Review = ({ reviewId, isSplitView = false, createRoomMutation }) => {
     } finally {
       setIsRequestingRound(false);
     }
-  }, [debateConcluded, queryClient, reviewId]);
+  }, [debateConcluded, queryClient, reviewContinuationEnabled, reviewId]);
 
   return (
     <div className="flex flex-col h-full bg-bg relative overflow-hidden">
@@ -372,11 +378,12 @@ const Review = ({ reviewId, isSplitView = false, createRoomMutation }) => {
           <DebateTranscript
             messages={combinedMessages}
             onRequestRound={handleRequestAnotherRound}
-            canRequestRound={!debateConcluded && Boolean(reviewId)}
+            canRequestRound={reviewContinuationEnabled && !debateConcluded && Boolean(reviewId)}
             isRequestingRound={isRequestingRound}
             totalRoundsCompleted={roundsCompleted}
             maxRounds={MAX_DEBATE_ROUNDS}
             isDebateConcluded={debateConcluded}
+            requestRoundUnavailableReason="추가 라운드 요청 기능은 현재 준비 중입니다."
           />
         </div>
       </div>
