@@ -48,6 +48,7 @@ from app.utils.helpers import (
 from app.models.enums import RoomType
 from app.models.schemas import Message, ReviewMeta
 from app.api.routes.websockets import manager
+from app.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -190,6 +191,8 @@ async def _stream_immediate_response(
     user_id: str,
     storage_service: StorageService,
     content: str,
+    memory_service: Optional[MemoryService] = None,
+    background_tasks: Optional[BackgroundTaskService] = None,
 ) -> StreamingResponse:
     ai_message = Message(
         message_id=generate_id(),
@@ -200,6 +203,23 @@ async def _stream_immediate_response(
         role="ai",
     )
     storage_service.save_message(ai_message)
+
+    if memory_service and background_tasks:
+        task_id = f"context_refresh:{room_id}:{ai_message.message_id}:immediate"
+        try:
+            background_tasks.create_background_task(
+                task_id,
+                memory_service.refresh_context,
+                room_id,
+                user_id,
+            )
+        except Exception as refresh_error:
+            logger.warning(
+                "Failed to schedule context refresh for immediate stream response (room=%s): %s",
+                room_id,
+                refresh_error,
+                exc_info=True,
+            )
 
     async def generator():
         yield json.dumps({"delta": content}) + "\n"
@@ -556,6 +576,25 @@ async def send_message_stream(
         content=content, timestamp=get_current_timestamp(),
     )
     storage_service.save_message(user_message)
+
+    def _schedule_context_refresh(trigger: str) -> None:
+        task_id = f"context_refresh:{room_id}:{trigger}"
+        try:
+            background_tasks.create_background_task(
+                task_id,
+                memory_service.refresh_context,
+                room_id,
+                user_id,
+            )
+        except Exception as refresh_error:
+            logger.warning(
+                "Failed to schedule context refresh (task=%s): %s",
+                task_id,
+                refresh_error,
+                exc_info=True,
+            )
+
+    _schedule_context_refresh(f"user:{user_message.message_id}")
     
     # Start fact extraction as a background task so it doesn't block the response
     background_tasks.create_background_task(
@@ -610,6 +649,8 @@ async def send_message_stream(
             user_id=user_id,
             storage_service=storage_service,
             content=ai_content,
+            memory_service=memory_service,
+            background_tasks=background_tasks,
         )
 
     # Intent-based handling for quick responses (time, weather, name etc.)
@@ -683,15 +724,39 @@ async def send_message_stream(
             user_id=user_id,
             storage_service=storage_service,
             content=direct_response,
+            memory_service=memory_service,
+            background_tasks=background_tasks,
         )
 
     async def stream_generator():
         ai_response_content = ""
         chunk_count = 0
-        # The memory context can be fetched before starting the stream
-        memory_context = await maybe_await(
-            memory_service.get_context(room_id, user_id)
-        )
+        # Gather hierarchical context including parent rooms and hybrid memories
+        try:
+            hierarchical_context = await maybe_await(
+                memory_service.build_hierarchical_context_blocks(
+                    room_id=room_id,
+                    user_id=user_id,
+                    query=content,
+                    limit=getattr(settings, "HYBRID_RETURN_TOPN", 5),
+                )
+            )
+        except Exception as context_error:
+            logger.warning(
+                "Failed to build hierarchical context blocks (room=%s, user=%s): %s",
+                room_id,
+                user_id,
+                context_error,
+                exc_info=True,
+            )
+            hierarchical_context = []
+
+        if hierarchical_context:
+            memory_context = hierarchical_context
+        else:
+            memory_context = await maybe_await(
+                memory_service.get_context(room_id, user_id)
+            )
 
         # Use the streaming RAG service
         stream = rag_service.generate_rag_response_stream(
@@ -731,6 +796,8 @@ async def send_message_stream(
             role="assistant"
         )
         storage_service.save_message(ai_message)
+
+        _schedule_context_refresh(f"assistant:{ai_message.message_id}")
 
         # Send a final "done" message
         yield json.dumps({

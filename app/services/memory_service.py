@@ -263,13 +263,57 @@ class MemoryService:
             messages = []
 
         try:
-            return await self.get_conversation_context(room_id, user_id, messages)
+            return await self.get_conversation_context(
+                room_id,
+                user_id,
+                messages,
+                force_refresh=False,
+            )
         except Exception as context_error:
             logger.warning(
                 "Failed to build conversation context (room=%s, user=%s): %s",
                 room_id,
                 user_id,
                 context_error,
+                exc_info=True,
+            )
+            return None
+
+    async def refresh_context(self, room_id: str, user_id: str) -> Optional[ConversationContext]:
+        """Force a refresh of the cached conversation context for a room."""
+        try:
+            messages = await asyncio.to_thread(storage_service.get_messages, room_id)
+        except Exception as fetch_error:
+            logger.warning(
+                "Failed to load messages for context refresh (room=%s, user=%s): %s",
+                room_id,
+                user_id,
+                fetch_error,
+                exc_info=True,
+            )
+            return None
+
+        if not messages:
+            return await self.get_conversation_context(
+                room_id,
+                user_id,
+                messages,
+                force_refresh=False,
+            )
+
+        try:
+            return await self.get_conversation_context(
+                room_id,
+                user_id,
+                messages,
+                force_refresh=True,
+            )
+        except Exception as refresh_error:
+            logger.warning(
+                "Failed to refresh conversation context (room=%s, user=%s): %s",
+                room_id,
+                user_id,
+                refresh_error,
                 exc_info=True,
             )
             return None
@@ -556,26 +600,44 @@ class MemoryService:
             )
 
 
-    async def get_conversation_context(self, room_id: str, user_id: str, messages: List[Message]) -> Optional[ConversationContext]:
+    async def get_conversation_context(
+        self,
+        room_id: str,
+        user_id: str,
+        messages: List[Message],
+        force_refresh: bool = False,
+    ) -> Optional[ConversationContext]:
         """Fetch, or create and summarize, a conversation context."""
         query = "SELECT * FROM conversation_contexts WHERE room_id = %s AND user_id = %s"
         params = (room_id, user_id)
         rows = self.db.execute_query(query, params)
 
-        if rows:
-            row = rows[0]
+        existing_row = rows[0] if rows else None
+
+        if existing_row and not force_refresh:
             return ConversationContext(
-                context_id=row["context_id"],
-                room_id=row["room_id"],
-                user_id=row["user_id"],
-                summary=row.get("summary", ""),
-                key_topics=row.get("key_topics", []),
-                sentiment=row.get("sentiment", "neutral"),
-                created_at=row.get("created_at"),
-                updated_at=row.get("updated_at"),
+                context_id=existing_row["context_id"],
+                room_id=existing_row["room_id"],
+                user_id=existing_row["user_id"],
+                summary=existing_row.get("summary", ""),
+                key_topics=existing_row.get("key_topics", []),
+                sentiment=existing_row.get("sentiment", "neutral"),
+                created_at=existing_row.get("created_at"),
+                updated_at=existing_row.get("updated_at"),
             )
 
         if not messages:
+            if existing_row:
+                return ConversationContext(
+                    context_id=existing_row["context_id"],
+                    room_id=existing_row["room_id"],
+                    user_id=existing_row["user_id"],
+                    summary=existing_row.get("summary", ""),
+                    key_topics=existing_row.get("key_topics", []),
+                    sentiment=existing_row.get("sentiment", "neutral"),
+                    created_at=existing_row.get("created_at"),
+                    updated_at=get_current_timestamp(),
+                )
             return None
 
         conversation_snippet = self._build_conversation_snippet(messages)
@@ -605,14 +667,18 @@ class MemoryService:
             response_data = {}
 
         now = get_current_timestamp()
+        context_id = existing_row["context_id"] if existing_row else generate_id("ctx")
+        created_at = existing_row.get("created_at") if existing_row else now
+        if not created_at:
+            created_at = now
         context = ConversationContext(
-            context_id=generate_id("ctx"),
+            context_id=context_id,
             room_id=room_id,
             user_id=user_id,
             summary=response_data.get("summary", self._fallback_summary(messages)),
             key_topics=response_data.get("key_topics", []),
             sentiment=response_data.get("sentiment", "neutral"),
-            created_at=now,
+            created_at=created_at,
             updated_at=now,
         )
 

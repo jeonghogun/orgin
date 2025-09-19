@@ -7,6 +7,7 @@ import RoomHeader from '../RoomHeader';
 import ChatTimeline from './ChatTimeline';
 import Composer from './Composer';
 import DiffViewModal from './DiffViewModal';
+import toast from 'react-hot-toast';
 
 const ChatView = ({ threadId }) => {
   const [attachments, setAttachments] = useState([]);
@@ -48,6 +49,10 @@ const ChatView = ({ threadId }) => {
     onSuccess: (response) => {
       setAttachments((prev) => [...prev, response.data]);
     },
+    onError: (error) => {
+      const detail = error?.response?.data?.detail || '파일 업로드에 실패했습니다. 다시 시도해주세요.';
+      toast.error(detail);
+    }
   });
 
   const sendMessageMutation = useMutation({
@@ -99,6 +104,7 @@ const ChatView = ({ threadId }) => {
       // It's better to show an error to the user.
       // For now, just log it and stop the stream.
       console.error("Streaming error received:", e);
+      toast.error('실시간 응답을 가져오는 중 문제가 발생했어요. 잠시 후 다시 시도해주세요.');
       setActiveStreamUrl(null); // Stop trying to reconnect on fatal error
     }
   }), [threadId, activeStreamUrl, appendStreamChunk, queryClient]);
