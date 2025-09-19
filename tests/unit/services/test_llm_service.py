@@ -190,8 +190,10 @@ class TestGeminiProvider:
         mock_response = Mock()
         mock_response.text = "test response"
         
-        gemini_provider.model.generate_content_async = AsyncMock(return_value=mock_response)
-        
+        mock_model = Mock()
+        mock_model.generate_content_async = AsyncMock(return_value=mock_response)
+        gemini_provider._model_cache["gemini-pro"] = mock_model
+
         result = await gemini_provider.invoke(
             model="gemini-pro", system_prompt="test system", user_prompt="test user", request_id="test-123"
         )

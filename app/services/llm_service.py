@@ -684,7 +684,17 @@ class GeminiProvider(LLMProvider):
         if not api_key:
             raise ValueError("Gemini API key not found.")
         genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel('gemini-pro')
+        self._default_model_name = "gemini-pro"
+        self._model_cache: Dict[str, Any] = {}
+
+    def _get_model(self, model_name: Optional[str]) -> Any:
+        target_name = model_name or self._default_model_name
+        cached = self._model_cache.get(target_name)
+        if cached is not None:
+            return cached
+        gemini_model = genai.GenerativeModel(target_name)
+        self._model_cache[target_name] = gemini_model
+        return gemini_model
 
     async def stream_invoke(self, model: str, system_prompt: str, user_prompt: str, request_id: str) -> AsyncGenerator[str, None]:
         # Placeholder implementation
@@ -694,34 +704,68 @@ class GeminiProvider(LLMProvider):
 
     async def invoke(self, model: str, system_prompt: str, user_prompt: str, request_id: str, response_format: str = "text") -> Tuple[str, Dict[str, Any]]:
         start_time = time.time()
+        model_name = model or self._default_model_name
         try:
             full_prompt = f"{system_prompt}\n\n{user_prompt}"
-            response = await self.model.generate_content_async(full_prompt)
+            gemini_model = self._get_model(model_name)
+            response = await gemini_model.generate_content_async(full_prompt)
             content = response.text
             metrics = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
             latency_ms = (time.time() - start_time) * 1000
-            logger.info("Gemini API call successful", extra={"req_id": request_id, "provider": "gemini", "model": model, "latency_ms": latency_ms})
+            logger.info(
+                "Gemini API call successful",
+                extra={"req_id": request_id, "provider": "gemini", "model": model_name, "latency_ms": latency_ms},
+            )
             return content, metrics
         except Exception as e:
             llm_error = map_gemini_error(e, "gemini")
             latency_ms = (time.time() - start_time) * 1000
-            logger.error("Gemini API call failed", extra={"req_id": request_id, "provider": "gemini", "model": model, "error_code": llm_error.error_code.value, "error_message": llm_error.error_message, "latency_ms": latency_ms, "retryable": llm_error.retryable, **llm_error.to_dict()})
+            logger.error(
+                "Gemini API call failed",
+                extra={
+                    "req_id": request_id,
+                    "provider": "gemini",
+                    "model": model_name,
+                    "error_code": llm_error.error_code.value,
+                    "error_message": llm_error.error_message,
+                    "latency_ms": latency_ms,
+                    "retryable": llm_error.retryable,
+                    **llm_error.to_dict(),
+                },
+            )
             raise llm_error
 
     def invoke_sync(self, model: str, system_prompt: str, user_prompt: str, request_id: str, response_format: str = "text") -> Tuple[str, Dict[str, Any]]:
         start_time = time.time()
+        model_name = model or self._default_model_name
         try:
             full_prompt = f"{system_prompt}\n\n{user_prompt}"
-            response = self.model.generate_content(full_prompt) # Sync version
+            gemini_model = self._get_model(model_name)
+            response = gemini_model.generate_content(full_prompt)
             content = response.text
             metrics = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
             latency_ms = (time.time() - start_time) * 1000
-            logger.info("Gemini API call successful (sync)", extra={"req_id": request_id, "provider": "gemini", "model": model, "latency_ms": latency_ms})
+            logger.info(
+                "Gemini API call successful (sync)",
+                extra={"req_id": request_id, "provider": "gemini", "model": model_name, "latency_ms": latency_ms},
+            )
             return content, metrics
         except Exception as e:
             llm_error = map_gemini_error(e, "gemini")
             latency_ms = (time.time() - start_time) * 1000
-            logger.error("Gemini API call failed (sync)", extra={"req_id": request_id, "provider": "gemini", "model": model, "error_code": llm_error.error_code.value, "error_message": llm_error.error_message, "latency_ms": latency_ms, "retryable": llm_error.retryable, **llm_error.to_dict()})
+            logger.error(
+                "Gemini API call failed (sync)",
+                extra={
+                    "req_id": request_id,
+                    "provider": "gemini",
+                    "model": model_name,
+                    "error_code": llm_error.error_code.value,
+                    "error_message": llm_error.error_message,
+                    "latency_ms": latency_ms,
+                    "retryable": llm_error.retryable,
+                    **llm_error.to_dict(),
+                },
+            )
             raise llm_error
 
 

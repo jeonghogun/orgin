@@ -490,7 +490,11 @@ async def send_message(
             ai_content = "어떤 대화를 상위 룸으로 올릴까요? '어제 대화 전부' 또는 'AI 윤리에 대한 내용만'과 같이 구체적으로 말씀해주세요."
         else:  # Fallback to general RAG response
             memory_context = await maybe_await(
-                memory_service.get_context(room_id, user_id)
+                memory_service.build_hierarchical_context_blocks(
+                    room_id=room_id,
+                    user_id=user_id,
+                    query=content,
+                )
             )
             ai_content = await maybe_await(
                 rag_service.generate_rag_response(

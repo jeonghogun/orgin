@@ -64,6 +64,7 @@ async def test_semantic_memory_inheritance(
             key="secret", value=MAIN_ROOM_MEMORY_VALUE, created_at=12345, distance=0.0
         )
     ])
+    mock_memory_service.build_hierarchical_context_blocks = AsyncMock(return_value=[])
     mock_get_memory_service.return_value = mock_memory_service
 
     # c) Configure the prompt builder mock
@@ -76,9 +77,26 @@ async def test_semantic_memory_inheritance(
     main_room_id = main_room_res.json()["room_id"]
     mock_memory_service.get_relevant_memories_hybrid.return_value[0].room_id = main_room_id # Update placeholder
 
+    async def _mock_build_context_blocks(room_id: str, user_id: str, query: str, limit: int = 5):
+        entries = await mock_memory_service.get_relevant_memories_hybrid(query, [main_room_id, sub_room_id], user_id, limit=limit)
+        blocks = []
+        for entry in entries:
+            content = getattr(entry, "content", None) or getattr(entry, "value", None)
+            if not content:
+                continue
+            blocks.append({
+                "content": content,
+                "room_id": getattr(entry, "room_id", None),
+                "room_name": "Main Inheritance Test" if getattr(entry, "room_id", "") == main_room_id else "Sub Inheritance Test",
+                "source": "memory",
+            })
+        return blocks
+
     sub_room_res = client.post("/api/rooms", json={"name": "Sub Inheritance Test", "type": "sub", "parent_id": main_room_id})
     assert sub_room_res.status_code == 200, sub_room_res.text
     sub_room_id = sub_room_res.json()["room_id"]
+
+    mock_memory_service.build_hierarchical_context_blocks.side_effect = _mock_build_context_blocks
 
     # --- 3. Add memories via API ---
     client.post("/api/memory", json={"room_id": main_room_id, "key": "secret", "value": MAIN_ROOM_MEMORY_VALUE})

@@ -191,9 +191,33 @@ class RAGService:
                 formatted = "\n".join(f"- {line}" for line in memory_lines if line)
                 prompt_parts.append(f"Relevant memories:\n{formatted}")
         elif isinstance(memory_context, list) and memory_context:
-            memory_text = "\n".join([f"- {item.get('content', '')}" for item in memory_context if item.get('content')])
-            if memory_text.strip():
-                prompt_parts.append(f"Relevant memories:\n{memory_text}")
+            memory_lines: List[str] = []
+            for item in memory_context:
+                if isinstance(item, dict):
+                    content = (item.get("content") or item.get("value") or "").strip()
+                    if not content:
+                        continue
+                    room_label = item.get("room_name") or item.get("room_id")
+                    source_label = item.get("source")
+                    prefix_parts: List[str] = []
+                    if room_label:
+                        prefix_parts.append(str(room_label))
+                    if source_label == "context":
+                        prefix_parts.append("요약")
+                    elif source_label == "memory":
+                        prefix_parts.append("기억")
+                    prefix = " ".join(prefix_parts)
+                    memory_lines.append(f"{prefix}: {content}" if prefix else content)
+                else:
+                    content = getattr(item, "content", None) or getattr(item, "value", None)
+                    if not content:
+                        continue
+                    memory_lines.append(str(content).strip())
+
+            filtered_lines = [line for line in memory_lines if line]
+            if filtered_lines:
+                formatted = "\n".join(f"- {line}" for line in filtered_lines)
+                prompt_parts.append(f"Relevant memories:\n{formatted}")
 
         prompt_parts.append(f"User message: {user_message}")
 

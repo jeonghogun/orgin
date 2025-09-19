@@ -7,7 +7,7 @@ import json
 import re
 import asyncio
 from datetime import datetime, timezone
-from typing import List, Optional, Tuple, Dict, Any
+from typing import List, Optional, Tuple, Dict, Any, Set
 
 from rank_bm25 import BM25Okapi
 
@@ -138,6 +138,115 @@ class MemoryService:
             )
 
         return legacy_entries
+
+    async def build_hierarchical_context_blocks(
+        self,
+        room_id: str,
+        user_id: str,
+        query: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Collect conversation summaries and hybrid memories across a room hierarchy."""
+
+        context_blocks: List[Dict[str, Any]] = []
+        visited: Set[str] = set()
+        room_chain: List[Any] = []
+
+        current_room_id: Optional[str] = room_id
+        while current_room_id and current_room_id not in visited:
+            visited.add(current_room_id)
+            room_obj = await asyncio.to_thread(storage_service.get_room, current_room_id)
+            if not room_obj:
+                break
+            room_chain.append(room_obj)
+            current_room_id = getattr(room_obj, "parent_id", None)
+
+        if not room_chain:
+            return context_blocks
+
+        seen_contexts: Set[str] = set()
+        for room_obj in room_chain:
+            try:
+                context = await self.get_context(room_obj.room_id, user_id)
+            except Exception as context_error:
+                logger.warning(
+                    "Failed to gather context for room %s hierarchy lookup: %s",
+                    room_obj.room_id,
+                    context_error,
+                    exc_info=True,
+                )
+                continue
+
+            if not context:
+                continue
+
+            summary_parts: List[str] = []
+            if getattr(context, "summary", None):
+                summary_parts.append(context.summary.strip())
+            if getattr(context, "key_topics", None):
+                key_topics = [topic for topic in context.key_topics if topic]
+                if key_topics:
+                    summary_parts.append("키 토픽: " + ", ".join(key_topics))
+            sentiment = getattr(context, "sentiment", None)
+            if sentiment and sentiment != "neutral":
+                summary_parts.append(f"감정: {sentiment}")
+
+            context_text = " ".join(part for part in summary_parts if part).strip()
+            if not context_text or context_text in seen_contexts:
+                continue
+
+            seen_contexts.add(context_text)
+            context_blocks.append(
+                {
+                    "content": context_text,
+                    "room_id": room_obj.room_id,
+                    "room_name": getattr(room_obj, "name", room_obj.room_id),
+                    "source": "context",
+                }
+            )
+
+        if query:
+            try:
+                memories = await self.get_relevant_memories_hybrid(
+                    query=query,
+                    room_ids=[room.room_id for room in room_chain],
+                    user_id=user_id,
+                    limit=limit or settings.HYBRID_RETURN_TOPN,
+                )
+            except Exception as retrieval_error:
+                logger.warning(
+                    "Failed to gather hybrid memories for hierarchy lookup (room=%s): %s",
+                    room_id,
+                    retrieval_error,
+                    exc_info=True,
+                )
+                memories = []
+
+            seen_memories: Set[str] = set()
+            for memory in memories:
+                content = getattr(memory, "content", None) or getattr(memory, "value", None)
+                if not content:
+                    continue
+                normalized = content.strip()
+                if not normalized or normalized in seen_memories:
+                    continue
+                seen_memories.add(normalized)
+                room_name = None
+                memory_room_id = getattr(memory, "room_id", None)
+                for room_obj in room_chain:
+                    if room_obj.room_id == memory_room_id:
+                        room_name = getattr(room_obj, "name", None)
+                        break
+                context_blocks.append(
+                    {
+                        "content": normalized,
+                        "room_id": memory_room_id,
+                        "room_name": room_name or memory_room_id,
+                        "source": "memory",
+                    }
+                )
+
+        return context_blocks
 
     async def get_context(self, room_id: str, user_id: str) -> Optional[ConversationContext]:
         """Return the cached conversation context or generate a fresh one from recent messages."""

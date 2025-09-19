@@ -50,7 +50,11 @@ async def rag_query(
 
         # RAG 응답 생성
         memory_context = await maybe_await(
-            memory_service.get_context(room_id, user_info["user_id"])
+            memory_service.build_hierarchical_context_blocks(
+                room_id=room_id,
+                user_id=user_info["user_id"],
+                query=query,
+            )
         )
         response = await maybe_await(
             rag_service.generate_rag_response(
