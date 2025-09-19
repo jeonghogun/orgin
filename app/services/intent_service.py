@@ -179,7 +179,11 @@ class IntentService:
 중요: 메시지에 시간 관련 단어가 있으면 반드시 "time"으로 분류하세요.
 """
             if not self.llm_provider:
-                self.llm_provider = self.llm_service.get_provider()
+                provider_getter = getattr(self.llm_service, "get_or_create_provider", None)
+                if callable(provider_getter):
+                    self.llm_provider = provider_getter()
+                else:
+                    self.llm_provider = self.llm_service.get_provider()
 
             content, _ = await self.llm_provider.invoke(
                 model=settings.LLM_MODEL,

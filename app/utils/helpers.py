@@ -1,12 +1,11 @@
-"""
-Utility Helper Functions
-"""
+"""Utility Helper Functions."""
 
+import inspect
 import json
 import time
 import uuid
 import logging
-from typing import Dict, Any, List
+from typing import Any, Awaitable, Dict, List, TypeVar, Union
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -110,6 +109,24 @@ def create_success_response(data: Any, message: str = "Success") -> Dict[str, An
         "data": data,
         "timestamp": get_current_timestamp(),
     }
+
+
+_T = TypeVar("_T")
+
+
+async def maybe_await(value: Union[_T, Awaitable[_T]]) -> _T:
+    """Return the result of an awaitable or a plain value.
+
+    A number of services in the codebase are written using ``async def`` but
+    ultimately execute synchronous logic.  Tests often replace those services
+    with ``MagicMock`` objects that return plain values.  Attempting to ``await``
+    those mocks raises ``TypeError``.  This helper normalises the result so the
+    calling code can transparently support both sync and async implementations.
+    """
+
+    if inspect.isawaitable(value):
+        return await value
+    return value
 
 
 

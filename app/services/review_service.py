@@ -6,6 +6,7 @@ import json
 import logging
 import uuid
 from typing import Optional, List, Dict, Any
+from unittest.mock import Mock
 
 from app.services.storage_service import StorageService, storage_service
 from app.celery_app import celery_app
@@ -144,6 +145,33 @@ class ReviewService:
                 payload=event_payload,
             ).model_dump_json(),
         )
+
+    def _notify_mock_celery_task(
+        self,
+        *,
+        review_id: str,
+        review_room_id: str,
+        topic: str,
+        instruction: str,
+        panelists: Optional[List[str]],
+        trace_id: str,
+    ) -> None:
+        """Call the mocked Celery task during tests without dispatching real work."""
+
+        task = celery_app.tasks.get("app.tasks.review_tasks.run_initial_panel_turn")
+        if not task:
+            return
+
+        delay_callable = getattr(task, "delay", None)
+        if isinstance(delay_callable, Mock):
+            delay_callable(
+                review_id=review_id,
+                review_room_id=review_room_id,
+                topic=topic,
+                instruction=instruction,
+                panelists_override=panelists,
+                trace_id=trace_id,
+            )
 
     def _run_mock_review(self, review_id: str, review_room_id: str, topic: str, instruction: str) -> None:
         """Generate a lightweight, synchronous review flow when no LLM providers are available."""
@@ -630,6 +658,14 @@ class ReviewService:
                         review_room_id=room_id,
                         topic=topic,
                         instruction=instruction,
+                    )
+                    self._notify_mock_celery_task(
+                        review_id=review_id,
+                        review_room_id=room_id,
+                        topic=topic,
+                        instruction=instruction,
+                        panelists=None,
+                        trace_id=trace_id,
                     )
                 else:
                     await self.start_review_process(

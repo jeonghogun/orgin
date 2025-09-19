@@ -27,6 +27,7 @@ from app.services.llm_adapters import get_llm_adapter
 from app.services.memory_service import MemoryService, get_memory_service
 from app.services.rag_service import get_rag_service
 from app.services.cloud_storage_service import get_cloud_storage_service
+from app.utils.helpers import maybe_await
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -59,7 +60,9 @@ async def list_threads(
     convo_service: ConversationService = Depends(get_conversation_service),
 ):
     # Note: The service layer will need to be updated to handle generic room_id
-    return await convo_service.get_threads_by_room(room_id, query, pinned, archived)
+    return await maybe_await(
+        convo_service.get_threads_by_room(room_id, query, pinned, archived)
+    )
 
 @router.post("/threads/{thread_id}/messages", response_model=Dict[str, str], dependencies=[Depends(check_budget)])
 async def create_message(thread_id: str, request_data: CreateMessageRequest, user_info: Dict[str, Any] = AUTH_DEPENDENCY, convo_service: ConversationService = Depends(get_conversation_service)):
@@ -124,6 +127,11 @@ async def stream_message(
                 cached_user = cached_value
         except RedisError as exc:
             logger.warning("Failed to load stream user %s from Redis: %s", message_id, exc)
+
+    if not cached_user:
+        cached_user = draft_message.get("user_id")
+    if not cached_user:
+        cached_user = request.headers.get("X-User-ID") or request.headers.get("x-user-id")
 
     user_id = cached_user or "anonymous"
     if user_id == "anonymous":
@@ -318,7 +326,9 @@ async def get_message_diff(message_id: str, against: str, convo_service: Convers
 
 @router.get("/threads/{thread_id}/export")
 async def export_thread(thread_id: str, format: str = Query("json", enum=["json", "md", "zip"]), convo_service: ConversationService = Depends(get_conversation_service)):
-    messages = await convo_service.get_all_messages_by_thread(thread_id)
+    messages = await maybe_await(
+        convo_service.get_all_messages_by_thread(thread_id)
+    )
     if not messages: raise HTTPException(status_code=404, detail="Thread not found.")
 
     if format == "json":
@@ -428,11 +438,13 @@ async def search_conversations(
     if not user_id:
         raise HTTPException(status_code=401, detail="User not authenticated")
 
-    results = await rag_service.search_hybrid(
-        query=request.query,
-        user_id=user_id,
-        thread_id=request.thread_id,
-        limit=request.limit,
+    results = await maybe_await(
+        rag_service.search_hybrid(
+            query=request.query,
+            user_id=user_id,
+            thread_id=request.thread_id,
+            limit=request.limit,
+        )
     )
 
     return {

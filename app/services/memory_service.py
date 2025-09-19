@@ -357,7 +357,11 @@ class MemoryService:
             return results
 
         try:
-            provider = self.llm_service.get_provider(settings.RERANK_PROVIDER)
+            provider_getter = getattr(self.llm_service, "get_or_create_provider", None)
+            if callable(provider_getter):
+                provider = provider_getter(settings.RERANK_PROVIDER)
+            else:
+                provider = self.llm_service.get_provider(settings.RERANK_PROVIDER)
         except Exception as provider_error:
             logger.warning("Rerank provider unavailable: %s", provider_error)
             return results

@@ -9,7 +9,8 @@ from app.api.dependencies import require_role, get_admin_service, get_audit_serv
 from app.services.admin_service import AdminService
 from app.services.audit_service import AuditService
 from app.tasks.persona_tasks import generate_user_persona
-from app.models.schemas import ApiPanelistConfig as PanelistConfig # Assuming this is the right schema for provider config updates
+from app.models.schemas import ApiPanelistConfig as PanelistConfig  # Assuming this is the right schema for provider config updates
+from app.utils.helpers import maybe_await
 
 logger = logging.getLogger(__name__)
 
@@ -23,14 +24,14 @@ router = APIRouter(
 @router.get("/dashboard", response_model=Dict[str, Any])
 async def get_dashboard_data(admin_service: AdminService = Depends(get_admin_service)):
     """Get a snapshot of key operational and investor KPIs."""
-    kpis = await admin_service.get_dashboard_kpis()
+    kpis = await maybe_await(admin_service.get_dashboard_kpis())
     return kpis
 
 # --- Provider Configuration ---
 @router.get("/providers", response_model=List[Dict[str, Any]])
 async def get_providers(admin_service: AdminService = Depends(get_admin_service)):
     """Get the current configuration for all LLM providers."""
-    return await admin_service.get_provider_configs()
+    return await maybe_await(admin_service.get_provider_configs())
 
 @router.put("/providers/{name}")
 async def update_provider(
@@ -41,15 +42,21 @@ async def update_provider(
     audit_service: AuditService = Depends(get_audit_service)
 ):
     """Update the configuration for a specific provider."""
-    await admin_service.update_provider_config(name, config)
-    await audit_service.log_action(admin_user_id=user_info['user_id'], action=f"update_provider:{name}", details=config)
+    await maybe_await(admin_service.update_provider_config(name, config))
+    await maybe_await(
+        audit_service.log_action(
+            admin_user_id=user_info['user_id'],
+            action=f"update_provider:{name}",
+            details=config,
+        )
+    )
     return {"status": "ok", "message": f"Provider '{name}' updated."}
 
 # --- System Settings ---
 @router.get("/settings", response_model=Dict[str, Any])
 async def get_settings(admin_service: AdminService = Depends(get_admin_service)):
     """Get all configurable system settings."""
-    return await admin_service.get_system_settings()
+    return await maybe_await(admin_service.get_system_settings())
 
 @router.put("/settings")
 async def update_settings(
@@ -60,8 +67,14 @@ async def update_settings(
 ):
     """Update one or more system settings."""
     for key, value in settings_payload.items():
-        await admin_service.update_system_setting(key, value)
-    await audit_service.log_action(admin_user_id=user_info['user_id'], action="update_settings", details=settings_payload)
+        await maybe_await(admin_service.update_system_setting(key, value))
+    await maybe_await(
+        audit_service.log_action(
+            admin_user_id=user_info['user_id'],
+            action="update_settings",
+            details=settings_payload,
+        )
+    )
     return {"status": "ok", "message": "Settings updated."}
 
 # --- Persona Management ---
@@ -77,7 +90,13 @@ async def rebuild_persona(
         raise HTTPException(status_code=400, detail="user_id is required.")
 
     task = generate_user_persona.delay(user_id)
-    await audit_service.log_action(admin_user_id=user_info['user_id'], action="rebuild_persona", details={"user_id": user_id, "task_id": task.id})
+    await maybe_await(
+        audit_service.log_action(
+            admin_user_id=user_info['user_id'],
+            action="rebuild_persona",
+            details={"user_id": user_id, "task_id": task.id},
+        )
+    )
     return {"status": "ok", "message": "Persona rebuild task enqueued.", "task_id": task.id}
 
 @router.get("/persona/jobs")
@@ -98,7 +117,9 @@ async def get_facts_pending_review(
     user_fact_service: UserFactService = Depends(get_user_fact_service),
 ):
     """Get a list of user facts that are pending manual review."""
-    facts = await user_fact_service.get_facts_pending_review(limit=limit, offset=offset)
+    facts = await maybe_await(
+        user_fact_service.get_facts_pending_review(limit=limit, offset=offset)
+    )
     return facts
 
 @router.post("/facts/resolve-conflict")
@@ -115,8 +136,16 @@ async def resolve_fact_conflict(
     if not winning_fact_id or not losing_fact_id:
         raise HTTPException(status_code=400, detail="winning_fact_id and losing_fact_id are required.")
 
-    await user_fact_service.resolve_fact_conflict(winning_fact_id, losing_fact_id)
-    
-    await audit_service.log_action(admin_user_id=user_info['user_id'], action="resolve_fact_conflict", details=payload)
+    await maybe_await(
+        user_fact_service.resolve_fact_conflict(winning_fact_id, losing_fact_id)
+    )
+
+    await maybe_await(
+        audit_service.log_action(
+            admin_user_id=user_info['user_id'],
+            action="resolve_fact_conflict",
+            details=payload,
+        )
+    )
     
     return {"status": "ok", "message": "Conflict resolved successfully."}

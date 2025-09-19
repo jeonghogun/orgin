@@ -7,7 +7,7 @@ from typing import Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 
-from app.utils.helpers import create_success_response
+from app.utils.helpers import create_success_response, maybe_await
 from app.services.external_api_service import ExternalSearchService
 from app.api.dependencies import AUTH_DEPENDENCY, get_search_service, get_rag_service
 from app.services.rag_service import RAGService
@@ -32,7 +32,7 @@ async def search(
 ):
     """Search external sources"""
     try:
-        results = await search_service.web_search(q, n)
+        results = await maybe_await(search_service.web_search(q, n))
         return create_success_response(data={"query": q, "results": results})
     except Exception as e:
         logger.error(f"Search error: {e}", exc_info=True)
@@ -62,7 +62,7 @@ async def wiki_search(
 ):
     """Search Wikipedia"""
     try:
-        summary = await search_service.wiki_summary(topic)
+        summary = await maybe_await(search_service.wiki_summary(topic))
         return create_success_response(data={"topic": topic, "summary": summary})
     except Exception as e:
         logger.error(f"Wikipedia search error: {e}", exc_info=True)
@@ -82,11 +82,13 @@ async def hybrid_search(
         raise HTTPException(status_code=401, detail="Invalid user information")
 
     try:
-        results = await rag_service.search_hybrid(
-            query=q,
-            user_id=user_id,
-            thread_id=thread_id,
-            limit=limit
+        results = await maybe_await(
+            rag_service.search_hybrid(
+                query=q,
+                user_id=user_id,
+                thread_id=thread_id,
+                limit=limit,
+            )
         )
         return create_success_response(data={"query": q, "results": results})
     except Exception as e:

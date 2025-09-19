@@ -102,7 +102,11 @@ JSON 형식으로 응답하세요:
 """
 
         try:
-            provider = self.llm_service.get_provider()
+            provider_getter = getattr(self.llm_service, "get_or_create_provider", None)
+            if callable(provider_getter):
+                provider = provider_getter()
+            else:
+                provider = self.llm_service.get_provider()
             response_content, _ = await provider.invoke(
                 model="gpt-4o-mini",
                 system_prompt="You are an expert at intent classification. Always respond with valid JSON.",

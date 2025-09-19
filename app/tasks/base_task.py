@@ -1,5 +1,4 @@
 import celery
-from functools import lru_cache
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.core.secrets import env_secrets_provider
@@ -13,16 +12,26 @@ class BaseTask(celery.Task):
     """
 
     @property
-    @lru_cache(maxsize=None)
     def storage_service(self) -> StorageService:
         """Lazily initialized StorageService instance."""
-        return StorageService(env_secrets_provider)
+        cached = getattr(self, "_storage_service_instance", None)
+        cached_cls = getattr(self, "_storage_service_cls_marker", None)
+        if cached is None or cached_cls is not StorageService:
+            cached = StorageService(env_secrets_provider)
+            self._storage_service_instance = cached
+            self._storage_service_cls_marker = StorageService
+        return cached
 
     @property
-    @lru_cache(maxsize=None)
     def llm_service(self) -> LLMService:
         """Lazily initialized LLMService instance."""
-        return LLMService(env_secrets_provider)
+        cached = getattr(self, "_llm_service_instance", None)
+        cached_cls = getattr(self, "_llm_service_cls_marker", None)
+        if cached is None or cached_cls is not LLMService:
+            cached = LLMService(env_secrets_provider)
+            self._llm_service_instance = cached
+            self._llm_service_cls_marker = LLMService
+        return cached
 
 
 class BaseTaskWithRetries(BaseTask):

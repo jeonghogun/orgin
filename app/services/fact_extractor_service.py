@@ -5,6 +5,7 @@ from typing import Dict, Any, Optional
 
 from app.services.llm_service import LLMService
 from app.services.fact_types import FactType, FactSensitivity
+from app.utils.helpers import maybe_await
 
 logger = logging.getLogger(__name__)
 
@@ -69,13 +70,38 @@ class FactExtractorService:
         특히 "내 이름은 XXX야" 같은 패턴에서 사용자 이름을 추출하세요.
         """
         try:
-            provider = self.llm_service.get_provider()
-            response_content, _ = await provider.invoke(
-                model="gpt-4o-mini",
-                system_prompt="You are an expert at structured data extraction.",
-                user_prompt=prompt,
-                request_id=f"fact_extraction_{message_id}",
-                response_format="json"
+            provider = None
+
+            direct_getter = getattr(self.llm_service, "get_provider", None)
+            if callable(direct_getter):
+                try:
+                    provider = direct_getter()
+                except Exception:
+                    provider = None
+
+            if provider is None:
+                provider_getter = getattr(self.llm_service, "get_or_create_provider", None)
+                if callable(provider_getter):
+                    provider = provider_getter()
+
+            if provider is None:
+                raise RuntimeError("No LLM provider available for fact extraction")
+
+            invoke_callable = getattr(provider, "invoke", None)
+            if not callable(invoke_callable):
+                invoke_callable = getattr(provider, "invoke_sync", None)
+
+            if not callable(invoke_callable):
+                raise TypeError("Configured LLM provider does not expose an invoke method")
+
+            response_content, _ = await maybe_await(
+                invoke_callable(
+                    model="gpt-4o-mini",
+                    system_prompt="You are an expert at structured data extraction.",
+                    user_prompt=prompt,
+                    request_id=f"fact_extraction_{message_id}",
+                    response_format="json"
+                )
             )
 
             result = json.loads(response_content)

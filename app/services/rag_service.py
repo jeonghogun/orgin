@@ -6,24 +6,38 @@ from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any, Tuple, Union
 
 import openai
+from types import SimpleNamespace
 from rank_bm25 import BM25Okapi
 from app.config.settings import settings
 from app.services.database_service import DatabaseService, get_database_service
 from app.services.hybrid_search_service import get_hybrid_search_service
 from app.utils.helpers import generate_id
 from app.models.memory_schemas import ConversationContext
+from app.services.llm_service import MockLLMProvider
 
 logger = logging.getLogger(__name__)
 
 class RAGService:
     def __init__(self):
         self.db: DatabaseService = get_database_service()
-        self.openai_client = openai.AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+        self.openai_client = self._initialize_openai_client()
         self.hybrid_search = get_hybrid_search_service()
         # Centralize provider/model configuration so that downstream consumers
         # (e.g., streaming clients) can surface richer telemetry.
         self.streaming_provider = "openai"
         self.streaming_model = "gpt-4o-mini"
+
+    def _initialize_openai_client(self):
+        api_key = settings.OPENAI_API_KEY
+        if api_key:
+            try:
+                return openai.AsyncOpenAI(api_key=api_key)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to initialize AsyncOpenAI client: %s. Falling back to mock responses.",
+                    exc,
+                )
+        return _MockOpenAIClient()
 
     async def create_and_store_chunks(self, attachment_id: str, text_chunks: List[str]):
         if not text_chunks:
@@ -381,6 +395,50 @@ Question: {query}
 Please provide a comprehensive answer based on the context provided."""
         
         return prompt
+
+
+
+class _MockOpenAIEmbeddings:
+    def __init__(self, provider: MockLLMProvider):
+        self._provider = provider
+
+    async def create(self, input, model: str):
+        texts = input if isinstance(input, list) else [input]
+        data = [SimpleNamespace(embedding=self._provider._embedding_vector(text)) for text in texts]
+        return SimpleNamespace(data=data)
+
+
+class _MockOpenAIChatCompletions:
+    def __init__(self, provider: MockLLMProvider):
+        self._provider = provider
+
+    async def create(self, model: str, messages, **kwargs):
+        system_prompt = messages[0].get("content", "") if messages else ""
+        user_prompt = messages[-1].get("content", "") if messages else ""
+        content, metrics = await self._provider.invoke(
+            model=model,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            request_id=kwargs.get("request_id", "mock-rag"),
+            response_format="text",
+        )
+        choice = SimpleNamespace(
+            message=SimpleNamespace(content=content),
+            delta=SimpleNamespace(content=content),
+        )
+        usage = SimpleNamespace(
+            prompt_tokens=metrics.get("prompt_tokens", 0),
+            completion_tokens=metrics.get("completion_tokens", 0),
+            total_tokens=metrics.get("total_tokens", 0),
+        )
+        return SimpleNamespace(choices=[choice], usage=usage)
+
+
+class _MockOpenAIClient:
+    def __init__(self):
+        provider = MockLLMProvider()
+        self.embeddings = _MockOpenAIEmbeddings(provider)
+        self.chat = SimpleNamespace(completions=_MockOpenAIChatCompletions(provider))
 
 
 # Global service instance

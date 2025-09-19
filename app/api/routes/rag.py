@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, Request, Depends
 
 from app.services.rag_service import RAGService
 from app.services.intent_service import IntentService
-from app.utils.helpers import create_success_response
+from app.utils.helpers import create_success_response, maybe_await
 from app.api.dependencies import (
     AUTH_DEPENDENCY,
     get_rag_service,
@@ -42,14 +42,20 @@ async def rag_query(
             )
 
         # 의도 감지
-        intent_result = await intent_service.classify_intent(query, "rag_query")
+        intent_result = await maybe_await(
+            intent_service.classify_intent(query, "rag_query")
+        )
         intent = intent_result["intent"]
         entities = intent_result.get("entities", {})
 
         # RAG 응답 생성
-        memory_context = await memory_service.get_context(room_id, user_info["user_id"])
-        response = await rag_service.generate_rag_response(
-            room_id, user_info["user_id"], query, memory_context, "rag_query"
+        memory_context = await maybe_await(
+            memory_service.get_context(room_id, user_info["user_id"])
+        )
+        response = await maybe_await(
+            rag_service.generate_rag_response(
+                room_id, user_info["user_id"], query, memory_context, "rag_query"
+            )
         )
 
         return create_success_response(

@@ -16,7 +16,12 @@ from app.api.dependencies import AUTH_DEPENDENCY, get_storage_service, get_revie
 from app.models.schemas import ReviewMeta
 from app.services.storage_service import StorageService
 from app.services.review_service import ReviewService
-from app.utils.helpers import create_success_response, generate_id, get_current_timestamp
+from app.utils.helpers import (
+    create_success_response,
+    generate_id,
+    get_current_timestamp,
+    maybe_await,
+)
 from app.models.enums import RoomType
 
 logger = logging.getLogger(__name__)
@@ -122,13 +127,15 @@ async def create_review_for_room(
 
     trace_id = str(uuid.uuid4())
     try:
-        await review_service.start_review_process(
-            review_id=review_id,
-            review_room_id=review_room_id,
-            topic=request.topic,
-            instruction=instruction,
-            panelists=request.panelists,
-            trace_id=trace_id,
+        await maybe_await(
+            review_service.start_review_process(
+                review_id=review_id,
+                review_room_id=review_room_id,
+                topic=request.topic,
+                instruction=instruction,
+                panelists=request.panelists,
+                trace_id=trace_id,
+            )
         )
     except Exception as start_error:
         logger.error("Failed to start review %s: %s", review_id, start_error, exc_info=True)
@@ -161,6 +168,19 @@ async def get_review(
     room = await _maybe_get_room(storage_service, review.room_id)
     if not room or room.owner_id != user_info.get("user_id"):
         raise HTTPException(status_code=403, detail="Access denied to review")
+
+    if review.status != "completed":
+        final_report = storage_service.get_final_report(review.review_id)
+        if final_report:
+            try:
+                storage_service.update_review(review.review_id, {"status": "completed"})
+                review.status = "completed"
+            except Exception as sync_error:
+                logger.warning(
+                    "Failed to synchronise review %s status with final report: %s",
+                    review.review_id,
+                    sync_error,
+                )
 
     return review
 

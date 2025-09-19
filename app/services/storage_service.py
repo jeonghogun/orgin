@@ -110,9 +110,22 @@ class StorageService:
 
     def delete_room(self, room_id: str) -> bool:
         """Delete a room and its associated data from the database."""
-        query = "DELETE FROM rooms WHERE room_id = %s"
-        params = (room_id,)
-        rows_affected = self.db.execute_update(query, params)
+
+        cleanup_statements = [
+            ("DELETE FROM conversation_messages WHERE thread_id IN (SELECT id FROM conversation_threads WHERE sub_room_id = %s)", (room_id,)),
+            ("DELETE FROM conversation_threads WHERE sub_room_id = %s", (room_id,)),
+            ("DELETE FROM messages WHERE room_id = %s", (room_id,)),
+            ("DELETE FROM memories WHERE room_id = %s", (room_id,)),
+            ("DELETE FROM reviews WHERE room_id = %s", (room_id,)),
+        ]
+
+        with self.db.transaction(query_type="delete_room") as cur:
+            for statement, params in cleanup_statements:
+                cur.execute(statement, params)
+
+            cur.execute("DELETE FROM rooms WHERE room_id = %s", (room_id,))
+            rows_affected = cur.rowcount
+
         return rows_affected > 0
 
     def get_rooms_by_owner(self, owner_id: str) -> List[Room]:
@@ -342,8 +355,14 @@ class StorageService:
 
     def get_full_reviews_by_room(self, room_id: str) -> List[ReviewFull]:
         """Get all reviews for a given room, including the final_report."""
-        query = "SELECT * FROM reviews WHERE room_id = %s ORDER BY created_at DESC"
-        params = (room_id,)
+        query = """
+            SELECT r.*
+            FROM reviews r
+            LEFT JOIN rooms rm ON r.room_id = rm.room_id
+            WHERE r.room_id = %s OR rm.parent_id = %s
+            ORDER BY r.created_at DESC
+        """
+        params = (room_id, room_id)
         results = self.db.execute_query(query, params)
         return [ReviewFull(**row) for row in results]
 

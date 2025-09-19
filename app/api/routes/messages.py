@@ -43,6 +43,7 @@ from app.utils.helpers import (
     generate_id,
     get_current_timestamp,
     create_success_response,
+    maybe_await,
 )
 from app.models.enums import RoomType
 from app.models.schemas import Message, ReviewMeta
@@ -69,13 +70,17 @@ async def _handle_fact_extraction(
     """Orchestrates extracting, normalizing, and saving facts from a message."""
     try:
         if message.role != "user": return
-        user_profile = await user_fact_service.get_user_profile(message.user_id)
+        user_profile = await maybe_await(
+            user_fact_service.get_user_profile(message.user_id)
+        )
         if user_profile and not user_profile.auto_fact_extraction_enabled:
             logger.info(f"Fact extraction disabled for user {message.user_id}. Skipping.")
             return
 
-        raw_facts = await fact_extractor_service.extract_facts_from_message(
-            message.content, str(message.message_id)
+        raw_facts = await maybe_await(
+            fact_extractor_service.extract_facts_from_message(
+                message.content, str(message.message_id)
+            )
         )
         if not raw_facts: return
         
@@ -86,10 +91,15 @@ async def _handle_fact_extraction(
                 normalized_value = fact_extractor_service.normalize_value(fact_type_enum, fact['value'])
                 sensitivity = fact_extractor_service.get_sensitivity(fact_type_enum)
                 logger.info(f"=== SAVING FACT === User: {message.user_id}, Type: {fact['type']}, Value: {fact['value']}")
-                await user_fact_service.save_fact(
-                    user_id=message.user_id, fact=fact, normalized_value=normalized_value,
-                    source_message_id=str(message.message_id), sensitivity=sensitivity.value,
-                    room_id=message.room_id
+                await maybe_await(
+                    user_fact_service.save_fact(
+                        user_id=message.user_id,
+                        fact=fact,
+                        normalized_value=normalized_value,
+                        source_message_id=str(message.message_id),
+                        sensitivity=sensitivity.value,
+                        room_id=message.room_id,
+                    )
                 )
                 logger.info(f"=== FACT SAVED SUCCESSFULLY === User: {message.user_id}, Type: {fact['type']}")
             except ValueError:
@@ -103,7 +113,9 @@ async def _detect_fact_query_improved(content: str, intent_classifier: IntentCla
     """LLM 기반 사실 질문 감지 (fallback으로 키워드 기반)"""
     try:
         # LLM 기반 분류 시도
-        fact_type = await intent_classifier.get_fact_query_type(content)
+        fact_type = await maybe_await(
+            intent_classifier.get_fact_query_type(content)
+        )
         if fact_type and fact_type != FactQueryType.NONE:
             # FactQueryType을 FactType으로 변환
             type_mapping = {
@@ -235,9 +247,15 @@ async def _create_review_and_start(storage_service: StorageService, review_servi
         topic=topic, instruction=instruction, total_rounds=4, created_at=get_current_timestamp(),
     )
     storage_service.save_review_meta(review_meta)
-    await review_service.start_review_process(
-        review_id=new_review_room.room_id, review_room_id=new_review_room.room_id,
-        topic=topic, instruction=instruction, panelists=None, trace_id=trace_id,
+    await maybe_await(
+        review_service.start_review_process(
+            review_id=new_review_room.room_id,
+            review_room_id=new_review_room.room_id,
+            topic=topic,
+            instruction=instruction,
+            panelists=None,
+            trace_id=trace_id,
+        )
     )
     return f"알겠습니다. '{topic}'에 대한 검토를 시작하겠습니다. '{new_review_room.name}' 룸에서 토론을 확인하세요."
 
@@ -293,16 +311,30 @@ async def send_message(
         try:
             await _handle_fact_extraction(user_fact_service, fact_extractor_service, message)
             logger.info(f"=== FACT EXTRACTION SUCCESS === Message: {message.message_id}")
+            try:
+                background_task_service = get_background_task_service()
+                task_id = f"fact_extraction_{message.message_id}_async"
+                background_task_service.create_background_task(
+                    task_id,
+                    _handle_fact_extraction,
+                    user_fact_service,
+                    fact_extractor_service,
+                    message,
+                )
+                logger.info(f"=== BACKGROUND TASK STARTED === Task: {task_id}")
+            except Exception as bg_error:
+                logger.error(f"=== BACKGROUND TASK FAILED === Error: {bg_error}", exc_info=True)
         except Exception as e:
             logger.error(f"=== FACT EXTRACTION FAILED === Message: {message.message_id}, Error: {e}", exc_info=True)
-            # Fallback: 백그라운드에서 실행
             try:
                 background_task_service = get_background_task_service()
                 task_id = f"fact_extraction_{message.message_id}"
                 background_task_service.create_background_task(
                     task_id,
                     _handle_fact_extraction,
-                    user_fact_service, fact_extractor_service, message
+                    user_fact_service,
+                    fact_extractor_service,
+                    message,
                 )
                 logger.info(f"=== BACKGROUND TASK STARTED === Task: {task_id}")
             except Exception as bg_error:
@@ -315,23 +347,34 @@ async def send_message(
             logger.info(f"Fact query for user {user_id}, type: {queried_fact_type.value}")
             facts_to_format = []
             cache_key = f"fact_query:{user_id}:{queried_fact_type.value}"
-            cached_facts = await cache_service.get(cache_key)
+            cached_facts = await maybe_await(cache_service.get(cache_key))
 
             if cached_facts:
                 facts_to_format = cached_facts
             else:
                 if queried_fact_type == FactType.USER_NAME:
-                    profile = await user_fact_service.get_user_profile(user_id)
+                    profile = await maybe_await(
+                        user_fact_service.get_user_profile(user_id)
+                    )
                     if profile and profile.name: facts_to_format = [profile.name]
                 else:
-                    user_facts = await user_fact_service.list_facts(user_id=user_id, fact_type=queried_fact_type, latest_only=True)
+                    user_facts = await maybe_await(
+                        user_fact_service.list_facts(
+                            user_id=user_id,
+                            fact_type=queried_fact_type,
+                            latest_only=True,
+                        )
+                    )
                     if user_facts:
                         facts_to_format = [
                             fact.get('content') or fact.get('value')
                             for fact in user_facts
                             if fact.get('content') or fact.get('value')
                         ]
-                if facts_to_format: await cache_service.set(cache_key, facts_to_format, ttl=3600)
+                if facts_to_format:
+                    await maybe_await(
+                        cache_service.set(cache_key, facts_to_format, ttl=3600)
+                    )
 
             ai_content = f"'{queried_fact_type.value}'에 대해 알려주신 정보가 아직 없어요."
             if facts_to_format:
@@ -355,7 +398,11 @@ async def send_message(
             pass
 
         pending_action_key = f"pending_action:{room_id}"
-        pending_action_facts = await memory_service.get_user_facts(user_id, kind='conversation_state', key=pending_action_key)
+        pending_action_facts = await maybe_await(
+            memory_service.get_user_facts(
+                user_id, kind='conversation_state', key=pending_action_key
+            )
+        )
         intent_from_client = body.get("intent")
         
         ai_content = ""
@@ -368,7 +415,9 @@ async def send_message(
         elif intent_from_client:
             intent = intent_from_client
         else:
-            intent_result = await intent_service.classify_intent(content, message.message_id)
+            intent_result = await maybe_await(
+                intent_service.classify_intent(content, message.message_id)
+            )
             intent = intent_result["intent"]
             entities = intent_result.get("entities", {})
 
@@ -384,13 +433,21 @@ async def send_message(
                 name_value = _extract_user_name(content)
 
             if name_value:
-                await user_fact_service.update_user_profile(user_id, {"name": name_value})
-                await cache_service.delete(f"fact_query:{user_id}:{FactType.USER_NAME.value}")
+                await maybe_await(
+                    user_fact_service.update_user_profile(user_id, {"name": name_value})
+                )
+                await maybe_await(
+                    cache_service.delete(
+                        f"fact_query:{user_id}:{FactType.USER_NAME.value}"
+                    )
+                )
                 ai_content = f"알겠습니다, {name_value}님! 앞으로 그렇게 불러드릴게요."
             else:
                 ai_content = "이름을 정확히 알려주시면 기억해 둘게요."
         elif intent == "name_get":
-            profile = await user_fact_service.get_user_profile(user_id)
+            profile = await maybe_await(
+                user_fact_service.get_user_profile(user_id)
+            )
             if profile and profile.name:
                 ai_content = f"당신의 이름은 '{profile.name}'으로 기억하고 있어요."
             else:
@@ -402,10 +459,10 @@ async def send_message(
             ai_content = search_service.weather(location)
         elif intent == "wiki":
             topic = entities.get("topic") or "인공지능"
-            ai_content = await search_service.wiki(topic)
+            ai_content = await maybe_await(search_service.wiki(topic))
         elif intent == "search":
             query = entities.get("query") or "AI"
-            items = await search_service.search(query, 3)
+            items = await maybe_await(search_service.search(query, 3))
             if items:
                 lines = [f"🔎 '{query}' 검색 결과:"]
                 for i, item in enumerate(items, 1):
@@ -421,15 +478,24 @@ async def send_message(
                 if not topic: topic = f"'{current_room.name}'에 대한 검토"
                 ai_content = await _create_review_and_start(storage_service, review_service, room_id, user_id, topic, message.message_id)
         elif intent == "start_memory_promotion":
-            await memory_service.upsert_user_fact(
-                user_id, kind='conversation_state', key=pending_action_key, 
-                value={'action': 'promote_memory_confirmation'}, confidence=1.0
+            await maybe_await(
+                memory_service.upsert_user_fact(
+                    user_id,
+                    kind='conversation_state',
+                    key=pending_action_key,
+                    value={'action': 'promote_memory_confirmation'},
+                    confidence=1.0,
+                )
             )
             ai_content = "어떤 대화를 상위 룸으로 올릴까요? '어제 대화 전부' 또는 'AI 윤리에 대한 내용만'과 같이 구체적으로 말씀해주세요."
-        else: # Fallback to general RAG response
-            memory_context = await memory_service.get_context(room_id, user_id)
-            ai_content = await rag_service.generate_rag_response(
-                room_id, user_id, content, memory_context, message.message_id,
+        else:  # Fallback to general RAG response
+            memory_context = await maybe_await(
+                memory_service.get_context(room_id, user_id)
+            )
+            ai_content = await maybe_await(
+                rag_service.generate_rag_response(
+                    room_id, user_id, content, memory_context, message.message_id,
+                )
             )
 
         ai_message = Message(
@@ -499,20 +565,24 @@ async def send_message_stream(
     if queried_fact_type:
         facts_to_format: List[str] = []
         cache_key = f"fact_query:{user_id}:{queried_fact_type.value}"
-        cached_facts = await cache_service.get(cache_key)
+        cached_facts = await maybe_await(cache_service.get(cache_key))
 
         if cached_facts:
             facts_to_format = cached_facts
         else:
             if queried_fact_type == FactType.USER_NAME:
-                profile = await user_fact_service.get_user_profile(user_id)
+                profile = await maybe_await(
+                    user_fact_service.get_user_profile(user_id)
+                )
                 if profile and profile.name:
                     facts_to_format = [profile.name]
             else:
-                user_facts = await user_fact_service.list_facts(
-                    user_id=user_id,
-                    fact_type=queried_fact_type,
-                    latest_only=True,
+                user_facts = await maybe_await(
+                    user_fact_service.list_facts(
+                        user_id=user_id,
+                        fact_type=queried_fact_type,
+                        latest_only=True,
+                    )
                 )
                 if user_facts:
                     facts_to_format = [
@@ -520,8 +590,8 @@ async def send_message_stream(
                         for fact in user_facts
                         if fact.get("content") or fact.get("value")
                     ]
-            if facts_to_format:
-                await cache_service.set(cache_key, facts_to_format, ttl=3600)
+        if facts_to_format:
+            await maybe_await(cache_service.set(cache_key, facts_to_format, ttl=3600))
 
         ai_content = f"'{queried_fact_type.value}'에 대해 알려주신 정보가 아직 없어요."
         if facts_to_format:
@@ -542,7 +612,9 @@ async def send_message_stream(
     intent = ""
     entities: Dict[str, Any] = {}
     try:
-        intent_result = await intent_service.classify_intent(content, user_message.message_id)
+        intent_result = await maybe_await(
+            intent_service.classify_intent(content, user_message.message_id)
+        )
         intent = intent_result["intent"]
         entities = intent_result.get("entities", {})
     except Exception as intent_error:
@@ -560,13 +632,21 @@ async def send_message_stream(
             name_value = _extract_user_name(content) or ""
 
         if name_value:
-            await user_fact_service.update_user_profile(user_id, {"name": name_value})
-            await cache_service.delete(f"fact_query:{user_id}:{FactType.USER_NAME.value}")
+            await maybe_await(
+                user_fact_service.update_user_profile(user_id, {"name": name_value})
+            )
+            await maybe_await(
+                cache_service.delete(
+                    f"fact_query:{user_id}:{FactType.USER_NAME.value}"
+                )
+            )
             direct_response = f"알겠습니다, {name_value}님! 앞으로 그렇게 불러드릴게요."
         else:
             direct_response = "이름을 정확히 알려주시면 기억해 둘게요."
     elif intent == "name_get":
-        profile = await user_fact_service.get_user_profile(user_id)
+        profile = await maybe_await(
+            user_fact_service.get_user_profile(user_id)
+        )
         if profile and profile.name:
             direct_response = f"당신의 이름은 '{profile.name}'으로 기억하고 있어요."
         else:
@@ -578,11 +658,13 @@ async def send_message_stream(
         direct_response = search_service.weather(location or "서울")
     elif intent == "wiki":
         topic = entities.get("topic") if isinstance(entities, dict) else None
-        direct_response = await search_service.wiki(topic or "인공지능")
+        direct_response = await maybe_await(
+            search_service.wiki(topic or "인공지능")
+        )
     elif intent == "search":
         query = entities.get("query") if isinstance(entities, dict) else None
         search_query = query or "AI"
-        items = await search_service.search(search_query, 3)
+        items = await maybe_await(search_service.search(search_query, 3))
         if items:
             lines = [f"🔎 '{search_query}' 검색 결과:"]
             for i, item in enumerate(items, 1):
@@ -603,7 +685,9 @@ async def send_message_stream(
         ai_response_content = ""
         chunk_count = 0
         # The memory context can be fetched before starting the stream
-        memory_context = await memory_service.get_context(room_id, user_id)
+        memory_context = await maybe_await(
+            memory_service.get_context(room_id, user_id)
+        )
 
         # Use the streaming RAG service
         stream = rag_service.generate_rag_response_stream(

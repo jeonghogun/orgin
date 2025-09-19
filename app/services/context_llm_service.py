@@ -46,7 +46,11 @@ class ContextLLMService:
             )
 
             # 5. LLM 응답 생성
-            provider = self.llm_service.get_provider()
+            provider_getter = getattr(self.llm_service, "get_or_create_provider", None)
+            if callable(provider_getter):
+                provider = provider_getter()
+            else:
+                provider = self.llm_service.get_provider()
             response_text, _ = await provider.invoke(
                 model="gpt-3.5-turbo",
                 system_prompt="당신은 맥락을 이해하고 기억하는 친근한 AI 어시스턴트입니다.",

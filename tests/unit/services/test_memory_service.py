@@ -121,7 +121,7 @@ def test_time_decay(memory_service):
 #     assert results[1].message_id == 'bm25_1'
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_get_user_profile_proxies_call(memory_service, mock_user_fact_service):
     """Test getting a user profile correctly proxies the call to UserFactService."""
     from app.models.memory_schemas import UserProfile
@@ -135,7 +135,7 @@ async def test_get_user_profile_proxies_call(memory_service, mock_user_fact_serv
     assert profile.user_id == "test_user"
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_get_user_profile_proxies_none(memory_service, mock_user_fact_service):
     """Test that get_user_profile correctly proxies a None return."""
     mock_user_fact_service.get_user_profile.return_value = None

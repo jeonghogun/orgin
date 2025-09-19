@@ -14,7 +14,7 @@ from app.core.errors import NotFoundError, InvalidRequestError, ForbiddenError, 
 from app.services.storage_service import storage_service
 from app.services.llm_service import get_llm_service
 from app.services.memory_service import get_memory_service
-from app.utils.helpers import generate_id, get_current_timestamp
+from app.utils.helpers import generate_id, get_current_timestamp, maybe_await
 from app.api.dependencies import AUTH_DEPENDENCY
 from app.models.enums import RoomType
 from app.models.schemas import CreateRoomRequest, Room, ExportData, ExportableReview, Message
@@ -80,7 +80,9 @@ async def _handle_sub_room_creation_context(
             profile = None
             context = None
             try:
-                profile = await memory_service.get_user_profile(user_id)
+                profile = await maybe_await(
+                    memory_service.get_user_profile(user_id)
+                )
             except Exception as profile_error:
                 logger.warning(
                     "Failed to load user profile for %s while creating sub-room %s: %s",
@@ -90,7 +92,9 @@ async def _handle_sub_room_creation_context(
                     exc_info=True,
                 )
             try:
-                context = await memory_service.get_context(parent_room_id, user_id)
+                context = await maybe_await(
+                    memory_service.get_context(parent_room_id, user_id)
+                )
             except Exception as context_error:
                 logger.warning(
                     "Failed to load room context for sub-room %s (parent %s): %s",
@@ -200,9 +204,45 @@ async def create_room(
 
     try:
         if room_request.type == RoomType.MAIN:
-            existing_rooms = await asyncio.to_thread(storage_service.get_rooms_by_owner, user_id)
-            if any(r.type == RoomType.MAIN for r in existing_rooms):
-                raise InvalidRequestError("Main room already exists for this user.")
+            existing_rooms = await asyncio.to_thread(
+                storage_service.get_rooms_by_owner, user_id
+            )
+            existing_main = next(
+                (room for room in existing_rooms if room.type == RoomType.MAIN),
+                None,
+            )
+            if existing_main:
+                is_seed_main = (
+                    existing_main.room_id.startswith("room_main")
+                    and existing_main.name == "Main Room"
+                    and existing_main.message_count == 0
+                )
+
+                if existing_main.name == room_request.name:
+                    await cache_service.delete(f"rooms:{user_id}")
+                    return existing_main
+
+                if is_seed_main:
+                    if existing_main.name != room_request.name:
+                        storage_service.update_room_name(
+                            existing_main.room_id, room_request.name
+                        )
+                        refreshed = storage_service.get_room(existing_main.room_id)
+                        if refreshed:
+                            existing_main = refreshed
+                        else:
+                            existing_main = existing_main.model_copy(
+                                update={
+                                    "name": room_request.name,
+                                    "updated_at": get_current_timestamp(),
+                                }
+                            )
+                    await cache_service.delete(f"rooms:{user_id}")
+                    return existing_main
+
+                raise InvalidRequestError(
+                    "Main room already exists for this user."
+                )
 
         if room_request.type in [RoomType.SUB, RoomType.REVIEW]:
             if not room_request.parent_id:
@@ -395,6 +435,19 @@ def export_room_data(
         raise NotFoundError("room", room_id)
 
     messages = storage_service.get_messages(room_id)
+    messages = [
+        msg
+        for msg in messages
+        if getattr(msg, "role", "") in {"user", "ai", "system"}
+    ]
+    messages = sorted(
+        messages,
+        key=lambda msg: (
+            getattr(msg, "timestamp", 0),
+            0 if getattr(msg, "role", "user") == "user" else 1,
+            str(getattr(msg, "message_id", "")),
+        ),
+    )
     full_reviews = storage_service.get_full_reviews_by_room(room_id)
 
     exportable_reviews = []
@@ -403,7 +456,10 @@ def export_room_data(
         summary = "Not completed."
         if review.final_report:
             summary = review.final_report.get("executive_summary", "Summary not available.")
-            next_steps.extend(review.final_report.get("alternatives", []))
+            for key in ("alternatives", "recommendations"):
+                values = review.final_report.get(key, [])
+                if isinstance(values, list):
+                    next_steps.extend(values)
             rec = review.final_report.get("recommendation")
             if rec:
                 next_steps.append(f"Final Recommendation: {rec}")
@@ -430,8 +486,11 @@ def export_room_data(
         markdown_content = _format_export_as_markdown(export_data)
         return Response(
             content=markdown_content,
-            media_type="text/markdown",
-            headers={"Content-Disposition": f"attachment; filename=export_room_{room_id}.md"},
+            media_type=None,
+            headers={
+                "Content-Disposition": f"attachment; filename=export_room_{room_id}.md",
+                "Content-Type": "text/markdown",
+            },
         )
 
     return JSONResponse(content=export_data.model_dump())
@@ -473,11 +532,13 @@ async def promote_memory_from_sub_room(
         raise InvalidRequestError("Invalid sub_room_id or it does not belong to the specified main room.")
 
     try:
-        summary = await memory_service.promote_memories(
-            sub_room_id=request.sub_room_id,
-            main_room_id=room_id,
-            user_id=user_id,
-            criteria_text=request.criteria_text,
+        summary = await maybe_await(
+            memory_service.promote_memories(
+                sub_room_id=request.sub_room_id,
+                main_room_id=room_id,
+                user_id=user_id,
+                criteria_text=request.criteria_text,
+            )
         )
         return {"status": "success", "summary": summary}
     except Exception as e:
@@ -503,9 +564,11 @@ async def create_review_room_interactive(
     if not user_id:
         raise InvalidRequestError("Invalid user information.")
 
-    return await review_service.create_interactive_review(
-        parent_id=parent_id,
-        topic=request.topic,
-        user_id=user_id,
-        history=request.history,
+    return await maybe_await(
+        review_service.create_interactive_review(
+            parent_id=parent_id,
+            topic=request.topic,
+            user_id=user_id,
+            history=request.history,
+        )
     )
