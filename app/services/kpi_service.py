@@ -1,9 +1,10 @@
-"""
-Service for calculating and storing Key Performance Indicators (KPIs).
-"""
+"""Service for calculating and storing Key Performance Indicators (KPIs)."""
+
+import json
 import logging
+from collections import defaultdict
 from datetime import date
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 
 from app.services.database_service import DatabaseService, get_database_service
 
@@ -36,7 +37,13 @@ class KPIService:
         for name, value in kpis.items():
             await self.save_snapshot(snapshot_date, name, value)
 
-    async def save_snapshot(self, snapshot_date: date, metric_name: str, value: float, details: Dict[str, Any] = None):
+    async def save_snapshot(
+        self,
+        snapshot_date: date,
+        metric_name: str,
+        value: float,
+        details: Optional[Dict[str, Any]] = None,
+    ) -> None:
         """Saves a single KPI value to the database."""
         query = """
             INSERT INTO kpi_snapshots (snapshot_date, metric_name, value, details)
