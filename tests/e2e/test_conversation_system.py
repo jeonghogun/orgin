@@ -21,7 +21,7 @@ client = TestClient(app)
 class TestConversationSystemE2E:
     """End-to-end tests for the conversation system"""
     
-    @pytest.fixture(autouse=True)
+    @pytest.fixture
     async def setup_and_cleanup(self):
         """Setup and cleanup for each test"""
         # Setup
@@ -80,7 +80,7 @@ class TestConversationSystemE2E:
         except Exception as e:
             print(f"Cleanup error: {e}")
     
-    def test_complete_conversation_flow(self):
+    def test_complete_conversation_flow(self, setup_and_cleanup):
         """Test complete conversation flow: create thread -> send messages -> search -> export"""
         
         # Step 1: Create a new thread
@@ -159,7 +159,7 @@ class TestConversationSystemE2E:
 
         print("✅ Complete conversation flow test passed")
 
-    def test_file_upload_and_rag_search(self):
+    def test_file_upload_and_rag_search(self, setup_and_cleanup):
         """Test file upload and RAG search functionality"""
 
         # Step 1: Create a thread
@@ -214,7 +214,7 @@ class TestConversationSystemE2E:
         print("✅ File upload and RAG search test passed")
 
     @pytest.mark.skip(reason="Budget endpoint removed, needs mocking settings")
-    def test_cost_tracking_and_budget_limits(self):
+    def test_cost_tracking_and_budget_limits(self, setup_and_cleanup):
         """Test cost tracking and budget limit enforcement"""
         
         # Step 1: Create a thread
@@ -251,7 +251,7 @@ class TestConversationSystemE2E:
 
         print("✅ Cost tracking and budget limits test passed")
 
-    def test_monitoring_and_metrics(self):
+    def test_monitoring_and_metrics(self, setup_and_cleanup):
         """Test monitoring and metrics collection"""
         
         # Step 1: Get system metrics
@@ -283,7 +283,7 @@ class TestConversationSystemE2E:
 
         print("✅ Monitoring and metrics test passed")
     
-    def test_thread_management_operations(self):
+    def test_thread_management_operations(self, setup_and_cleanup):
         """Test thread management operations"""
         
         # Step 1: Create multiple threads
@@ -342,7 +342,7 @@ class TestConversationSystemE2E:
         
         print("✅ Thread management operations test passed")
     
-    def test_model_switching_and_settings(self):
+    def test_model_switching_and_settings(self, setup_and_cleanup):
         """Test model switching and settings persistence"""
         
         # Step 1: Get available models

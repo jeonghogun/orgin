@@ -26,49 +26,7 @@ from app.services.database_service import DatabaseService
 from psycopg2.extras import Json
 
 
-@pytest.hookimpl(tryfirst=True)
-def pytest_pyfunc_call(pyfuncitem):
-    """Minimal async test runner without requiring external plugins.
-
-    Several unit tests rely on ``@pytest.mark.asyncio`` (and a couple use
-    ``@pytest.mark.anyio``). The upstream project historically depended on
-    ``pytest-asyncio`` being installed, but the dependency is optional and isn't
-    guaranteed to exist in every execution environment. When the plugin is
-    missing, pytest raises ``Failed: async def functions are not natively
-    supported`` and aborts all async tests.
-
-    To keep tests lightweight and independent from external plugins, we detect
-    coroutine-based tests that are marked with ``asyncio`` or ``anyio`` and run
-    them using a freshly created event loop. Returning ``True`` tells pytest that
-    the call has been handled so the default synchronous runner is skipped.
-    """
-
-    test_obj = pyfuncitem.obj
-    if not inspect.iscoroutinefunction(test_obj):
-        return None
-
-    if not (
-        pyfuncitem.get_closest_marker("asyncio")
-        or pyfuncitem.get_closest_marker("anyio")
-    ):
-        return None
-
-    loop = asyncio.new_event_loop()
-    try:
-        asyncio.set_event_loop(loop)
-        expected_args = getattr(pyfuncitem._fixtureinfo, "argnames", ()) or ()
-        kwargs = {
-            name: pyfuncitem.funcargs[name]
-            for name in expected_args
-            if name in pyfuncitem.funcargs
-        }
-        loop.run_until_complete(test_obj(**kwargs))
-        loop.run_until_complete(loop.shutdown_asyncgens())
-    finally:
-        asyncio.set_event_loop(None)
-        loop.close()
-
-    return True
+# Custom async test runner removed - using pytest-asyncio plugin instead
 
 # 전역 테스트 환경 관리자
 _test_environment: Dict[str, Any] = {}
@@ -132,7 +90,7 @@ def isolated_test_env(test_environment):
         'POSTGRES_DB': 'test_origin_db',
         'PYTEST_CURRENT_TEST': 'true',
         'TEST_USER_ID': test_user_id,
-        'AUTH_OPTIONAL': 'true'
+        'AUTH_OPTIONAL': 'false'
     }
     
     # 환경 변수 설정
