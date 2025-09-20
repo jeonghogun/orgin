@@ -54,7 +54,7 @@ def _assert_postgres_available() -> None:
         ):
             return
     except psycopg2.Error as exc:  # pragma: no cover - connectivity guard only
-        raise pytest.SkipTest(
+        raise Exception(
             "PostgreSQL is not reachable at"
             f" {_describe_endpoint(database_url)}."
             " Start the database service or export DATABASE_URL before rerunning"
@@ -72,7 +72,7 @@ def _assert_redis_available() -> None:
         )
         client.ping()
     except redis.RedisError as exc:  # pragma: no cover - connectivity guard only
-        raise pytest.SkipTest(
+        raise Exception(
             "Redis is not reachable at"
             f" {_describe_endpoint(redis_url)}."
             " Start the Redis service or export REDIS_URL before rerunning"
@@ -103,7 +103,7 @@ def pytest_collection_modifyitems(config, items):
     try:
         _assert_postgres_available()
         _assert_redis_available()
-    except pytest.SkipTest as skip_exc:
+    except Exception as skip_exc:
         skip_marker = pytest.mark.skip(reason=str(skip_exc))
         for item in items:
             item.add_marker(skip_marker)

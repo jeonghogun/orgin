@@ -162,6 +162,9 @@ class Settings(BaseSettings):
     MEMORY_ARCHIVE_BATCH_SIZE: int = 300  # Process 300 conversations per batch (balanced between 200-500)
     MEMORY_ARCHIVE_MIN_MESSAGES: int = 10  # Minimum messages required for archival
 
+    # --- Test Configuration ---
+    ALLOW_TEST_DB_ENCRYPTION_KEY: bool = False
+
     class Config:
         env_file = ".env"
         case_sensitive = True
