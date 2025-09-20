@@ -1,104 +1,44 @@
 """Service layer for handling conversation logic backed by raw SQL."""
 import logging
-import time
 from typing import List, Optional, Dict, Any
 
-import redis
-from redis.exceptions import RedisError
-
-from app.config.settings import get_effective_redis_url, settings
 from app.models.conversation_schemas import Attachment, ConversationThread, ConversationThreadCreate
 from app.services.conversation_repository import ConversationRepository, get_conversation_repository
-from app.utils.helpers import generate_id
+from app.services.token_usage_tracker import TokenUsageTracker
 
 logger = logging.getLogger(__name__)
 
 class ConversationService:
-    def __init__(self, repository: Optional[ConversationRepository] = None):
+    def __init__(
+        self,
+        repository: Optional[ConversationRepository] = None,
+        token_tracker: Optional[TokenUsageTracker] = None,
+    ):
         self.repository = repository or get_conversation_repository()
-        self._redis_client: Optional[redis.Redis] = None
-        self._redis_url_signature: Optional[str] = None
-
-    def _ensure_redis_client(self) -> Optional[redis.Redis]:
-        """Lazily initialize (or refresh) the Redis client with current overrides."""
-
-        target_url = get_effective_redis_url()
-        if not target_url:
-            if self._redis_client is not None:
-                try:
-                    self._redis_client.close()
-                except RedisError:
-                    pass
-            self._redis_client = None
-            self._redis_url_signature = None
-            return None
-
-        if self._redis_client is None or self._redis_url_signature != target_url:
-            try:
-                self._redis_client = redis.from_url(target_url)
-                self._redis_url_signature = target_url
-            except RedisError as exc:
-                logger.warning("Failed to initialize Redis client at %s: %s", target_url, exc)
-                self._redis_client = None
-                self._redis_url_signature = None
-
-        return self._redis_client
+        self.token_tracker = token_tracker or TokenUsageTracker()
 
     @property
-    def redis_client(self) -> Optional[redis.Redis]:
-        return self._ensure_redis_client()
+    def redis_client(self):
+        """Expose the underlying Redis client for compatibility with existing tests."""
+        return self.token_tracker.redis_client if self.token_tracker else None
 
     @redis_client.setter
-    def redis_client(self, value: Optional[redis.Redis]) -> None:
-        """Allow tests to inject a Redis client directly."""
-        if value is None:
-            if self._redis_client is not None:
-                try:
-                    self._redis_client.close()
-                except RedisError:
-                    pass
-            self._redis_client = None
-            self._redis_url_signature = None
-            return
-
-        self._redis_client = value
-        # Use a sentinel signature to avoid overwriting injected clients.
-        self._redis_url_signature = "__injected__"
+    def redis_client(self, value) -> None:
+        if not self.token_tracker:
+            self.token_tracker = TokenUsageTracker()
+        self.token_tracker.redis_client = value
 
     def increment_token_usage(self, user_id: str, token_count: int) -> int:
         """Increments a user's token usage for the day in Redis."""
-        redis_client = self.redis_client
-        if not redis_client:
-            logger.info(f"Token usage tracking skipped (Redis not available)")
+        if not self.token_tracker:
             return 0
-        today = time.strftime("%Y-%m-%d")
-        key = f"usage:{user_id}:{today}"
-
-        try:
-            new_usage = redis_client.incrby(key, token_count)
-            # Set expiry to 24 hours on first increment
-            if new_usage == token_count:
-                redis_client.expire(key, 86400) # 24 hours
-        except RedisError as exc:
-            logger.warning("Token usage tracking skipped due to Redis error: %s", exc)
-            return 0
-
-        return new_usage
+        return self.token_tracker.increment_usage(user_id, token_count)
 
     def get_today_usage(self, user_id: str) -> int:
         """Gets a user's token usage for the day from Redis."""
-        redis_client = self.redis_client
-        if not redis_client:
-            logger.info(f"Token usage tracking skipped (Redis not available)")
+        if not self.token_tracker:
             return 0
-        today = time.strftime("%Y-%m-%d")
-        key = f"usage:{user_id}:{today}"
-        try:
-            usage = redis_client.get(key)
-        except RedisError as exc:
-            logger.warning("Failed to read token usage from Redis: %s", exc)
-            return 0
-        return int(usage) if usage else 0
+        return self.token_tracker.get_usage(user_id)
 
     def create_thread(self, room_id: str, user_id: str, thread_data: ConversationThreadCreate) -> ConversationThread:
         thread = self.repository.create_thread(room_id, user_id, thread_data.title)

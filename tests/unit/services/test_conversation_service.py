@@ -6,6 +6,7 @@ import pytest
 import unittest
 
 from app.services.conversation_service import ConversationService
+from app.services.token_usage_tracker import TokenUsageTracker
 from app.models.conversation_schemas import ConversationThread, ConversationThreadCreate
 
 
@@ -37,8 +38,8 @@ def mock_redis_client():
 @pytest.fixture
 def conversation_service(monkeypatch, mock_repo, mock_redis_client):
     monkeypatch.setattr("app.services.conversation_service.get_conversation_repository", lambda: mock_repo)
-    monkeypatch.setattr("redis.from_url", lambda url: mock_redis_client)
-    return ConversationService()
+    tracker = TokenUsageTracker(redis_client=mock_redis_client)
+    return ConversationService(token_tracker=tracker)
 
 def test_create_thread(conversation_service, mock_repo):
     thread_data = ConversationThreadCreate(title="Test Thread")

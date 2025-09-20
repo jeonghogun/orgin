@@ -17,30 +17,16 @@ async def test_full_user_journey(authenticated_client: TestClient, monkeypatch):
     # We still need to mock the celery task for persona generation specifically for this test.
     monkeypatch.setattr(app.tasks.persona_tasks, "generate_user_persona", AsyncMock())
 
-    # Clean up any existing test data first
-    from app.services.database_service import get_database_service
-    db = get_database_service()
-    db.execute_update("DELETE FROM rooms WHERE owner_id = 'test-conftest-user'")
-
     # --- 1. Get or Create Main Room ---
-    # Try to create main room, but if it already exists, get the existing one
     main_room_name = "My Main E2E Room"
     main_room_res = authenticated_client.post(
         "/api/rooms",
         json={"name": main_room_name, "type": "main"}
     )
-    
-    if main_room_res.status_code == 400 and "already exists" in main_room_res.text:
-        # Main room already exists, get it
-        rooms_res = authenticated_client.get("/api/rooms")
-        assert rooms_res.status_code == 200
-        rooms_data = rooms_res.json()
-        main_room_id = rooms_data[0]["room_id"]  # Get the first (main) room
-    else:
-        assert main_room_res.status_code == 200, f"Failed to create main room: {main_room_res.text}"
-        main_room_data = main_room_res.json()
-        main_room_id = main_room_data["room_id"]
-        assert main_room_data["name"] == main_room_name
+    assert main_room_res.status_code == 200, f"Failed to create main room: {main_room_res.text}"
+    main_room_data = main_room_res.json()
+    main_room_id = main_room_data["room_id"]
+    assert main_room_data["name"] == main_room_name
 
     # --- 2. Create Sub Room ---
     sub_room_name = "My Sub-Room for Review"
