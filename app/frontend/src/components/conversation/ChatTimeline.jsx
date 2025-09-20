@@ -2,7 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import PropTypes from 'prop-types';
 import MessageCard from './MessageCard';
 
-const ChatTimeline = ({ messages, isLoading, error, onViewHistory }) => {
+const ChatTimeline = ({ messages, isLoading, error, onViewHistory, onRetry }) => {
   const scrollRef = useRef(null);
   const safeMessages = Array.isArray(messages) ? messages : [];
 
@@ -22,7 +22,7 @@ const ChatTimeline = ({ messages, isLoading, error, onViewHistory }) => {
   return (
     <div className="h-full overflow-y-auto space-y-4">
       {safeMessages.map((msg) => (
-        <MessageCard key={msg.id} message={msg} onViewHistory={onViewHistory} />
+        <MessageCard key={msg.id} message={msg} onViewHistory={onViewHistory} onRetry={onRetry} />
       ))}
       <div ref={scrollRef} />
     </div>
@@ -34,6 +34,7 @@ ChatTimeline.propTypes = {
   isLoading: PropTypes.bool,
   error: PropTypes.shape({ message: PropTypes.string }),
   onViewHistory: PropTypes.func,
+  onRetry: PropTypes.func,
 };
 
 export default ChatTimeline;

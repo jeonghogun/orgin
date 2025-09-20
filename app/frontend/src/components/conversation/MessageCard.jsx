@@ -10,12 +10,21 @@ import { UserCircleIcon, CpuChipIcon, ClockIcon, ClipboardIcon, CheckIcon } from
 
 const BlinkingCursor = () => <span className="inline-block w-2 h-5 bg-blue-500 animate-blink" />;
 
-const MessageCard = ({ message, onViewHistory }) => {
+const MessageCard = ({ message, onViewHistory, onRetry }) => {
   if (!message) {
     return null;
   }
 
   const isUser = message.role === 'user';
+  const meta = message.meta || {};
+  const errorMessage = meta.error || '응답을 생성하는 중 문제가 발생했어요. 잠시 후 다시 시도해주세요.';
+  const canRetry = Boolean(onRetry && meta.retryPayload);
+
+  const handleRetryClick = () => {
+    if (canRetry) {
+      onRetry(message);
+    }
+  };
 
   return (
     <div className={`flex items-start space-x-4 p-4 rounded-lg ${isUser ? 'bg-gray-100 dark:bg-gray-800' : ''}`}>
@@ -73,24 +82,47 @@ const MessageCard = ({ message, onViewHistory }) => {
           >
             {message.content}
           </ReactMarkdown>
-          {message.status === 'draft' && <BlinkingCursor />}
+          {['draft', 'streaming'].includes(message.status) && <BlinkingCursor />}
         </div>
-        {message.meta?.attachments?.length > 0 && (
+        {meta.attachments?.length > 0 && (
           <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
             <p className="text-xs font-semibold text-gray-600 dark:text-gray-400">Attachments:</p>
             <div className="flex flex-wrap gap-2 mt-1">
-              {message.meta.attachments.map((att) => (
-                <div key={att.id || att.name} className="bg-gray-200 dark:bg-gray-700 text-xs rounded-md px-2 py-1">
-                  {att.name || att.id}
-                </div>
-              ))}
+              {meta.attachments.map((att, index) => {
+                const label = typeof att === 'string' ? att : att.name || att.id || `attachment-${index + 1}`;
+                const key = typeof att === 'string' ? `${att}-${index}` : att.id || att.name || index;
+                return (
+                  <div key={key} className="bg-gray-200 dark:bg-gray-700 text-xs rounded-md px-2 py-1">
+                    {label}
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
-        {message.meta && message.meta.tokens_output && (
+        {meta && meta.tokens_output && (
           <div className="text-xs text-gray-400 dark:text-gray-500 mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
-            <span>Tokens: {message.meta.tokens_prompt} (P) + {message.meta.tokens_output} (C) = {message.meta.tokens_prompt + message.meta.tokens_output}</span>
-            {message.meta.cost_usd && <span className="ml-4">Cost: ~${message.meta.cost_usd.toFixed(5)}</span>}
+            <span>Tokens: {meta.tokens_prompt} (P) + {meta.tokens_output} (C) = {meta.tokens_prompt + meta.tokens_output}</span>
+            {meta.cost_usd && <span className="ml-4">Cost: ~${meta.cost_usd.toFixed(5)}</span>}
+          </div>
+        )}
+        {message.status === 'retrying' && (
+          <div className="mt-3 text-sm text-amber-600 dark:text-amber-300">이전 응답을 다시 생성하는 중이에요…</div>
+        )}
+        {message.status === 'archived' && (
+          <div className="mt-3 text-xs text-gray-400 dark:text-gray-500 italic">이전 응답이 새로운 시도로 대체되었어요.</div>
+        )}
+        {message.status === 'error' && (
+          <div className="mt-3 p-3 border border-red-200 dark:border-red-500/40 rounded-md bg-red-50 dark:bg-red-500/10 text-sm text-red-700 dark:text-red-200">
+            <p>{errorMessage}</p>
+            {canRetry && (
+              <button
+                onClick={handleRetryClick}
+                className="mt-2 inline-flex items-center px-3 py-1.5 rounded-md bg-red-600 text-white text-xs font-semibold hover:bg-red-700"
+              >
+                다시 시도하기
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -108,6 +140,7 @@ MessageCard.propTypes = {
     meta: PropTypes.object,
   }),
   onViewHistory: PropTypes.func,
+  onRetry: PropTypes.func,
 };
 
 export default MessageCard;

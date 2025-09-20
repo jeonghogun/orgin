@@ -5,7 +5,7 @@ import ChatInput from '../components/ChatInput';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 import { useAppContext } from '../context/AppContext';
-import useEventSource from '../hooks/useEventSource';
+import useRealtimeChannel from '../hooks/useRealtimeChannel';
 import toast from 'react-hot-toast';
 import ReviewTimeline from '../components/review/ReviewTimeline';
 import DebateTranscript from '../components/review/DebateTranscript';
@@ -239,44 +239,40 @@ const Review = ({ reviewId, isSplitView = false, createRoomMutation }) => {
   }, [parsedFinalReport, reviewId, review]);
 
   const eventHandlers = useMemo(() => ({
-    live_event: (e) => {
-      try {
-        const eventData = JSON.parse(e.data);
-        if (eventData.type === 'status_update') {
-          setReviewStatus(eventData.payload.status);
-          recordStatusEvent(eventData.payload.status, eventData.ts);
-        } else if (eventData.type === 'new_message') {
-          appendLiveMessage(eventData.payload);
-        }
-      } catch (err) {
-        console.error("Failed to parse live event:", err);
+    live_event: (envelope) => {
+      if (!envelope) return;
+      if (envelope.type === 'status_update' && envelope.payload?.status) {
+        setReviewStatus(envelope.payload.status);
+        recordStatusEvent(envelope.payload.status, envelope.meta?.ts || envelope.payload.ts);
+      } else if (envelope.type === 'new_message' && envelope.payload) {
+        appendLiveMessage(envelope.payload);
       }
     },
-    historical_event: (e) => {
-        try {
-          const eventData = JSON.parse(e.data);
-          if (eventData.type === 'status_update') {
-            const statusValue = eventData.payload?.status || eventData.status;
-            recordStatusEvent(statusValue, eventData.ts || eventData.timestamp);
-          } else if (eventData.type === 'new_message' && eventData.payload) {
-            appendLiveMessage(eventData.payload);
-          }
-        } catch (err) {
-          console.error('Failed to parse historical event:', err);
-        }
+    historical_event: (envelope) => {
+      if (!envelope) return;
+      if (envelope.type === 'status_update') {
+        const statusValue = envelope.payload?.status || envelope.status;
+        recordStatusEvent(statusValue, envelope.meta?.ts || envelope.payload?.ts || envelope.timestamp);
+      } else if (envelope.type === 'new_message' && envelope.payload) {
+        appendLiveMessage(envelope.payload);
+      }
     },
-    error: (err) => {
-      console.error("SSE Error:", err);
-      toast.error("Connection to live review updates failed. Please refresh the page.");
-    },
+    heartbeat: () => {},
     done: () => {
       setReviewStatus('completed');
       recordStatusEvent('completed', Math.floor(Date.now() / 1000));
     }
-  }), [appendLiveMessage, recordStatusEvent, reviewId]);
+  }), [appendLiveMessage, recordStatusEvent]);
 
   const sseUrl = reviewId ? `/api/reviews/${reviewId}/events` : null;
-  useEventSource(sseUrl, eventHandlers);
+  useRealtimeChannel({
+    url: sseUrl,
+    events: eventHandlers,
+    onError: (error) => {
+      console.error('SSE Error:', error);
+      toast.error('Connection to live review updates failed. Please refresh the page.');
+    },
+  });
 
 
   useEffect(() => {

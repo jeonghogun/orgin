@@ -1,10 +1,9 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import PropTypes from 'prop-types';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
-import { useMessages, useGenerationSettings, setMessages, addMessage, appendStreamChunk } from '../../store/useConversationStore';
-import useEventSource from '../../hooks/useEventSource';
-import { parseRealtimeEvent } from '../../utils/realtime';
+import { useMessages, useGenerationSettings, setMessages, addMessage, appendStreamChunk, setMessageStatus, markMessageError } from '../../store/useConversationStore';
+import useRealtimeChannel from '../../hooks/useRealtimeChannel';
 import RoomHeader from '../RoomHeader';
 import ChatTimeline from './ChatTimeline';
 import Composer from './Composer';
@@ -68,36 +67,87 @@ const ChatView = ({ threadId }) => {
       if (!threadId) {
         throw new Error('활성화된 스레드가 없어 메시지를 보낼 수 없습니다.');
       }
-      const response = await axios.post(`/api/convo/threads/${threadId}/messages`, newMessage);
-      return response;
+      const { retryOf, ...payload } = newMessage;
+      const { data } = await axios.post(`/api/convo/threads/${threadId}/messages`, payload);
+      return { messageId: data.messageId, retryOf };
     },
-    onSuccess: (response, variables) => {
-      const { messageId } = response.data;
-      addMessage(threadId, {
-        id: `temp_${Date.now()}`,
-        role: 'user',
+    onSuccess: ({ messageId, retryOf }, variables) => {
+      const attachmentsForMeta = Array.isArray(variables.attachments) ? variables.attachments : [];
+      const retryPayload = {
         content: variables.content,
-        status: 'complete',
+        attachments: attachmentsForMeta,
+        model: variables.model,
+        temperature: variables.temperature,
+        max_tokens: variables.max_tokens,
+      };
+
+      if (retryOf?.assistantMessageId) {
+        setMessageStatus(threadId, retryOf.assistantMessageId, 'archived', {
+          retriedAt: Date.now(),
+        });
+      } else {
+        addMessage(threadId, {
+          id: `temp_${Date.now()}`,
+          role: 'user',
+          content: variables.content,
+          status: 'complete',
+          created_at: Math.floor(Date.now() / 1000),
+          meta: { attachments: attachmentsForMeta },
+        });
+        setAttachments([]);
+      }
+
+      addMessage(threadId, {
+        id: messageId,
+        role: 'assistant',
+        content: '',
+        status: 'streaming',
+        model: variables.model,
         created_at: Math.floor(Date.now() / 1000),
-        meta: { attachments: variables.attachments }
+        meta: {
+          attachments: attachmentsForMeta,
+          retryPayload,
+          retryOf: retryOf || null,
+        },
       });
-      addMessage(threadId, { id: messageId, role: 'assistant', content: '', status: 'draft', model: variables.model, created_at: Math.floor(Date.now() / 1000) });
-      setAttachments([]);
+
       setActiveMessageId(messageId);
       setActiveStreamUrl(`/api/convo/messages/${messageId}/stream`);
     },
-    onError: (mutationError) => {
+    onError: (mutationError, variables) => {
       const detail = mutationError?.response?.data?.detail || '메시지 전송에 실패했어요. 다시 시도해주세요.';
       toast.error(detail);
+      if (variables?.retryOf?.assistantMessageId) {
+        markMessageError(
+          threadId,
+          variables.retryOf.assistantMessageId,
+          detail,
+          '⚠️ 응답을 다시 가져오지 못했어요. 잠시 후 다시 시도해주세요.'
+        );
+      }
     },
   });
 
   // --- SSE Handling via custom hook ---
 
+  const streamErrorFallback = '⚠️ 응답 생성이 중단되었어요. 다시 시도해주세요.';
+
+  const handleStreamError = useCallback((error) => {
+    console.error('Streaming error received:', error);
+    if (activeMessageId) {
+      markMessageError(threadId, activeMessageId, error.message || streamErrorFallback, streamErrorFallback);
+    }
+    toast.error(error.message || streamErrorFallback);
+    setActiveMessageId(null);
+    setActiveStreamUrl(null);
+    if (threadId) {
+      queryClient.invalidateQueries({ queryKey: ['messages', threadId] });
+    }
+  }, [activeMessageId, markMessageError, queryClient, streamErrorFallback, threadId]);
+
   const streamEventHandlers = useMemo(() => ({
-    delta: (event) => {
-      const envelope = parseRealtimeEvent(event);
-      const messageId = envelope?.payload?.message_id || activeMessageId;
+    delta: (envelope) => {
+      const messageId = envelope?.payload?.message_id || envelope?.meta?.message_id || activeMessageId;
       if (!messageId) return;
 
       const chunk = envelope?.payload?.delta || envelope?.payload?.content || envelope?.payload?.text;
@@ -105,39 +155,66 @@ const ChatView = ({ threadId }) => {
         appendStreamChunk(threadId, messageId, chunk);
       }
     },
-    done: (event) => {
-      const envelope = parseRealtimeEvent(event);
+    meta: (envelope) => {
+      const messageId = envelope?.payload?.message_id || envelope?.meta?.message_id || activeMessageId;
+      if (!messageId) return;
+      if (envelope?.meta) {
+        setMessageStatus(threadId, messageId, 'streaming', { stream: envelope.meta });
+      }
+    },
+    done: (envelope) => {
+      const messageId = envelope?.payload?.message_id || envelope?.meta?.message_id || activeMessageId;
+      if (!messageId) return;
+
       const status = envelope?.payload?.status || envelope?.meta?.status;
       if (status === 'failed') {
-        toast.error('응답 생성이 완료되지 못했습니다. 다시 시도해주세요.');
+        const errorMessage = envelope?.payload?.error || streamErrorFallback;
+        markMessageError(threadId, messageId, errorMessage, streamErrorFallback);
+        toast.error(errorMessage);
+      } else {
+        const metaUpdates = {};
+        if (envelope?.meta) {
+          metaUpdates.stream = envelope.meta;
+        }
+        setMessageStatus(threadId, messageId, 'complete', Object.keys(metaUpdates).length ? metaUpdates : undefined);
       }
+
       setActiveMessageId(null);
       setActiveStreamUrl(null);
       queryClient.invalidateQueries({ queryKey: ['messages', threadId] });
     },
-    error: (event) => {
-      const envelope = parseRealtimeEvent(event);
-      const errorMessage = envelope?.payload?.error || '실시간 응답을 가져오는 중 문제가 발생했어요. 잠시 후 다시 시도해주세요.';
-      console.error('Streaming error received:', envelope || event);
-      toast.error(errorMessage);
-      setActiveMessageId(null);
-      setActiveStreamUrl(null);
-    }
-  }), [threadId, activeMessageId, appendStreamChunk, queryClient]);
+  }), [activeMessageId, appendStreamChunk, markMessageError, queryClient, setMessageStatus, streamErrorFallback, threadId]);
 
-  useEventSource(activeStreamUrl, streamEventHandlers);
+  useRealtimeChannel({ url: activeStreamUrl, events: streamEventHandlers, onError: handleStreamError });
 
   // --- Other Actions ---
 
-  const handleSendMessage = (content) => {
-    sendMessageMutation.mutate({
+  const handleSendMessage = useCallback((content) => {
+    const payload = {
       content,
-      attachments: attachments.map(a => a.id),
+      attachments: attachments.map((a) => a.id),
       model,
       temperature,
       max_tokens: maxTokens,
+    };
+    sendMessageMutation.mutate(payload);
+  }, [attachments, maxTokens, model, sendMessageMutation, temperature]);
+
+  const handleRetry = useCallback((message) => {
+    if (!threadId || !message?.meta?.retryPayload) {
+      return;
+    }
+    const payload = message.meta.retryPayload;
+    const attachmentsForRetry = Array.isArray(payload.attachments) ? payload.attachments : [];
+    setMessageStatus(threadId, message.id, 'retrying', {
+      retriedAt: Date.now(),
     });
-  };
+    sendMessageMutation.mutate({
+      ...payload,
+      attachments: attachmentsForRetry,
+      retryOf: { assistantMessageId: message.id },
+    });
+  }, [sendMessageMutation, setMessageStatus, threadId]);
 
   const createExportJobMutation = useMutation({
     mutationFn: async (format) => {
@@ -190,7 +267,13 @@ const ChatView = ({ threadId }) => {
         <DiffViewModal messageId={viewingMessageHistory} onClose={() => setViewingMessageHistory(null)} />
       )}
       <div className="flex-1 overflow-y-auto p-4">
-        <ChatTimeline messages={messages} isLoading={isLoading} error={error} onViewHistory={setViewingMessageHistory} />
+        <ChatTimeline
+          messages={messages}
+          isLoading={isLoading}
+          error={error}
+          onViewHistory={setViewingMessageHistory}
+          onRetry={handleRetry}
+        />
       </div>
       <div className="p-4 border-t border-gray-200 dark:border-gray-700">
         <Composer

@@ -1,26 +1,28 @@
-import React from 'react';
-import { useParams } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import axios from 'axios';
+import React, { useEffect } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 import ChatView from '../components/conversation/ChatView';
 import MessageList from '../components/MessageList';
+import useRoomsQuery from '../hooks/useRoomsQuery';
+import { ROOM_TYPES } from '../constants';
 
 const Main = () => {
   const { threadId, roomId } = useParams();
+  const navigate = useNavigate();
 
-  // 현재 선택된 룸 정보 가져오기
-  const { data: rooms = [] } = useQuery({
-    queryKey: ['rooms'],
-    queryFn: async () => {
-      const { data } = await axios.get('/api/rooms');
-      return data;
-    },
-    staleTime: 5 * 60 * 1000,
-    retry: 1,
-  });
+  const { data: rooms = [] } = useRoomsQuery();
 
   const currentRoom = rooms.find(room => room.room_id === roomId);
+
+  useEffect(() => {
+    if (rooms.length === 0 || roomId) {
+      return;
+    }
+    const mainRoom = rooms.find((room) => room.type === ROOM_TYPES.MAIN);
+    if (mainRoom) {
+      navigate(`/rooms/${mainRoom.room_id}`, { replace: true });
+    }
+  }, [rooms, roomId, navigate]);
 
   return (
     <div className="flex h-screen bg-bg text-text">

@@ -5,8 +5,8 @@ import axios from 'axios';
 import { useQuery } from '@tanstack/react-query';
 import LoadingSpinner from './common/LoadingSpinner';
 import ErrorMessage from './common/ErrorMessage';
-import useEventSource from '../hooks/useEventSource';
-import { parseRealtimeEvent, withFallbackMeta } from '../utils/realtime';
+import useRealtimeChannel from '../hooks/useRealtimeChannel';
+import { withFallbackMeta } from '../utils/realtime';
 
 const fetchReport = async (reviewId) => {
   const { data } = await axios.get(`/api/reviews/${reviewId}/report`);
@@ -18,27 +18,31 @@ const ReviewPanel = () => {
   const [reviewStatus, setReviewStatus] = useState('pending');
   const [socketError, setSocketError] = useState(null);
 
-  const eventHandlers = useMemo(() => {
-    const handleStatusUpdate = (event) => {
-      const envelope = parseRealtimeEvent(event);
+  const eventHandlers = useMemo(() => ({
+    live_event: (envelope) => {
       if (!envelope) return;
       const normalized = withFallbackMeta(envelope);
       if (normalized.type === 'status_update' && normalized.payload?.status) {
         setReviewStatus(normalized.payload.status);
       }
-    };
-
-    return {
-      live_event: handleStatusUpdate,
-      historical_event: handleStatusUpdate,
-      error: (err) => {
-        setSocketError(err.message || 'An unknown stream error occurred.');
+    },
+    historical_event: (envelope) => {
+      if (!envelope) return;
+      const normalized = withFallbackMeta(envelope);
+      if (normalized.type === 'status_update' && normalized.payload?.status) {
+        setReviewStatus(normalized.payload.status);
       }
-    };
-  }, []);
+    },
+  }), []);
 
   const sseUrl = reviewId ? `/api/reviews/${reviewId}/events` : null;
-  const { status: connectionStatus } = useEventSource(sseUrl, eventHandlers);
+  const { status: connectionStatus } = useRealtimeChannel({
+    url: sseUrl,
+    events: eventHandlers,
+    onError: (error) => {
+      setSocketError(error.message || 'An unknown stream error occurred.');
+    },
+  });
 
   const { data: report, isLoading: isReportLoading, error: reportError } = useQuery({
     queryKey: ['reviewReport', reviewId],

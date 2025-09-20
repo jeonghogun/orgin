@@ -8,8 +8,7 @@ import Message from './Message';
 import ConnectionStatusBanner from './common/ConnectionStatusBanner';
 import ContextSummaryCard from './ContextSummaryCard';
 import { ROOM_TYPES } from '../constants';
-import useEventSource from '../hooks/useEventSource';
-import { parseRealtimeEvent } from '../utils/realtime';
+import useRealtimeChannel from '../hooks/useRealtimeChannel';
 
 
 const fetchMessages = async (roomId) => {
@@ -54,21 +53,23 @@ const MessageList = ({ roomId, currentRoom }) => {
   }, [queryClient, roomId]);
 
   const eventHandlers = useMemo(() => ({
-    new_message: (event) => {
-      const envelope = parseRealtimeEvent(event);
-      if (envelope?.type === 'new_message' && envelope.payload) {
+    new_message: (envelope) => {
+      if (envelope?.payload) {
         handleNewMessage(envelope.payload);
       }
     },
     heartbeat: () => {},
-    error: (err) => {
-      console.error('SSE error for room messages:', err);
-      toast.error('실시간 메시지 스트림 연결에 문제가 발생했어요. 잠시 후 다시 시도해주세요.');
-    }
   }), [handleNewMessage]);
 
   const eventsUrl = roomId ? `/api/rooms/${roomId}/messages/events` : null;
-  const { status: connectionStatus } = useEventSource(eventsUrl, eventHandlers);
+  const { status: connectionStatus } = useRealtimeChannel({
+    url: eventsUrl,
+    events: eventHandlers,
+    onError: (error) => {
+      console.error('SSE error for room messages:', error);
+      toast.error('실시간 메시지 스트림 연결에 문제가 발생했어요. 잠시 후 다시 시도해주세요.');
+    },
+  });
 
 
   const { data: messages = [], isLoading } = useQuery({

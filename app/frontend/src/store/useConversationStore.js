@@ -50,7 +50,12 @@ const useConversationStore = create(
         }
         // Avoid adding duplicates
         if (!state.messagesByThread[threadId].find(m => m.id === message.id)) {
-            state.messagesByThread[threadId].push(message);
+            state.messagesByThread[threadId].push({
+              content: '',
+              status: 'complete',
+              meta: {},
+              ...message,
+            });
         }
       }),
 
@@ -59,7 +64,13 @@ const useConversationStore = create(
         if (!threadMessages) return;
         const message = threadMessages.find(m => m.id === messageId);
         if (message) {
+          if (typeof message.content !== 'string') {
+            message.content = '';
+          }
           message.content += chunk;
+          if (!['complete', 'archived', 'error'].includes(message.status)) {
+            message.status = 'streaming';
+          }
         }
       }),
 
@@ -69,6 +80,31 @@ const useConversationStore = create(
         const messageIndex = threadMessages.findIndex(m => m.id === messageId);
         if (messageIndex !== -1) {
           threadMessages[messageIndex] = updatedMessage;
+        }
+      }),
+
+      setMessageStatus: (threadId, messageId, status, metaUpdates) => set((state) => {
+        const threadMessages = state.messagesByThread[threadId];
+        if (!threadMessages) return;
+        const message = threadMessages.find((m) => m.id === messageId);
+        if (message) {
+          message.status = status;
+          if (metaUpdates) {
+            message.meta = { ...(message.meta || {}), ...metaUpdates };
+          }
+        }
+      }),
+
+      markMessageError: (threadId, messageId, errorMessage, fallbackContent) => set((state) => {
+        const threadMessages = state.messagesByThread[threadId];
+        if (!threadMessages) return;
+        const message = threadMessages.find((m) => m.id === messageId);
+        if (message) {
+          message.status = 'error';
+          message.meta = { ...(message.meta || {}), error: errorMessage };
+          if (typeof fallbackContent === 'string') {
+            message.content = fallbackContent;
+          }
         }
       }),
 
@@ -133,6 +169,10 @@ export const setMessages = (threadId, messages) => useConversationStore.getState
 export const addMessage = (threadId, message) => useConversationStore.getState().actions.addMessage(threadId, message);
 export const updateMessage = (threadId, messageId, updatedMessage) => useConversationStore.getState().actions.updateMessage(threadId, messageId, updatedMessage);
 export const appendStreamChunk = (threadId, messageId, chunk) => useConversationStore.getState().actions.appendStreamChunk(threadId, messageId, chunk);
+export const setMessageStatus = (threadId, messageId, status, metaUpdates) =>
+  useConversationStore.getState().actions.setMessageStatus(threadId, messageId, status, metaUpdates);
+export const markMessageError = (threadId, messageId, errorMessage, fallbackContent) =>
+  useConversationStore.getState().actions.markMessageError(threadId, messageId, errorMessage, fallbackContent);
 export const startRoomCreation = (parentId, type, promptText, promptMessageId) =>
   useConversationStore.getState().actions.startRoomCreation(parentId, type, promptText, promptMessageId);
 export const clearRoomCreation = () => useConversationStore.getState().actions.clearRoomCreation();

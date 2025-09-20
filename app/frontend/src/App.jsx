@@ -1,43 +1,16 @@
-import React, { useState, useEffect } from 'react';
-import { Routes, Route, Navigate, useParams, useNavigate, useLocation } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import axios from 'axios';
+import React, { useState } from 'react';
+import { Routes, Route, Navigate } from 'react-router-dom';
 
 import { AppProvider } from './context/AppContext';
 import Main from './pages/Main';
 import ErrorBoundary from './components/common/ErrorBoundary';
 import useKeyboardShortcuts from './hooks/useKeyboardShortcuts';
-import { ROOM_TYPES } from './constants';
 
 // This component uses hooks that require Router context (like useNavigate)
 import GlobalSearchModal from './components/search/GlobalSearchModal';
 
 function AppContent() {
   const [isSearchOpen, setIsSearchOpen] = useState(false);
-  const navigate = useNavigate();
-  const { roomId } = useParams();
-  const location = useLocation();
-
-  // 룸 목록을 가져와서 메인룸 자동 선택
-  const { data: rooms = [] } = useQuery({
-    queryKey: ['rooms'],
-    queryFn: async () => {
-      const { data } = await axios.get('/api/rooms');
-      return data;
-    },
-    staleTime: 5 * 60 * 1000,
-    retry: 1,
-  });
-
-  // 메인룸 자동 선택 로직 - 루트 경로에서만 실행
-  useEffect(() => {
-    if (rooms.length > 0 && !roomId && location.pathname === '/') {
-      const mainRoom = rooms.find(room => room.type === ROOM_TYPES.MAIN);
-      if (mainRoom) {
-        navigate(`/rooms/${mainRoom.room_id}`);
-      }
-    }
-  }, [rooms, roomId, location.pathname, navigate]);
 
   const handleSearch = () => setIsSearchOpen(true);
 

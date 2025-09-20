@@ -1,5 +1,5 @@
-import React, { useState, useMemo, useCallback, memo, useEffect } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import React, { useState, useMemo, useCallback, memo } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ROOM_TYPES } from '../constants';
@@ -7,20 +7,7 @@ import { startRoomCreation } from '../store/useConversationStore';
 import { useAppContext } from '../context/AppContext';
 import RenameRoomModal from './modals/RenameRoomModal';
 import DeleteConfirmationModal from './modals/DeleteConfirmationModal';
-
-const fetchRooms = async () => {
-  try {
-    const response = await axios.get('/api/rooms');
-    if (!response.data || !Array.isArray(response.data)) {
-      console.warn('fetchRooms: Invalid data received', response.data);
-      return [];
-    }
-    return response.data;
-  } catch (error) {
-    console.error('fetchRooms error:', error);
-    throw error;
-  }
-};
+import useRoomsQuery from '../hooks/useRoomsQuery';
 
 const buildRoomHierarchy = (rooms) => {
   if (!Array.isArray(rooms) || rooms.length === 0) {
@@ -195,12 +182,7 @@ const Sidebar = memo(() => {
   const [renamingRoom, setRenamingRoom] = useState(null);
   const [deletingRoom, setDeletingRoom] = useState(null);
 
-  const { data: rooms = [], error, isLoading } = useQuery({
-    queryKey: ['rooms'],
-    queryFn: fetchRooms,
-    staleTime: 5 * 60 * 1000,
-    retry: 1,
-  });
+  const { data: rooms = [], error, isLoading } = useRoomsQuery();
 
 
   const renameMutation = useMutation({
