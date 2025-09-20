@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { PaperAirplaneIcon, Cog6ToothIcon } from '@heroicons/react/24/solid';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import apiClient from '../../lib/apiClient';
 import SettingsPanel from './SettingsPanel';
 import { useAppContext } from '../../context/AppContext';
 import { useRoomCreationRequest, clearRoomCreation } from '../../store/useConversationStore';
@@ -20,7 +20,7 @@ const Composer = ({ messages, onSendMessage, onFileUpload, isLoading, isUploadin
 
   const createRoomMutation = useMutation({
     mutationFn: async ({ name, type, parentId }) => {
-      const { data } = await axios.post('/api/rooms', { name, type, parent_id: parentId });
+      const { data } = await apiClient.post('/api/rooms', { name, type, parent_id: parentId });
       return data;
     },
     onSuccess: (newRoom) => {

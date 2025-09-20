@@ -1,8 +1,8 @@
 import React, { useState, useRef, useCallback } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
 import { SSE } from 'sse.js';
+import apiClient, { resolveApiUrl } from '../lib/apiClient';
 import { useAppContext } from '../context/AppContext';
 import { useRoomCreationRequest, clearRoomCreation, useReviewRoomCreation, clearReviewRoomCreation } from '../store/useConversationStore';
 import { parseRealtimeEvent, withFallbackMeta } from '../utils/realtime';
@@ -42,7 +42,7 @@ const StreamingStatusIndicator = ({ status }) => {
 
 const streamMessageApi = ({ roomId, content, onChunk, onIdReceived, onMeta }) =>
   new Promise((resolve, reject) => {
-    const source = new SSE(`/api/rooms/${roomId}/messages/stream`, {
+    const source = new SSE(resolveApiUrl(`/api/rooms/${roomId}/messages/stream`), {
       headers: { 'Content-Type': 'application/json' },
       method: 'POST',
       payload: JSON.stringify({ content }),
@@ -116,7 +116,7 @@ const streamMessageApi = ({ roomId, content, onChunk, onIdReceived, onMeta }) =>
 const uploadFileApi = async ({ roomId, file }) => {
   const formData = new FormData();
   formData.append('file', file);
-  const { data } = await axios.post(`/api/rooms/${roomId}/upload`, formData, {
+  const { data } = await apiClient.post(`/api/rooms/${roomId}/upload`, formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   });
   return data;
@@ -182,7 +182,7 @@ const ChatInput = ({ roomId, roomData, disabled = false }) => {
 
   const createRoomMutation = useMutation({
     mutationFn: async ({ name, type, parentId }) => {
-      const { data } = await axios.post('/api/rooms', { name, type, parent_id: parentId });
+      const { data } = await apiClient.post('/api/rooms', { name, type, parent_id: parentId });
       return data;
     },
     onSuccess: (newRoom) => {
@@ -196,7 +196,7 @@ const ChatInput = ({ roomId, roomData, disabled = false }) => {
 
   const interactiveReviewRoomMutation = useMutation({
     mutationFn: async ({ parentId, topic, history }) => {
-      const { data } = await axios.post(`/api/rooms/${parentId}/create-review-room`, { topic, history });
+      const { data } = await apiClient.post(`/api/rooms/${parentId}/create-review-room`, { topic, history });
       return data;
     },
     onSuccess: (data, { parentId }) => {

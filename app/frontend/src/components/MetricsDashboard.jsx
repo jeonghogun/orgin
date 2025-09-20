@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import apiClient from '../lib/apiClient';
 import LoadingSpinner from './common/LoadingSpinner';
 import ErrorMessage from './common/ErrorMessage';
 import EmptyState from './common/EmptyState';
@@ -16,7 +16,7 @@ const MetricsDashboard = () => {
   const fetchMetricsSummary = async () => {
     try {
       setLoading(true);
-      const { data } = await axios.get('/api/metrics/summary');
+      const { data } = await apiClient.get('/api/metrics/summary');
       setSummary(data);
     } catch (err) {
       setError(err);

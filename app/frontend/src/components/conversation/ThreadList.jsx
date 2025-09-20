@@ -1,8 +1,8 @@
 import React, { useEffect } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import axios from 'axios';
 import toast from 'react-hot-toast';
+import apiClient from '../../lib/apiClient';
 import { useThreads, setThreads, addThread } from '../../store/useConversationStore';
 import useKeyboardShortcuts from '../../hooks/useKeyboardShortcuts';
 import { PlusIcon, ChatBubbleLeftIcon } from '@heroicons/react/24/outline';
@@ -16,7 +16,7 @@ const ThreadList = () => {
   const createThreadMutation = useMutation({
     mutationFn: async ({ roomId, title }) => {
       if (!roomId) throw new Error('No room selected');
-      const { data } = await axios.post(`/api/convo/rooms/${roomId}/threads`, { title });
+      const { data } = await apiClient.post(`/api/convo/rooms/${roomId}/threads`, { title });
       return data;
     },
     onSuccess: (newThread, { roomId }) => {
@@ -40,7 +40,7 @@ const ThreadList = () => {
   const { data, isLoading, error } = useQuery({
     queryKey: ['threads', selectedRoomId],
     queryFn: async () => {
-      const { data } = await axios.get(`/api/convo/rooms/${selectedRoomId}/threads`);
+      const { data } = await apiClient.get(`/api/convo/rooms/${selectedRoomId}/threads`);
       return data;
     },
     onSuccess: (data) => {

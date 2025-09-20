@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import RoomHeader from '../components/RoomHeader';
 import ChatInput from '../components/ChatInput';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import axios from 'axios';
+import apiClient, { resolveApiUrl } from '../lib/apiClient';
 import { useAppContext } from '../context/AppContext';
 import useRealtimeChannel from '../hooks/useRealtimeChannel';
 import toast from 'react-hot-toast';
@@ -28,7 +28,7 @@ const Review = ({ reviewId, isSplitView = false, createRoomMutation }) => {
   const { data: review, isLoading } = useQuery({
     queryKey: ['review', reviewId],
     queryFn: async () => {
-      const response = await axios.get(`/api/reviews/${reviewId}`);
+      const response = await apiClient.get(`/api/reviews/${reviewId}`);
       setReviewStatus(response.data.status);
       return response.data;
     },
@@ -39,7 +39,7 @@ const Review = ({ reviewId, isSplitView = false, createRoomMutation }) => {
     queryKey: ['messages', review?.room_id],
     queryFn: async () => {
       if (!review?.room_id) return [];
-      const response = await axios.get(`/api/rooms/${review.room_id}/messages`);
+      const response = await apiClient.get(`/api/rooms/${review.room_id}/messages`);
       return response.data || [];
     },
     enabled: !!review?.room_id,
@@ -124,7 +124,7 @@ const Review = ({ reviewId, isSplitView = false, createRoomMutation }) => {
 
     const verifyRouteSupport = async () => {
       try {
-        const response = await fetch(`/api/reviews/${reviewId}/continue`, {
+        const response = await fetch(resolveApiUrl(`/api/reviews/${reviewId}/continue`), {
           method: 'OPTIONS',
           signal: controller.signal,
         });
@@ -320,7 +320,7 @@ const Review = ({ reviewId, isSplitView = false, createRoomMutation }) => {
     if (!reviewId || debateConcluded) return;
     setIsRequestingRound(true);
     try {
-      await axios.post(`/api/reviews/${reviewId}/continue`);
+      await apiClient.post(`/api/reviews/${reviewId}/continue`);
       toast.success('추가 라운드를 요청했습니다.');
       await queryClient.invalidateQueries({ queryKey: ['review', reviewId] });
     } catch (error) {

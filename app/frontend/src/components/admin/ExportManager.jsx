@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import axios from 'axios';
 import toast from 'react-hot-toast';
+import apiClient, { resolveApiUrl } from '../../lib/apiClient';
 
 const POLLING_INTERVAL = 2000; // 2 seconds
 
@@ -11,7 +11,7 @@ const ExportManager = () => {
 
   const pollJobStatus = useCallback(async (jobId) => {
     try {
-      const { data } = await axios.get(`/api/export/jobs/${jobId}`);
+      const { data } = await apiClient.get(`/api/export/jobs/${jobId}`);
       if (data.status === 'done' || data.status === 'error') {
         setJob(data);
       } else {
@@ -39,7 +39,7 @@ const ExportManager = () => {
 
     try {
       // Note the API path change to /api/threads/...
-      const response = await axios.post(`/api/threads/${threadId.trim()}/export/jobs?format=${format}`);
+      const response = await apiClient.post(`/api/threads/${threadId.trim()}/export/jobs?format=${format}`);
       const { jobId } = response.data;
       
       if (jobId) {
@@ -89,8 +89,8 @@ const ExportManager = () => {
             {job.id && <p><strong>Job ID:</strong> {job.id}</p>}
             
             {job.status === 'done' && job.file_url && (
-              <a 
-                href={`/api/export/jobs/${job.id}/download`}
+              <a
+                href={resolveApiUrl(`/api/export/jobs/${job.id}/download`)}
                 className="inline-block px-4 py-2 bg-green-500 text-white rounded-md hover:bg-green-600"
                 download
               >

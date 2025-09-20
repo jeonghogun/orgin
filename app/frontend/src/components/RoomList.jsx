@@ -1,13 +1,15 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import axios from 'axios';
+import toast from 'react-hot-toast';
+
+import apiClient from '../lib/apiClient';
 
 import LoadingSpinner from './common/LoadingSpinner';
 import ErrorMessage from './common/ErrorMessage';
 import EmptyState from './common/EmptyState';
 
 const fetchRooms = async () => {
-  const { data } = await axios.get('/api/rooms');
+  const { data } = await apiClient.get('/api/rooms');
   return data;
 };
 
@@ -38,7 +40,7 @@ const buildRoomHierarchy = (rooms) => {
 };
 
 const updateRoomName = async ({ roomId, name }) => {
-  const { data } = await axios.patch(`/api/rooms/${roomId}`, { name });
+  const { data } = await apiClient.patch(`/api/rooms/${roomId}`, { name });
   return data;
 };
 
@@ -134,7 +136,7 @@ const RoomList = ({ onRoomSelect }) => {
     },
     onError: (err) => {
       console.error("Failed to update room name:", err);
-      // Optionally, show an error message to the user
+      toast.error('룸 이름을 변경하지 못했어요. 잠시 후 다시 시도해 주세요.');
       setEditingRoomId(null);
     }
   });

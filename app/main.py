@@ -21,7 +21,8 @@ from slowapi.errors import RateLimitExceeded
 # Load environment variables
 from dotenv import load_dotenv
 
-load_dotenv()
+if os.getenv("ENVIRONMENT", "development").lower() in {"development", "dev", "local", "test"}:
+    load_dotenv()
 
 from app.config.settings import settings
 from app.utils.helpers import get_current_timestamp

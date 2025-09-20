@@ -119,6 +119,54 @@ jobs:
           PYTHONPATH: .
         run: ./scripts/run_tests.sh
 
+  extended-tests:
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    services:
+      test-db:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: test_origin_db
+        ports:
+          - 5437:5432
+        options: >-
+          --health-cmd "pg_isready -U test_user -d test_origin_db"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+      test-redis:
+        image: redis:7-alpine
+        ports:
+          - 6382:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+      - name: Install Python dependencies
+        run: pip install -r requirements-dev.txt
+      - name: Run extended test suite (heavy + e2e)
+        env:
+          DATABASE_URL: postgresql://test_user:test_password@localhost:5437/test_origin_db
+          REDIS_URL: redis://localhost:6382/0
+          DB_ENCRYPTION_KEY: "test-key-for-ci-32-bytes-long"
+          AUTH_OPTIONAL: "True"
+          CELERY_TASK_ALWAYS_EAGER: "True"
+          OPENAI_API_KEY: "test-key-for-ci"
+          GEMINI_API_KEY: "test-key-for-ci"
+          ANTHROPIC_API_KEY: "test-key-for-ci"
+          PYTHONPATH: .
+        run: pytest -m "heavy or e2e" tests
+
   build-frontend:
     runs-on: ubuntu-latest
     steps:
@@ -140,7 +188,7 @@ jobs:
 
   build-docker:
     runs-on: ubuntu-latest
-    needs: [test, build-frontend, migration-check]
+    needs: [test, extended-tests, build-frontend, migration-check]
     if: github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v3

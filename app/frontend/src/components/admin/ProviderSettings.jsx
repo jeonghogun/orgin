@@ -1,17 +1,17 @@
 import React from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import axios from 'axios';
 import toast from 'react-hot-toast';
+import apiClient from '../../lib/apiClient';
 import LoadingSpinner from '../common/LoadingSpinner';
 import ErrorMessage from '../common/ErrorMessage';
 
 const fetchProviderConfig = async () => {
-  const { data } = await axios.get('/api/admin/config/providers');
+  const { data } = await apiClient.get('/api/admin/config/providers');
   return data;
 };
 
 const updateProviderConfig = async (config) => {
-  await axios.post('/api/admin/config/providers', config);
+  await apiClient.post('/api/admin/config/providers', config);
 };
 
 const ProviderSettings = () => {

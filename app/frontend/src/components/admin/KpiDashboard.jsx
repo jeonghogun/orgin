@@ -1,6 +1,6 @@
 import React from 'react';
 import { useQuery } from '@tanstack/react-query';
-import axios from 'axios';
+import apiClient from '../../lib/apiClient';
 import { Line } from 'react-chartjs-2';
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend } from 'chart.js';
 import LoadingSpinner from '../common/LoadingSpinner';
@@ -9,7 +9,7 @@ import ErrorMessage from '../common/ErrorMessage';
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend);
 
 const fetchKpiData = async () => {
-  const { data } = await axios.get('/api/admin/metrics/kpi');
+  const { data } = await apiClient.get('/api/admin/metrics/kpi');
   return data.data;
 };
 

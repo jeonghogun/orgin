@@ -3,7 +3,7 @@ import RoomHeader from '../components/RoomHeader';
 import MessageList from '../components/MessageList';
 import ChatInput from '../components/ChatInput';
 import { useQuery } from '@tanstack/react-query';
-import axios from 'axios';
+import apiClient from '../lib/apiClient';
 import { useAppContext } from '../context/AppContext';
 
 const Sub = ({ roomId, onToggleReview, createRoomMutation }) => {
@@ -14,7 +14,7 @@ const Sub = ({ roomId, onToggleReview, createRoomMutation }) => {
     queryKey: ['room', roomId],
     queryFn: async () => {
       if (!roomId) return null;
-      const response = await axios.get(`/api/rooms/${roomId}`);
+      const response = await apiClient.get(`/api/rooms/${roomId}`);
       return response.data;
     },
     enabled: !!roomId,

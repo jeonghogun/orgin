@@ -4,15 +4,20 @@ import userEvent from '@testing-library/user-event';
 import RoomList from '../RoomList';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
+const mockApiClient = {
+  get: jest.fn(),
+  patch: jest.fn(),
+};
+
 jest.mock('@tanstack/react-query', () => ({
   useQuery: jest.fn(),
   useMutation: jest.fn(),
   useQueryClient: jest.fn(),
 }));
 
-jest.mock('axios', () => ({
-  get: jest.fn(),
-  patch: jest.fn(),
+jest.mock('../../lib/apiClient', () => ({
+  __esModule: true,
+  default: mockApiClient,
 }));
 
 describe('RoomList', () => {
@@ -22,6 +27,8 @@ describe('RoomList', () => {
     useQueryClient.mockReset();
     useMutation.mockReturnValue({ mutate: jest.fn() });
     useQueryClient.mockReturnValue({ invalidateQueries: jest.fn() });
+    mockApiClient.get.mockReset();
+    mockApiClient.patch.mockReset();
   });
 
   it('shows a loading indicator while rooms are being fetched', () => {

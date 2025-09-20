@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useCallback, memo } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import axios from 'axios';
+import apiClient from '../lib/apiClient';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ROOM_TYPES } from '../constants';
 import { startRoomCreation } from '../store/useConversationStore';
@@ -187,7 +187,7 @@ const Sidebar = memo(() => {
 
   const renameMutation = useMutation({
     mutationFn: async ({ roomId, newName }) => {
-      const { data } = await axios.patch(`/api/rooms/${roomId}`, { name: newName });
+      const { data } = await apiClient.patch(`/api/rooms/${roomId}`, { name: newName });
       return data;
     },
     onSuccess: () => {
@@ -201,7 +201,7 @@ const Sidebar = memo(() => {
 
   const deleteMutation = useMutation({
     mutationFn: async (roomId) => {
-      await axios.delete(`/api/rooms/${roomId}`);
+      await apiClient.delete(`/api/rooms/${roomId}`);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['rooms'] });

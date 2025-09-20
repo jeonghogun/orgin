@@ -1,12 +1,12 @@
 import React from 'react';
 import { useQuery } from '@tanstack/react-query';
-import axios from 'axios';
+import apiClient from '../../lib/apiClient';
 
 const BudgetDisplay = () => {
   const { data, error, isLoading } = useQuery({
     queryKey: ['dailyUsage'],
     queryFn: async () => {
-      const { data } = await axios.get('/api/convo/usage/today');
+      const { data } = await apiClient.get('/api/convo/usage/today');
       return data;
     },
     refetchInterval: 30000, // Refetch every 30 seconds

@@ -12,8 +12,9 @@ from dotenv import load_dotenv
 from alembic import op
 import sqlalchemy as sa
 
-# Load .env file to ensure environment variables are available
-load_dotenv()
+# Load .env file to ensure environment variables are available in local development
+if os.getenv("ENVIRONMENT", "development").lower() in {"development", "dev", "local", "test"}:
+    load_dotenv()
 
 
 # revision identifiers, used by Alembic.

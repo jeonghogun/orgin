@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import axios from 'axios';
+import apiClient from '../../lib/apiClient';
 import { useThreads } from '../../store/useConversationStore';
 
 const SearchPanel = ({ onClose, currentThreadId = null }) => {
@@ -19,7 +19,7 @@ const SearchPanel = ({ onClose, currentThreadId = null }) => {
     const timeoutId = setTimeout(async () => {
       setIsSearching(true);
       try {
-        const response = await axios.post('/api/convo/search', {
+        const response = await apiClient.post('/api/convo/search', {
           query: query.trim(),
           thread_id: currentThreadId,
           limit: 20,

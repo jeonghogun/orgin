@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import axios from 'axios';
+
+import apiClient from '../../lib/apiClient';
 import LoadingSpinner from '../common/LoadingSpinner';
 import ErrorMessage from '../common/ErrorMessage';
 
@@ -8,7 +9,7 @@ const searchHybrid = async (query) => {
   if (!query || query.length < 3) {
     return []; // Don't search for very short queries
   }
-  const { data } = await axios.get(`/api/search/hybrid?q=${query}`);
+  const { data } = await apiClient.get(`/api/search/hybrid?q=${query}`);
   return data.data.results;
 };
 

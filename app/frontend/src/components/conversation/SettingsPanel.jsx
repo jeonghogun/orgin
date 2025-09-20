@@ -1,6 +1,6 @@
 import React from 'react';
 import { useQuery } from '@tanstack/react-query';
-import axios from 'axios';
+import apiClient from '../../lib/apiClient';
 import { useGenerationSettings, setSettings } from '../../store/useConversationStore';
 
 const SettingsPanel = () => {
@@ -9,7 +9,7 @@ const SettingsPanel = () => {
   const { data: availableModels = [], isLoading } = useQuery({
     queryKey: ['models'],
     queryFn: async () => {
-      const { data } = await axios.get('/api/convo/models');
+      const { data } = await apiClient.get('/api/convo/models');
       return data;
     },
   });

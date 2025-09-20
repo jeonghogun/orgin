@@ -1,17 +1,17 @@
 import React from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import axios from 'axios';
 import toast from 'react-hot-toast';
+import apiClient from '../../lib/apiClient';
 import LoadingSpinner from '../common/LoadingSpinner';
 import ErrorMessage from '../common/ErrorMessage';
 
 const fetchGuardrailSettings = async () => {
-  const { data } = await axios.get('/api/admin/settings/guardrails');
+  const { data } = await apiClient.get('/api/admin/settings/guardrails');
   return data;
 };
 
 const updateGuardrailSettings = async (settings) => {
-  await axios.post('/api/admin/settings/guardrails', settings);
+  await apiClient.post('/api/admin/settings/guardrails', settings);
 };
 
 const GuardrailSettings = () => {

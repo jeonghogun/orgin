@@ -198,6 +198,8 @@ http://127.0.0.1:8000/redoc # ReDoc
 | `AUTH_OPTIONAL` | 인증 생략 여부 (개발용) | False |
 | `API_HOST` | API 서버 호스트 | 127.0.0.1 |
 | `API_PORT` | API 서버 포트 | 8000 |
+| `VITE_API_BASE_URL` | 프런트엔드가 사용할 API 기본 URL (예: `https://origin.example.com`) | 빈 값 시 상대 경로 |
+| `VITE_WS_BASE_URL` | 프런트엔드 SSE/웹소켓 기본 URL (예: `wss://origin.example.com`) | API 기준 자동 추론 |
 | `DEBUG` | 디버그 모드 (로컬 개발 시에만 True 권장) | False |
 | `ALLOW_TEST_DB_ENCRYPTION_KEY` | 내장 테스트 DB 암호화 키 사용 허용 (로컬 전용) | False |
 

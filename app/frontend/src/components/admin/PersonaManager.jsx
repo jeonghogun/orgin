@@ -1,17 +1,17 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import axios from 'axios';
 import toast from 'react-hot-toast';
+import apiClient from '../../lib/apiClient';
 import LoadingSpinner from '../common/LoadingSpinner';
 import ErrorMessage from '../common/ErrorMessage';
 
 const fetchPersonaJobs = async () => {
-  const { data } = await axios.get('/api/admin/persona/jobs');
+  const { data } = await apiClient.get('/api/admin/persona/jobs');
   return data.jobs;
 };
 
 const rebuildPersona = async (userId) => {
-  await axios.post('/api/admin/persona/rebuild', { user_id: userId });
+  await apiClient.post('/api/admin/persona/rebuild', { user_id: userId });
 };
 
 const PersonaManager = () => {

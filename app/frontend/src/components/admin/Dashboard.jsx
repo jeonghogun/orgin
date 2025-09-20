@@ -1,6 +1,6 @@
 import React from 'react';
 import { useQuery } from '@tanstack/react-query';
-import axios from 'axios';
+import apiClient from '../../lib/apiClient';
 import { Line, Bar } from 'react-chartjs-2';
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, BarElement, Title, Tooltip, Legend } from 'chart.js';
 import LoadingSpinner from '../common/LoadingSpinner';
@@ -9,7 +9,7 @@ import ErrorMessage from '../common/ErrorMessage';
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Title, Tooltip, Legend);
 
 const fetchDashboardData = async () => {
-  const { data } = await axios.get('/api/admin/dashboard');
+  const { data } = await apiClient.get('/api/admin/dashboard');
   return data;
 };
 

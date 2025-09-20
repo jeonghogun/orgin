@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
-import axios from 'axios';
+import apiClient from '../lib/apiClient';
 
 import { useQuery } from '@tanstack/react-query';
 import LoadingSpinner from './common/LoadingSpinner';
@@ -9,7 +9,7 @@ import useRealtimeChannel from '../hooks/useRealtimeChannel';
 import { withFallbackMeta } from '../utils/realtime';
 
 const fetchReport = async (reviewId) => {
-  const { data } = await axios.get(`/api/reviews/${reviewId}/report`);
+  const { data } = await apiClient.get(`/api/reviews/${reviewId}/report`);
   return data.data;
 };
 

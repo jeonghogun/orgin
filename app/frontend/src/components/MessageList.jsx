@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import axios from 'axios';
 import toast from 'react-hot-toast';
 
 import ChatInput from './ChatInput';
@@ -9,16 +8,17 @@ import ConnectionStatusBanner from './common/ConnectionStatusBanner';
 import ContextSummaryCard from './ContextSummaryCard';
 import { ROOM_TYPES } from '../constants';
 import useRealtimeChannel from '../hooks/useRealtimeChannel';
+import apiClient from '../lib/apiClient';
 
 
 const fetchMessages = async (roomId) => {
   if (!roomId) return [];
-  const { data } = await axios.get(`/api/rooms/${roomId}/messages`);
+  const { data } = await apiClient.get(`/api/rooms/${roomId}/messages`);
   return data || [];
 };
 
 const promoteMemory = async ({ mainRoomId, subRoomId }) => {
-  const { data } = await axios.post(`/api/rooms/${mainRoomId}/promote-memory`, {
+  const { data } = await apiClient.post(`/api/rooms/${mainRoomId}/promote-memory`, {
     sub_room_id: subRoomId,
     criteria_text: "Promote key learnings from this sub-room discussion.",
   });

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import ReactDiffViewer from 'react-diff-viewer';
 import { useQuery } from '@tanstack/react-query';
-import axios from 'axios';
+import apiClient from '../../lib/apiClient';
 
 const DiffViewModal = ({ messageId, onClose }) => {
   const [selected, setSelected] = useState({ oldId: null, newId: null });
@@ -9,7 +9,7 @@ const DiffViewModal = ({ messageId, onClose }) => {
   const { data: versions = [], isLoading } = useQuery({
     queryKey: ['versions', messageId],
     queryFn: async () => {
-      const { data } = await axios.get(`/api/convo/messages/${messageId}/versions`);
+      const { data } = await apiClient.get(`/api/convo/messages/${messageId}/versions`);
       return data;
     },
     onSuccess: (data) => {
@@ -25,7 +25,7 @@ const DiffViewModal = ({ messageId, onClose }) => {
     queryKey: ['diff', selected.oldId, selected.newId],
     queryFn: async () => {
       if (!selected.oldId || !selected.newId) return null;
-      const { data } = await axios.get(`/api/convo/messages/${selected.newId}/diff?against=${selected.oldId}`);
+      const { data } = await apiClient.get(`/api/convo/messages/${selected.newId}/diff?against=${selected.oldId}`);
       return data;
     },
     enabled: !!selected.oldId && !!selected.newId,

@@ -1,5 +1,6 @@
-import { useEffect, useRef, useCallback, useState } from 'react';
+import { useEffect, useRef, useCallback, useState, useMemo } from 'react';
 import { SSE } from 'sse.js';
+import { resolveApiUrl } from '../lib/apiClient';
 
 const MAX_RECONNECT_ATTEMPTS = 3;
 const INITIAL_RECONNECT_DELAY = 1000;
@@ -16,6 +17,7 @@ const useEventSource = (url, eventListeners, options = {}) => {
   const reconnectTimeoutRef = useRef(null);
   const reconnectAttemptsRef = useRef(0);
   const [status, setStatus] = useState('idle');
+  const resolvedUrl = useMemo(() => (url ? resolveApiUrl(url) : null), [url]);
 
   const closeConnection = useCallback(() => {
     if (eventSourceRef.current) {
@@ -29,7 +31,7 @@ const useEventSource = (url, eventListeners, options = {}) => {
   }, []);
 
   const connect = useCallback(() => {
-    if (!url) {
+    if (!resolvedUrl) {
       closeConnection();
       setStatus('idle');
       return;
@@ -43,7 +45,9 @@ const useEventSource = (url, eventListeners, options = {}) => {
       options && (options.method && options.method !== 'GET' || options.payload || options.headers)
     );
 
-    const es = shouldUsePolyfill ? new SSE(url, options) : new EventSource(url, shouldUsePolyfill ? undefined : options);
+    const es = shouldUsePolyfill
+      ? new SSE(resolvedUrl, options)
+      : new EventSource(resolvedUrl, shouldUsePolyfill ? undefined : options);
     eventSourceRef.current = es;
 
     // Standard open event
@@ -123,7 +127,7 @@ const useEventSource = (url, eventListeners, options = {}) => {
       es.stream();
     }
 
-  }, [url, eventListeners, closeConnection, options]);
+  }, [resolvedUrl, eventListeners, closeConnection, options]);
 
   useEffect(() => {
     connect();

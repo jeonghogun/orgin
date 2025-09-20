@@ -1,8 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
-import axios from 'axios';
+import apiClient from '../lib/apiClient';
 
 const fetchRooms = async () => {
-  const { data } = await axios.get('/api/rooms');
+  const { data } = await apiClient.get('/api/rooms');
   if (!Array.isArray(data)) {
     console.warn('useRoomsQuery: received non-array payload for rooms', data);
     return [];

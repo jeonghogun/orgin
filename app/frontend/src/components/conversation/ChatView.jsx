@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import PropTypes from 'prop-types';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import axios from 'axios';
+import apiClient, { resolveApiUrl } from '../../lib/apiClient';
 import { useMessages, useGenerationSettings, setMessages, addMessage, appendStreamChunk, setMessageStatus, markMessageError } from '../../store/useConversationStore';
 import useRealtimeChannel from '../../hooks/useRealtimeChannel';
 import RoomHeader from '../RoomHeader';
@@ -26,7 +26,7 @@ const ChatView = ({ threadId }) => {
   const { data: fetchedMessages, isLoading, error } = useQuery({
     queryKey: ['messages', threadId],
     queryFn: async () => {
-      const { data } = await axios.get(`/api/convo/threads/${threadId}/messages`);
+      const { data } = await apiClient.get(`/api/convo/threads/${threadId}/messages`);
       return data;
     },
     enabled: !!threadId,
@@ -51,7 +51,9 @@ const ChatView = ({ threadId }) => {
     mutationFn: (file) => {
       const formData = new FormData();
       formData.append('file', file);
-      return axios.post('/api/uploads', formData);
+      return apiClient.post('/api/uploads', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
     },
     onSuccess: (response) => {
       setAttachments((prev) => [...prev, response.data]);
@@ -68,7 +70,7 @@ const ChatView = ({ threadId }) => {
         throw new Error('활성화된 스레드가 없어 메시지를 보낼 수 없습니다.');
       }
       const { retryOf, ...payload } = newMessage;
-      const { data } = await axios.post(`/api/convo/threads/${threadId}/messages`, payload);
+      const { data } = await apiClient.post(`/api/convo/threads/${threadId}/messages`, payload);
       return { messageId: data.messageId, retryOf };
     },
     onSuccess: ({ messageId, retryOf }, variables) => {
@@ -221,7 +223,7 @@ const ChatView = ({ threadId }) => {
       if (!threadId) {
         throw new Error('활성화된 스레드가 없어 내보내기를 시작할 수 없습니다.');
       }
-      return axios.post(`/api/threads/${threadId}/export/jobs`, null, { params: { format } });
+      return apiClient.post(`/api/threads/${threadId}/export/jobs`, null, { params: { format } });
     },
     onSuccess: (response) => setExportJob(response.data),
     onError: (mutationError) => {
@@ -233,7 +235,7 @@ const ChatView = ({ threadId }) => {
   const { data: exportStatus } = useQuery({
     queryKey: ['exportStatus', exportJob?.jobId],
     queryFn: async () => {
-      const { data } = await axios.get(`/api/export/jobs/${exportJob.jobId}`);
+      const { data } = await apiClient.get(`/api/export/jobs/${exportJob.jobId}`);
       return data;
     },
     onSuccess: (data) => {
@@ -255,7 +257,13 @@ const ChatView = ({ threadId }) => {
         <div className="p-2 text-center bg-blue-100 dark:bg-blue-900 text-sm text-blue-800 dark:text-blue-200">
           Export status: <strong>{exportStatus?.status || exportJob.status}</strong>.
           {(exportStatus?.status === 'done' || exportJob.status === 'done') && (
-            <a href={`/api/export/jobs/${exportJob.jobId}/download`} className="font-bold ml-2 underline" download>Download</a>
+            <a
+              href={resolveApiUrl(`/api/export/jobs/${exportJob.jobId}/download`)}
+              className="font-bold ml-2 underline"
+              download
+            >
+              Download
+            </a>
           )}
           {(exportStatus?.status === 'error' || exportJob.status === 'error') && (
             <span className="ml-2 text-red-500">{exportStatus?.error_message || 'An unknown error occurred.'}</span>
