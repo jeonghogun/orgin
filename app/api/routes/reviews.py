@@ -236,7 +236,6 @@ async def get_review(
 
 
 from sse_starlette.sse import EventSourceResponse
-from app.services.redis_pubsub import redis_pubsub_manager
 from app.services.realtime_service import realtime_service
 
 async def review_event_generator(
@@ -263,11 +262,28 @@ async def review_event_generator(
             ),
         )
 
-    # Now, listen for live events from Redis Pub/Sub
-    async with redis_pubsub_manager.subscribe(f"review_{review_id}") as subscriber:
-        async for message in subscriber:
+    listener_queue = realtime_service.register_listener(review_id)
+
+    try:
+        while True:
             if await request.is_disconnected():
                 break
+            try:
+                message = await asyncio.wait_for(listener_queue.get(), timeout=15)
+            except asyncio.TimeoutError:
+                yield {
+                    "event": "heartbeat",
+                    "data": realtime_service.format_event(
+                        "heartbeat",
+                        {"status": "alive"},
+                        {"delivery": "live"},
+                    ),
+                }
+                continue
+
+            if message is None:
+                continue
+
             structured = _parse_live_review_message(message)
             yield dict(
                 event="live_event",
@@ -277,6 +293,8 @@ async def review_event_generator(
                     {**structured["meta"], "delivery": "live"},
                 ),
             )
+    finally:
+        realtime_service.unregister_listener(review_id, listener_queue)
 
 @router.get("/reviews/{review_id}/events")
 async def get_review_events_stream(

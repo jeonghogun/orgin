@@ -8,13 +8,15 @@ imported by both the REST and streaming endpoints.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from sse_starlette.sse import EventSourceResponse
 
-from app.models.schemas import Message
+from app.models.enums import RoomType
+from app.models.schemas import Message, ReviewMeta
 from app.services.background_task_service import BackgroundTaskService
 from app.services.cache_service import CacheService
 from app.services.external_api_service import ExternalSearchService
@@ -24,8 +26,11 @@ from app.services.intent_classifier_service import (
     IntentClassifierService,
 )
 from app.services.intent_service import IntentService
+from app.services.llm_service import LLMService
 from app.services.memory_service import MemoryService
+from app.services.rag_service import RAGService
 from app.services.realtime_service import RealtimeService
+from app.services.review_service import ReviewService
 from app.services.storage_service import StorageService
 from app.services.user_fact_service import UserFactService
 from app.services.fact_types import FactType
@@ -531,4 +536,309 @@ async def build_fact_query_success_response(
             "ai_response": ai_message.model_dump(),
         }
     )
+
+
+class MessagePipeline:
+    """Orchestrate the classic synchronous message flow."""
+
+    def __init__(
+        self,
+        *,
+        storage_service: StorageService,
+        rag_service: RAGService,
+        memory_service: MemoryService,
+        search_service: ExternalSearchService,
+        intent_service: IntentService,
+        review_service: ReviewService,
+        llm_service: LLMService,
+        fact_extractor_service: FactExtractorService,
+        user_fact_service: UserFactService,
+        cache_service: CacheService,
+        background_tasks: BackgroundTaskService,
+        realtime_service: RealtimeService,
+        intent_classifier: IntentClassifierService,
+    ) -> None:
+        self.storage_service = storage_service
+        self.rag_service = rag_service
+        self.memory_service = memory_service
+        self.search_service = search_service
+        self.intent_service = intent_service
+        self.review_service = review_service
+        self.llm_service = llm_service
+        self.fact_extractor_service = fact_extractor_service
+        self.user_fact_service = user_fact_service
+        self.cache_service = cache_service
+        self.background_tasks = background_tasks
+        self.realtime_service = realtime_service
+        self.intent_classifier = intent_classifier
+
+    async def process_user_message(
+        self,
+        *,
+        room_id: str,
+        user_id: str,
+        content: str,
+        raw_payload: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Persist a user message, generate a reply and return the API payload."""
+
+        message = await self._persist_user_message(
+            room_id=room_id,
+            user_id=user_id,
+            content=content,
+        )
+
+        await ensure_fact_extraction(
+            message=message,
+            user_fact_service=self.user_fact_service,
+            fact_extractor_service=self.fact_extractor_service,
+            background_tasks=self.background_tasks,
+            execute_inline=True,
+        )
+
+        _, fact_response = await build_fact_query_response(
+            content=content,
+            user_id=user_id,
+            user_fact_service=self.user_fact_service,
+            cache_service=self.cache_service,
+            intent_classifier=self.intent_classifier,
+        )
+
+        if fact_response:
+            return await build_fact_query_success_response(
+                room_id=room_id,
+                message=message,
+                ai_content=fact_response,
+                storage_service=self.storage_service,
+                realtime_service=self.realtime_service,
+            )
+
+        current_room = await self._maybe_get_room(room_id)
+        pending_action_key = f"pending_action:{room_id}"
+        pending_action_facts = await maybe_await(
+            self.memory_service.get_user_facts(
+                user_id,
+                kind="conversation_state",
+                key=pending_action_key,
+            )
+        )
+
+        intent_from_client = raw_payload.get("intent")
+
+        ai_content = ""
+        intent = ""
+        entities: Dict[str, Any] = {}
+
+        if pending_action_facts:
+            # Legacy pending-action flows are not yet implemented in the pipeline.
+            logger.debug(
+                "Pending action facts detected for room %s; falling back to default flow.",
+                room_id,
+            )
+        elif intent_from_client:
+            intent = intent_from_client
+        else:
+            intent, entities = await classify_intent(
+                self.intent_service,
+                content,
+                message.message_id,
+            )
+
+        quick_response = await build_quick_intent_response(
+            intent=intent,
+            content=content,
+            user_id=user_id,
+            entities=entities,
+            user_fact_service=self.user_fact_service,
+            cache_service=self.cache_service,
+            search_service=self.search_service,
+        )
+
+        if quick_response is not None:
+            ai_content = quick_response
+        elif intent == "review":
+            ai_content = await self._handle_review_intent(
+                current_room=current_room,
+                room_id=room_id,
+                user_id=user_id,
+                content=content,
+                trace_id=str(message.message_id),
+            )
+        elif intent == "start_memory_promotion":
+            await maybe_await(
+                self.memory_service.upsert_user_fact(
+                    user_id,
+                    kind="conversation_state",
+                    key=pending_action_key,
+                    value={"action": "promote_memory_confirmation"},
+                    confidence=1.0,
+                )
+            )
+            ai_content = (
+                "어떤 대화를 상위 룸으로 올릴까요? '어제 대화 전부' 또는 'AI 윤리에 대한 내용만'과 같이 구체적으로 말씀해주세요."
+            )
+        else:
+            ai_content = await self._generate_rag_response(
+                room_id=room_id,
+                user_id=user_id,
+                content=content,
+                message_id=message.message_id,
+            )
+
+        ai_message = Message(
+            message_id=generate_id(),
+            room_id=room_id,
+            user_id="ai",
+            content=ai_content,
+            timestamp=get_current_timestamp(),
+            role="ai",
+        )
+        self.storage_service.save_message(ai_message)
+        await self.realtime_service.publish(
+            room_id,
+            "new_message",
+            ai_message.model_dump(),
+        )
+
+        suggestion = await self._check_and_suggest_review(
+            room_id=room_id,
+            user_id=user_id,
+        )
+
+        return create_success_response(
+            data={
+                "message": message.model_dump(),
+                "ai_response": ai_message.model_dump(),
+                "intent": intent,
+                "entities": entities,
+                "suggestion": suggestion,
+            },
+            message="Message sent successfully",
+        )
+
+    async def _persist_user_message(
+        self,
+        *,
+        room_id: str,
+        user_id: str,
+        content: str,
+    ) -> Message:
+        message = Message(
+            message_id=generate_id(),
+            room_id=room_id,
+            user_id=user_id,
+            content=content,
+            timestamp=get_current_timestamp(),
+        )
+        self.storage_service.save_message(message)
+        await self.realtime_service.publish(
+            room_id,
+            "new_message",
+            message.model_dump(),
+        )
+        return message
+
+    async def _maybe_get_room(self, room_id: str):
+        return await asyncio.to_thread(self.storage_service.get_room, room_id)
+
+    async def _handle_review_intent(
+        self,
+        *,
+        current_room,
+        room_id: str,
+        user_id: str,
+        content: str,
+        trace_id: str,
+    ) -> str:
+        if not current_room or current_room.type != RoomType.SUB:
+            return "검토 기능은 서브룸에서만 시작할 수 있습니다."
+
+        topic = (
+            content.replace("검토해보자", "").replace("리뷰해줘", "").strip()
+        )
+        if not topic:
+            topic = f"'{current_room.name}'에 대한 검토"
+
+        return await self._create_review_and_start(
+            room_id=room_id,
+            user_id=user_id,
+            topic=topic,
+            trace_id=trace_id,
+        )
+
+    async def _generate_rag_response(
+        self,
+        *,
+        room_id: str,
+        user_id: str,
+        content: str,
+        message_id: str,
+    ) -> str:
+        memory_context = await maybe_await(
+            self.memory_service.build_hierarchical_context_blocks(
+                room_id=room_id,
+                user_id=user_id,
+                query=content,
+            )
+        )
+        return await maybe_await(
+            self.rag_service.generate_rag_response(
+                room_id,
+                user_id,
+                content,
+                memory_context,
+                message_id,
+            )
+        )
+
+    async def _create_review_and_start(
+        self,
+        *,
+        room_id: str,
+        user_id: str,
+        topic: str,
+        trace_id: str,
+    ) -> str:
+        new_review_room = self.storage_service.create_room(
+            room_id=generate_id(),
+            name=f"검토: {topic}",
+            owner_id=user_id,
+            room_type=RoomType.REVIEW,
+            parent_id=room_id,
+        )
+        instruction = (
+            "이 주제에 대해 최대 4 라운드에 걸쳐 심도 있게 토론하되, 추가 주장이 없으면 조기에 종료해주세요."
+        )
+        review_meta = ReviewMeta(
+            review_id=new_review_room.room_id,
+            room_id=new_review_room.room_id,
+            topic=topic,
+            instruction=instruction,
+            total_rounds=4,
+            created_at=get_current_timestamp(),
+        )
+        self.storage_service.save_review_meta(review_meta)
+        await maybe_await(
+            self.review_service.start_review_process(
+                review_id=new_review_room.room_id,
+                review_room_id=new_review_room.room_id,
+                topic=topic,
+                instruction=instruction,
+                panelists=None,
+                trace_id=trace_id,
+            )
+        )
+        return (
+            f"알겠습니다. '{topic}'에 대한 검토를 시작하겠습니다. '{new_review_room.name}' 룸에서 토론을 확인하세요."
+        )
+
+    async def _check_and_suggest_review(
+        self,
+        *,
+        room_id: str,
+        user_id: str,
+    ) -> Optional[str]:
+        # This function currently mirrors the legacy placeholder implementation.
+        _ = (room_id, user_id, self.llm_service)
+        return None
 

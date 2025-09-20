@@ -1,15 +1,41 @@
 import React, { useEffect } from 'react';
-import { Link, useParams } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
-import { useThreads, setThreads } from '../../store/useConversationStore';
-import { useAppContext } from '../../context/AppContext';
+import toast from 'react-hot-toast';
+import { useThreads, setThreads, addThread } from '../../store/useConversationStore';
+import useKeyboardShortcuts from '../../hooks/useKeyboardShortcuts';
 import { PlusIcon, ChatBubbleLeftIcon } from '@heroicons/react/24/outline';
 
 const ThreadList = () => {
   const threads = useThreads();
-  const { handleNewThread, createThreadMutation } = useAppContext();
   const { threadId: currentThreadId, roomId: selectedRoomId } = useParams();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+
+  const createThreadMutation = useMutation({
+    mutationFn: async ({ roomId, title }) => {
+      if (!roomId) throw new Error('No room selected');
+      const { data } = await axios.post(`/api/convo/rooms/${roomId}/threads`, { title });
+      return data;
+    },
+    onSuccess: (newThread, { roomId }) => {
+      queryClient.invalidateQueries({ queryKey: ['threads', roomId] });
+      addThread(newThread);
+      navigate(`/rooms/${roomId}/threads/${newThread.id}`);
+    },
+    onError: (error) => {
+      console.error('Failed to create thread:', error);
+      toast.error('Could not create a new conversation in this room.');
+    }
+  });
+
+  const handleNewThread = () => {
+    if (!selectedRoomId || createThreadMutation.isPending) return;
+    createThreadMutation.mutate({ roomId: selectedRoomId, title: 'New Conversation' });
+  };
+
+  useKeyboardShortcuts({ 'Ctrl+N': handleNewThread });
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['threads', selectedRoomId],
@@ -39,8 +65,17 @@ const ThreadList = () => {
 
   return (
     <div className="h-full bg-panel flex flex-col">
-      <div className="p-4 border-b border-border">
+      <div className="p-4 border-b border-border flex items-center justify-between">
         <h2 className="text-h2">Conversations</h2>
+        <button
+          type="button"
+          onClick={handleNewThread}
+          disabled={!selectedRoomId || createThreadMutation.isPending}
+          className="inline-flex items-center justify-center rounded-md bg-accent px-2 py-1 text-sm font-medium text-white hover:bg-accent/90 disabled:opacity-50"
+          aria-label="Start a new conversation"
+        >
+          <PlusIcon className="h-5 w-5" />
+        </button>
       </div>
 
       <div className="flex-1 overflow-y-auto">

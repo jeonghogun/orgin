@@ -1,15 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, useParams, useNavigate, useLocation } from 'react-router-dom';
-import { QueryClient, QueryClientProvider, useMutation, useQueryClient, useQuery } from '@tanstack/react-query';
+import { Routes, Route, Navigate, useParams, useNavigate, useLocation } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import axios from 'axios';
 
-import SearchPanel from './components/conversation/SearchPanel';
 import { AppProvider } from './context/AppContext';
 import Main from './pages/Main';
 import ErrorBoundary from './components/common/ErrorBoundary';
 import useKeyboardShortcuts from './hooks/useKeyboardShortcuts';
-import toast from 'react-hot-toast';
-import { addThread } from './store/useConversationStore';
 import { ROOM_TYPES } from './constants';
 
 // This component uses hooks that require Router context (like useNavigate)
@@ -18,8 +15,7 @@ import GlobalSearchModal from './components/search/GlobalSearchModal';
 function AppContent() {
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
-  const { roomId, threadId } = useParams();
+  const { roomId } = useParams();
   const location = useLocation();
 
   // 룸 목록을 가져와서 메인룸 자동 선택
@@ -43,31 +39,6 @@ function AppContent() {
     }
   }, [rooms, roomId, location.pathname, navigate]);
 
-  // Logic for creating a new thread (conversation) in the selected room
-  const createThreadMutation = useMutation({
-    mutationFn: ({ roomId, title }) => {
-      if (!roomId) throw new Error("No room selected");
-      return axios.post(`/api/convo/rooms/${roomId}/threads`, { title });
-    },
-    onSuccess: (response, { roomId }) => {
-      const newThread = response.data;
-      queryClient.invalidateQueries({ queryKey: ['threads', roomId] });
-      addThread(newThread);
-      navigate(`/rooms/${roomId}/threads/${newThread.id}`);
-    },
-    onError: (error) => {
-      console.error('Failed to create thread:', error);
-      toast.error('Could not create a new conversation in this room.');
-    }
-  });
-
-  const handleNewThread = () => {
-    if (createThreadMutation.isPending || !roomId) return;
-    createThreadMutation.mutate({ roomId, title: "New Conversation" });
-  };
-  
-
-
   const handleSearch = () => setIsSearchOpen(true);
 
   // Copy/Paste functionality remains the same
@@ -90,7 +61,6 @@ function AppContent() {
 
   // Simplified shortcuts
   const shortcuts = {
-    'Ctrl+N': handleNewThread,
     'Meta+K': handleSearch, // Using Meta for Cmd key on Mac
     'Ctrl+K': handleSearch,
     'Ctrl+C': handleCopy,
@@ -99,9 +69,8 @@ function AppContent() {
 
   useKeyboardShortcuts(shortcuts);
 
-  // 룸 생성 mutation 추가
   return (
-    <AppProvider value={{ handleNewThread, createThreadMutation }}>
+    <AppProvider>
       {isSearchOpen && <GlobalSearchModal onClose={() => setIsSearchOpen(false)} />}
       <ErrorBoundary>
         <Routes>
