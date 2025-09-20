@@ -20,8 +20,10 @@ const Review = ({ reviewId, isSplitView = false, createRoomMutation }) => {
   const queryClient = useQueryClient();
   const [isRequestingRound, setIsRequestingRound] = useState(false);
   const MAX_DEBATE_ROUNDS = 4;
-  const reviewContinuationEnabled =
-    String(import.meta.env.VITE_ENABLE_REVIEW_CONTINUATION || '').toLowerCase() === 'true';
+  const continuationFlagRef = useRef(
+    String(import.meta.env.VITE_ENABLE_REVIEW_CONTINUATION || '').toLowerCase() === 'true'
+  );
+  const [reviewContinuationEnabled, setReviewContinuationEnabled] = useState(continuationFlagRef.current);
 
   const { data: review, isLoading } = useQuery({
     queryKey: ['review', reviewId],
@@ -111,6 +113,44 @@ const Review = ({ reviewId, isSplitView = false, createRoomMutation }) => {
     setStatusEvents([]);
     setLiveMessages([]);
     setIsRequestingRound(false);
+  }, [reviewId]);
+
+  useEffect(() => {
+    if (!continuationFlagRef.current || !reviewId) {
+      return;
+    }
+
+    const controller = new AbortController();
+
+    const verifyRouteSupport = async () => {
+      try {
+        const response = await fetch(`/api/reviews/${reviewId}/continue`, {
+          method: 'OPTIONS',
+          signal: controller.signal,
+        });
+
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        if (response.status === 404) {
+          setReviewContinuationEnabled(false);
+        } else if (response.ok || response.status === 405) {
+          setReviewContinuationEnabled(true);
+        }
+      } catch (error) {
+        if (controller.signal.aborted || error?.name === 'AbortError') {
+          return;
+        }
+        // Leave the existing flag unchanged on network or unexpected errors.
+      }
+    };
+
+    void verifyRouteSupport();
+
+    return () => {
+      controller.abort();
+    };
   }, [reviewId]);
 
   const recordStatusEvent = useCallback((status, ts) => {

@@ -12,6 +12,7 @@ const useConversationStore = create(
       type: null, // 'SUB' or 'REVIEW'
       parentId: null,
       promptText: '',
+      promptMessageId: null,
     },
 
     reviewRoomCreation: {
@@ -71,13 +72,14 @@ const useConversationStore = create(
         }
       }),
 
-      startRoomCreation: (parentId, type, promptText) => {
+      startRoomCreation: (parentId, type, promptText, promptMessageId = null) => {
         set((state) => {
           state.roomCreationRequest = {
             active: true,
             type,
             parentId,
             promptText,
+            promptMessageId,
           };
         });
       },
@@ -88,6 +90,7 @@ const useConversationStore = create(
           type: null,
           parentId: null,
           promptText: '',
+          promptMessageId: null,
         };
       }),
 
@@ -130,7 +133,8 @@ export const setMessages = (threadId, messages) => useConversationStore.getState
 export const addMessage = (threadId, message) => useConversationStore.getState().actions.addMessage(threadId, message);
 export const updateMessage = (threadId, messageId, updatedMessage) => useConversationStore.getState().actions.updateMessage(threadId, messageId, updatedMessage);
 export const appendStreamChunk = (threadId, messageId, chunk) => useConversationStore.getState().actions.appendStreamChunk(threadId, messageId, chunk);
-export const startRoomCreation = (parentId, type, promptText) => useConversationStore.getState().actions.startRoomCreation(parentId, type, promptText);
+export const startRoomCreation = (parentId, type, promptText, promptMessageId) =>
+  useConversationStore.getState().actions.startRoomCreation(parentId, type, promptText, promptMessageId);
 export const clearRoomCreation = () => useConversationStore.getState().actions.clearRoomCreation();
 export const setSettings = (settings) => useConversationStore.getState().actions.setSettings(settings);
 export const useRoomCreationRequest = () => useConversationStore((state) => state.roomCreationRequest);

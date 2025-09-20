@@ -224,3 +224,4 @@ class CreateReviewRoomInteractiveResponse(BaseModel):
     status: Literal["created", "needs_more_context"]
     room: Optional[Room] = None
     question: Optional[str] = None
+    prompt_message: Optional[Message] = None

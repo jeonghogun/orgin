@@ -236,11 +236,12 @@ const Sidebar = memo(() => {
 
   const handleCreateSubRoom = useCallback((parentId) => {
     const promptText = "어떤 세부룸을 만들까요?";
-    startRoomCreation(parentId, ROOM_TYPES.SUB, promptText);
+    const promptMessageId = `ai_prompt_${Date.now()}`;
+    startRoomCreation(parentId, ROOM_TYPES.SUB, promptText, promptMessageId);
     queryClient.setQueryData(['messages', parentId], (old = []) => [
       ...old,
       {
-        message_id: `ai_prompt_${Date.now()}`,
+        message_id: promptMessageId,
         room_id: parentId,
         role: 'assistant',
         content: promptText,
@@ -251,11 +252,12 @@ const Sidebar = memo(() => {
 
   const handleCreateReviewRoom = useCallback((parentId) => {
     const promptText = "어떤 주제로 검토룸을 열까요?";
-    startRoomCreation(parentId, ROOM_TYPES.REVIEW, promptText);
+    const promptMessageId = `ai_prompt_${Date.now()}`;
+    startRoomCreation(parentId, ROOM_TYPES.REVIEW, promptText, promptMessageId);
     queryClient.setQueryData(['messages', parentId], (old = []) => [
       ...old,
       {
-        message_id: `ai_prompt_${Date.now()}`,
+        message_id: promptMessageId,
         room_id: parentId,
         role: 'assistant',
         content: promptText,

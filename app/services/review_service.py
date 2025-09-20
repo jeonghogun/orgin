@@ -27,6 +27,7 @@ from app.core.errors import InvalidRequestError
 from app.tasks import review_tasks
 
 from app.services.redis_pubsub import redis_pubsub_manager
+from app.services.realtime_service import realtime_service
 from app.services.llm_strategy import llm_strategy_service
 from app.services.review_templates import build_intro_message, build_final_report_message
 
@@ -701,7 +702,42 @@ class ReviewService:
                     logger.error(f"Failed to validate question from LLM: {e}. Raw response: {question_str}")
                     question = "죄송합니다. 주제에 대해 조금 더 자세히 설명해주시겠어요?" # Fallback question
 
-                return CreateReviewRoomInteractiveResponse(status="needs_more_context", question=question)
+                prompt_message_payload: Optional[Message] = None
+                prompt_message = Message(
+                    message_id=generate_id(),
+                    room_id=parent_id,
+                    user_id="review_assistant",
+                    role="assistant",
+                    content=question,
+                    timestamp=get_current_timestamp(),
+                )
+
+                try:
+                    await asyncio.to_thread(self.storage.save_message, prompt_message)
+                except Exception as save_error:
+                    logger.warning(
+                        "Failed to persist interactive review prompt question for room %s: %s",
+                        parent_id,
+                        save_error,
+                        exc_info=True,
+                    )
+                else:
+                    prompt_message_payload = prompt_message
+                    try:
+                        await realtime_service.publish(parent_id, "new_message", prompt_message.model_dump())
+                    except Exception as broadcast_error:
+                        logger.warning(
+                            "Failed to broadcast interactive review prompt question for room %s: %s",
+                            parent_id,
+                            broadcast_error,
+                            exc_info=True,
+                        )
+
+                return CreateReviewRoomInteractiveResponse(
+                    status="needs_more_context",
+                    question=question,
+                    prompt_message=prompt_message_payload,
+                )
         except InvalidRequestError:
             raise
         except Exception as unexpected_error:

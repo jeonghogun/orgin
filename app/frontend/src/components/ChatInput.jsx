@@ -1,10 +1,10 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { SSE } from 'sse.js';
 import { useAppContext } from '../context/AppContext';
-import { useRoomCreationRequest, clearRoomCreation, useReviewRoomCreation, addMessage } from '../store/useConversationStore';
+import { useRoomCreationRequest, clearRoomCreation, useReviewRoomCreation, clearReviewRoomCreation } from '../store/useConversationStore';
 import { parseRealtimeEvent, withFallbackMeta } from '../utils/realtime';
 
 // Use fetch for true streaming response
@@ -146,6 +146,40 @@ const ChatInput = ({ roomId, roomData, disabled = false }) => {
   const roomCreationRequest = useRoomCreationRequest();
   const reviewRoomCreation = useReviewRoomCreation();
 
+  const isRoomCreationActiveForRoom = roomCreationRequest?.active && roomCreationRequest?.parentId === roomId;
+  const isReviewRoomCreationActive = reviewRoomCreation?.active && reviewRoomCreation?.parentId === roomId;
+  const isLocalCreationMode = mode !== 'default';
+  const showCancelButton = isRoomCreationActiveForRoom || isReviewRoomCreationActive || isLocalCreationMode;
+
+  const removePendingPromptMessage = useCallback(() => {
+    if (isRoomCreationActiveForRoom && roomCreationRequest?.promptMessageId) {
+      queryClient.setQueryData(['messages', roomCreationRequest.parentId], (old = []) => {
+        if (!Array.isArray(old)) {
+          return old;
+        }
+        return old.filter((msg) => msg.message_id !== roomCreationRequest.promptMessageId);
+      });
+    }
+  }, [isRoomCreationActiveForRoom, queryClient, roomCreationRequest]);
+
+  const handleCancelCreation = useCallback(() => {
+    removePendingPromptMessage();
+    if (isRoomCreationActiveForRoom) {
+      clearRoomCreation();
+    }
+    if (isReviewRoomCreationActive) {
+      clearReviewRoomCreation();
+    }
+    resetState();
+  }, [
+    clearReviewRoomCreation,
+    clearRoomCreation,
+    isReviewRoomCreationActive,
+    isRoomCreationActiveForRoom,
+    removePendingPromptMessage,
+    resetState,
+  ]);
+
   const createRoomMutation = useMutation({
     mutationFn: async ({ name, type, parentId }) => {
       const { data } = await axios.post('/api/rooms', { name, type, parent_id: parentId });
@@ -175,12 +209,24 @@ const ChatInput = ({ roomId, roomData, disabled = false }) => {
         });
         navigate(`/rooms/${data.room.room_id}`);
       } else if (data.status === 'needs_more_context') {
-        addMessage(parentId, {
-          id: `ai_prompt_${Date.now()}`,
+        const persistedMessage = data.prompt_message;
+        const fallbackMessage = {
+          message_id: `ai_prompt_${Date.now()}`,
+          room_id: parentId,
           role: 'assistant',
+          user_id: 'review_assistant',
           content: data.question,
-          status: 'complete',
-          created_at: Math.floor(Date.now() / 1000),
+          timestamp: Math.floor(Date.now() / 1000),
+        };
+        const messageToInsert = persistedMessage || fallbackMessage;
+        queryClient.setQueryData(['messages', parentId], (old = []) => {
+          if (!Array.isArray(old)) {
+            return [messageToInsert];
+          }
+          if (old.some((msg) => msg.message_id === messageToInsert.message_id)) {
+            return old;
+          }
+          return [...old, messageToInsert];
         });
       }
     },
@@ -364,11 +410,8 @@ const ChatInput = ({ roomId, roomData, disabled = false }) => {
           onCompositionStart={() => setIsComposing(true)}
           onCompositionEnd={() => setIsComposing(false)}
           placeholder={(() => {
-            const isSubRoomCreationActive = roomCreationRequest?.active && roomCreationRequest?.parentId === roomId;
-            const isReviewRoomCreationActive = reviewRoomCreation?.active && reviewRoomCreation?.parentId === roomId;
-
             if (disabled) return "룸을 선택해주세요";
-            if (isSubRoomCreationActive) return roomCreationRequest.promptText;
+            if (isRoomCreationActiveForRoom) return roomCreationRequest?.promptText || '';
             if (isReviewRoomCreationActive) return "어떤 주제로 검토룸을 열까요?";
             return "무엇이든 물어보세요...";
           })()}
@@ -376,6 +419,15 @@ const ChatInput = ({ roomId, roomData, disabled = false }) => {
           className="w-full px-4 py-3 pr-12 bg-panel-elevated border border-border rounded-lg text-text placeholder-muted focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent disabled:opacity-50 disabled:cursor-not-allowed resize-none"
           rows={1}
         />
+        {showCancelButton && (
+          <button
+            type="button"
+            onClick={handleCancelCreation}
+            className="absolute right-12 top-1/2 -translate-y-1/2 rounded-md px-2 py-1 text-xs font-medium text-muted hover:text-text focus-ring"
+          >
+            취소
+          </button>
+        )}
         <button
           type="submit"
           disabled={!inputValue.trim() || !roomId || streamMutation.isPending || uploadMutation.isPending || disabled}
