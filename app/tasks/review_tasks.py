@@ -6,7 +6,7 @@ import inspect
 import redis
 from redis.exceptions import RedisError
 from datetime import datetime
-from typing import List, Dict, Any, Tuple, Union, Optional, Type
+from typing import List, Dict, Any, Tuple, Union, Optional, Type, Coroutine
 
 from celery import states
 from celery.exceptions import Ignore
@@ -14,12 +14,14 @@ from pydantic import BaseModel, ValidationError
 
 from app.celery_app import celery_app
 from app.config.settings import get_effective_redis_url, settings
-from app.models.schemas import Message, WebSocketMessage
+from app.models.schemas import Message, WebSocketMessage, ReviewMeta
 from app.models.review_schemas import LLMReviewTurn, LLMFinalReport
 from app.services.redis_pubsub import redis_pubsub_manager
 from app.services.llm_strategy import llm_strategy_service, ProviderPanelistConfig
 from app.services.review_templates import build_final_report_message
 from app.services.prompt_service import prompt_service
+from app.services.realtime_service import realtime_service
+from app.services.memory_service import get_memory_service
 from app.utils.helpers import generate_id, get_current_timestamp
 from app.tasks.base_task import BaseTask
 from app.services.llm_service import LLMService
@@ -160,6 +162,148 @@ def _merge_round_outputs(
         persona_history[str(round_num)] = output
 
     return updated_history
+
+
+def _compose_review_handoff(topic: str, final_report: Dict[str, Any]) -> str:
+    """Build a user-facing summary message for the parent sub-room."""
+
+    lines: List[str] = [
+        "### 검토 결과 동기화",
+        "",
+        f"**주제**: {topic}",
+        "",
+    ]
+
+    summary = (final_report.get("executive_summary") or final_report.get("summary") or "").strip()
+    if summary:
+        lines.extend(["**핵심 요약**", summary, ""])
+
+    for title, keys in (
+        ("강한 합의", ("strongest_consensus", "consensus")),
+        ("남은 쟁점", ("remaining_disagreements", "disagreements")),
+        ("우선 실행 제안", ("recommendations", "action_items")),
+    ):
+        values: List[str] = []
+        for key in keys:
+            maybe_values = final_report.get(key) or []
+            if maybe_values:
+                values = [value for value in maybe_values if value]
+                if values:
+                    break
+        if values:
+            lines.append(f"**{title}**")
+            lines.extend(f"- {value}" for value in values)
+            lines.append("")
+
+    lines.append("이 요약은 메인룸 장기 기억에도 자동 반영되었습니다.")
+
+    return "\n".join(line for line in lines if line is not None).strip()
+
+
+def _run_coroutine_safely(coro: Coroutine[Any, Any, Any]) -> None:
+    """Execute a coroutine in synchronous contexts, falling back to scheduling if needed."""
+
+    try:
+        asyncio.run(coro)
+    except RuntimeError:
+        loop = asyncio.get_event_loop()
+        loop.create_task(coro)
+
+
+def _sync_review_outcome_to_hierarchy(
+    *, review_id: str, review_meta: ReviewMeta, final_report: Dict[str, Any]
+) -> None:
+    """Propagate the final review result to the parent sub-room and main-room memory."""
+
+    try:
+        review_room = storage_service.get_room(review_meta.room_id)
+    except Exception as load_error:  # noqa: BLE001 - defensive logging
+        logger.warning(
+            "Failed to load review room for outcome sync (%s): %s",
+            review_id,
+            load_error,
+            exc_info=True,
+        )
+        return
+
+    if not review_room:
+        logger.debug("Review room %s missing; skipping hierarchy sync.", review_meta.room_id)
+        return
+
+    parent_room_id = getattr(review_room, "parent_id", None)
+    if not parent_room_id:
+        logger.debug("Review room %s has no parent; skipping hierarchy sync.", review_meta.room_id)
+        return
+
+    owner_id = getattr(review_room, "owner_id", None)
+
+    handoff_message = _compose_review_handoff(review_meta.topic, final_report)
+    if handoff_message:
+        message = Message(
+            message_id=generate_id(),
+            room_id=parent_room_id,
+            user_id="review_observer",
+            role="assistant",
+            content=handoff_message,
+            timestamp=get_current_timestamp(),
+        )
+        try:
+            storage_service.save_message(message)
+        except Exception as save_error:  # noqa: BLE001 - defensive logging
+            logger.warning(
+                "Failed to persist review handoff message for %s: %s",
+                review_id,
+                save_error,
+                exc_info=True,
+            )
+        else:
+            try:
+                _run_coroutine_safely(
+                    realtime_service.publish(parent_room_id, "new_message", message.model_dump())
+                )
+            except Exception as broadcast_error:  # noqa: BLE001 - defensive logging
+                logger.warning(
+                    "Failed to broadcast review handoff for %s: %s",
+                    review_id,
+                    broadcast_error,
+                    exc_info=True,
+                )
+
+    try:
+        parent_room = storage_service.get_room(parent_room_id)
+    except Exception as parent_error:  # noqa: BLE001 - defensive logging
+        logger.debug(
+            "Failed to load parent room for review %s: %s",
+            review_id,
+            parent_error,
+            exc_info=True,
+        )
+        parent_room = None
+
+    main_room_id = getattr(parent_room, "parent_id", None) if parent_room else None
+    user_id = owner_id or (getattr(parent_room, "owner_id", None) if parent_room else None)
+
+    if not (main_room_id and user_id):
+        return
+
+    try:
+        memory_service = get_memory_service()
+        _run_coroutine_safely(
+            memory_service.record_review_outcome(
+                review_id=review_id,
+                user_id=user_id,
+                main_room_id=main_room_id,
+                topic=review_meta.topic,
+                final_report=final_report,
+            )
+        )
+    except Exception as memory_error:  # noqa: BLE001 - defensive logging
+        logger.warning(
+            "Failed to record review outcome into memory for %s: %s",
+            review_id,
+            memory_error,
+            exc_info=True,
+        )
 
 
 def _all_panelists_declined(turn_outputs: Dict[str, Any]) -> bool:
@@ -929,6 +1073,20 @@ def generate_consolidated_report(
                         review_id=review_id,
                         payload=message.model_dump(),
                     ).model_dump_json(),
+                )
+
+            try:
+                _sync_review_outcome_to_hierarchy(
+                    review_id=review_id,
+                    review_meta=review_meta,
+                    final_report=final_report_dict,
+                )
+            except Exception as sync_error:  # noqa: BLE001 - defensive logging
+                logger.warning(
+                    "Failed to synchronize review outcome for %s: %s",
+                    review_id,
+                    sync_error,
+                    exc_info=True,
                 )
 
         if settings.METRICS_ENABLED:

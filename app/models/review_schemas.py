@@ -52,6 +52,13 @@ class LLMFinalReport(BaseModel):
     remaining_disagreements: List[str] = Field(..., description="Significant disagreements that remained, if any.")
     recommendations: List[str] = Field(..., description="A list of consolidated final recommendations.")
 
+
+class LLMReviewTopicSuggestion(BaseModel):
+    """Structured response for an automatically generated review topic title."""
+
+    title: str = Field(..., description="A concise, specific title for the review session.")
+
+
 class LLMQuestionResponse(BaseModel):
     """
     Expected JSON structure for a generated question.

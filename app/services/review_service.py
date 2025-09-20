@@ -18,6 +18,7 @@ from app.models.schemas import (
     Message,
     WebSocketMessage,
 )
+from app.models.review_schemas import LLMReviewTopicSuggestion
 from app.models.enums import RoomType
 from app.utils.helpers import generate_id, get_current_timestamp
 from app.services.llm_service import get_llm_service
@@ -41,6 +42,75 @@ class ReviewService:
         """Initialize the review service."""
         super().__init__()
         self.storage: StorageService = storage_service
+
+    async def _generate_review_topic_title(
+        self,
+        llm_service,
+        *,
+        fallback_topic: str,
+        conversation: str,
+        history: Optional[List[Dict[str, str]]] = None,
+    ) -> str:
+        """Ask the LLM to produce a concise, user-facing review topic title."""
+
+        sanitized_fallback = (fallback_topic or "").strip() or "리뷰 주제"
+
+        history_lines: List[str] = []
+        if history:
+            for item in history[-6:]:  # keep the most recent context
+                role = (item.get("role") or "").strip() or "user"
+                content = (item.get("content") or "").strip()
+                if content:
+                    history_lines.append(f"{role}: {content}")
+
+        conversation_excerpt = (conversation or "").strip()
+        if len(conversation_excerpt) > 4000:
+            conversation_excerpt = conversation_excerpt[-4000:]
+
+        prompt_sections: List[str] = [f"기본 주제: {sanitized_fallback}"]
+        if history_lines:
+            prompt_sections.append("사용자 메모:")
+            prompt_sections.append("\n".join(history_lines))
+        if conversation_excerpt:
+            prompt_sections.append("관련 대화:")
+            prompt_sections.append(conversation_excerpt)
+
+        prompt_sections.append(
+            "위 정보를 기반으로 검토룸 제목을 만드세요. 한 줄짜리 간결한 표현으로 작성하고, 30자 이내 한국어가 자연스럽다면 한국어로 작성합니다."
+        )
+
+        system_prompt = (
+            "You craft executive review room titles. "
+            "Return JSON with a single `title` field containing a polished, specific subject line without quotes."
+        )
+
+        user_prompt = "\n\n".join(prompt_sections)
+
+        try:
+            response_text, _ = await llm_service.invoke(
+                provider_name="openai",
+                model="gpt-4o",
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                request_id="review-topic-generator",
+                response_format="json",
+            )
+            suggestion = LLMReviewTopicSuggestion.model_validate_json(response_text)
+            candidate = suggestion.title.strip()
+            if not candidate:
+                return sanitized_fallback
+
+            single_line = " ".join(candidate.split())
+            if len(single_line) > 60:
+                single_line = single_line[:57].rstrip() + "..."
+            return single_line
+        except Exception as topic_error:  # noqa: BLE001 - logging diagnostic context
+            logger.warning(
+                "Falling back to requested review topic due to generation error: %s",
+                topic_error,
+                exc_info=True,
+            )
+            return sanitized_fallback
 
     async def start_review_process(
         self, review_id: str, review_room_id: str, topic: str, instruction: str, panelists: Optional[List[str]], trace_id: str
@@ -531,6 +601,8 @@ class ReviewService:
 
             llm_service = get_llm_service()
 
+            topic = topic.strip()
+
             try:
                 messages = await asyncio.to_thread(self.storage.get_messages, parent_id)
             except Exception as fetch_error:
@@ -553,11 +625,18 @@ class ReviewService:
                 context_sufficient = True
 
             if context_sufficient:
+                generated_topic = await self._generate_review_topic_title(
+                    llm_service,
+                    fallback_topic=topic,
+                    conversation=full_conversation,
+                    history=history,
+                )
+
                 room_id = generate_id()
                 new_room = await asyncio.to_thread(
                     self.storage.create_room,
                     room_id=room_id,
-                    name=f"검토: {topic}",
+                    name=f"검토: {generated_topic}",
                     owner_id=user_id,
                     room_type=RoomType.REVIEW,
                     parent_id=parent_id,
@@ -568,7 +647,7 @@ class ReviewService:
                 review_meta = ReviewMeta(
                     review_id=review_id,
                     room_id=room_id,
-                    topic=topic,
+                    topic=generated_topic,
                     instruction=instruction,
                     status="pending",
                     total_rounds=4,
@@ -576,7 +655,7 @@ class ReviewService:
                 )
                 await asyncio.to_thread(self.storage.save_review_meta, review_meta)
 
-                intro_message = build_intro_message(topic, instruction)
+                intro_message = build_intro_message(generated_topic, instruction)
                 await asyncio.to_thread(
                     self._save_message_and_stream,
                     review_id,
@@ -596,13 +675,13 @@ class ReviewService:
                         self._run_mock_review,
                         review_id,
                         room_id,
-                        topic,
+                        generated_topic,
                         instruction,
                     )
                     self._notify_mock_celery_task(
                         review_id=review_id,
                         review_room_id=room_id,
-                        topic=topic,
+                        topic=generated_topic,
                         instruction=instruction,
                         panelists=None,
                         trace_id=trace_id,
@@ -611,7 +690,7 @@ class ReviewService:
                     await self.start_review_process(
                         review_id=review_id,
                         review_room_id=room_id,
-                        topic=topic,
+                        topic=generated_topic,
                         instruction=instruction,
                         panelists=[p.provider for p in usable_panelists],
                         trace_id=trace_id,

@@ -1,5 +1,6 @@
 import json
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 from app.tasks.review_tasks import (
     run_initial_panel_turn,
@@ -161,19 +162,65 @@ def test_full_review_prompt_logic(
     mock_llm_instance.invoke_sync.reset_mock()
     final_report_output = {
         "executive_summary": "Final report.",
-        "strongest_consensus": [],
+        "strongest_consensus": ["Agree on fast pilot"],
         "remaining_disagreements": [],
         "recommendations": ["Final recommendation."],
     }
     mock_llm_instance.invoke_sync.return_value = (json.dumps(final_report_output), {"total_tokens": 40})
 
-    generate_consolidated_report(
+    mock_storage.get_review_meta.return_value = SimpleNamespace(
         review_id="test_review_1",
-        panel_history=panel_history_for_final,
-        all_metrics=all_metrics_for_final,
-        executed_rounds=executed_rounds_for_final,
-        trace_id="test-trace-id",
+        room_id="review_room_1",
+        topic="테스트 토픽",
+        instruction="Test Instruction",
+        status="pending",
+        total_rounds=4,
+        created_at=0,
     )
+
+    review_room = SimpleNamespace(room_id="review_room_1", parent_id="sub_room_1", owner_id="user123")
+    sub_room = SimpleNamespace(room_id="sub_room_1", parent_id="main_room_1", owner_id="user123")
+    main_room = SimpleNamespace(room_id="main_room_1", parent_id=None, owner_id="user123")
+
+    def room_lookup(room_id):
+        return {
+            "review_room_1": review_room,
+            "sub_room_1": sub_room,
+            "main_room_1": main_room,
+        }.get(room_id)
+
+    mock_storage.get_room.side_effect = room_lookup
+    mock_storage.save_message.reset_mock()
+
+    with patch("app.tasks.review_tasks.realtime_service") as mock_realtime, patch(
+        "app.tasks.review_tasks.get_memory_service"
+    ) as mock_get_memory_service:
+        mock_realtime.publish = AsyncMock()
+        mock_memory_service = mock_get_memory_service.return_value
+        mock_memory_service.record_review_outcome = AsyncMock()
+
+        generate_consolidated_report(
+            review_id="test_review_1",
+            panel_history=panel_history_for_final,
+            all_metrics=all_metrics_for_final,
+            executed_rounds=executed_rounds_for_final,
+            trace_id="test-trace-id",
+        )
+
+        mock_realtime.publish.assert_awaited()
+        mock_memory_service.record_review_outcome.assert_awaited_once()
+        memory_args = mock_memory_service.record_review_outcome.await_args.kwargs
+        assert memory_args["main_room_id"] == "main_room_1"
+        assert memory_args["topic"] == "테스트 토픽"
+
+    parent_messages = [
+        call.args[0]
+        for call in mock_storage.save_message.call_args_list
+        if getattr(call.args[0], "room_id", None) == "sub_room_1"
+    ]
+    assert parent_messages, "Expected a handoff message to the parent sub-room."
+    assert "검토 결과 동기화" in parent_messages[-1].content
+    assert "메인룸 장기 기억" in parent_messages[-1].content
 
     assert mock_llm_instance.invoke_sync.call_count == 1
     system_prompt_final = mock_llm_instance.invoke_sync.call_args.kwargs["system_prompt"]

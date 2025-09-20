@@ -979,6 +979,70 @@ class MemoryService:
 
         logger.info(f"Successfully promoted summary from sub-room {sub_room_id} to main-room {main_room_id} for user {user_id}.")
         return summary
+
+    async def record_review_outcome(
+        self,
+        *,
+        review_id: str,
+        user_id: str,
+        main_room_id: str,
+        topic: str,
+        final_report: Dict[str, Any],
+    ) -> None:
+        """Persist a condensed review outcome into the user's long-term memory."""
+
+        if not final_report:
+            logger.debug("Skipping review outcome recording for %s: missing report payload.", review_id)
+            return
+
+        executive_summary = (final_report.get("executive_summary") or "").strip()
+        consensus_items = [item.strip() for item in final_report.get("strongest_consensus") or [] if item]
+        recommendation_items = [item.strip() for item in final_report.get("recommendations") or [] if item]
+
+        summary_parts: List[str] = []
+        if executive_summary:
+            summary_parts.append(executive_summary)
+        if consensus_items:
+            summary_parts.append("합의: " + "; ".join(consensus_items))
+        if recommendation_items:
+            summary_parts.append("추천: " + "; ".join(recommendation_items))
+
+        if not summary_parts:
+            logger.debug("Review %s did not include summarizable content for memory storage.", review_id)
+            return
+
+        summary_text = f"[검토] {topic}\n" + "\n".join(summary_parts)
+        fact_payload = {
+            "type": FactType.PROMOTED_SUMMARY.value,
+            "value": summary_text,
+            "confidence": 0.9,
+        }
+
+        try:
+            await self.user_fact_service.save_fact(
+                user_id=user_id,
+                fact=fact_payload,
+                normalized_value=summary_text,
+                source_message_id=review_id,
+                sensitivity="medium",
+                room_id=main_room_id,
+            )
+        except Exception as save_error:
+            logger.warning(
+                "Failed to persist review outcome for user %s (review %s): %s",
+                user_id,
+                review_id,
+                save_error,
+                exc_info=True,
+            )
+        else:
+            logger.info(
+                "Stored review outcome summary for user %s in main room %s (review %s).",
+                user_id,
+                main_room_id,
+                review_id,
+            )
+
     async def archive_old_memories(self, room_id: str):
         """Summarize and archive messages that fall outside the active memory window."""
         cutoff_seconds = ARCHIVE_WINDOW_DAYS * 24 * 60 * 60
