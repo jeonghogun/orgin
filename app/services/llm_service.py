@@ -551,49 +551,63 @@ class MockLLMProvider(LLMProvider):
         if "synthesis round" in lower_prompt or "synthesis_context" in lower_prompt:
             return {
                 "round": 3,
-                "no_new_arguments": False,
-                "executive_summary": "핵심 성과와 리스크를 균형 있게 고려한 최종 제안을 정리했습니다.",
-                "conclusion": "조직 역량을 확장하면서도 통제 가능한 범위 내에서 파일럿을 진행해야 합니다.",
-                "recommendations": [
-                    "파일럿 단계에서 명확한 성공 지표를 정의합니다.",
-                    "리스크 완화를 위한 감시 체계를 구축합니다.",
+                "panelist": "Panelist",
+                "message": "세 관점을 묶어서 30일 파일럿을 먼저 돌리고 60일 차에 확장 여부를 재검토하죠. Claude 3 Haiku가 만든 통제 체크리스트를 각 게이트에 붙이고, Gemini 1.5 Flash의 성장 지표는 성공 판단 기준으로 삼겠습니다.",
+                "key_takeaway": "30일 파일럿 → 60일 확장으로 단계별 합의.",
+                "references": [
+                    {
+                        "panelist": "Claude 3 Haiku",
+                        "round": 2,
+                        "quote": "체크리스트를 통과해야 다음 단계로",
+                        "stance": "support",
+                    },
+                    {
+                        "panelist": "Gemini 1.5 Flash",
+                        "round": 2,
+                        "quote": "사용자 반응을 빠르게 제품에 반영",
+                        "stance": "build",
+                    },
                 ],
+                "no_new_arguments": False,
             }
         if "rebuttal round" in lower_prompt or "rebuttal_context" in lower_prompt:
             return {
                 "round": 2,
+                "panelist": "Panelist",
+                "message": "GPT-4o의 속도감은 살리고, Claude 3 Haiku가 지적한 통제 절차를 넣어야 안전합니다. Gemini 1.5 Flash가 말한 사용자 피드백 루프도 실험 설계에 바로 붙입시다.",
+                "key_takeaway": "속도·통제·피드백을 동시에 챙기는 실행안.",
+                "references": [
+                    {
+                        "panelist": "GPT-4o",
+                        "round": 1,
+                        "quote": "빠르게 실험을 돌리자",
+                        "stance": "support",
+                    },
+                    {
+                        "panelist": "Claude 3 Haiku",
+                        "round": 1,
+                        "quote": "통제 범위와 리스크 대응 계획",
+                        "stance": "build",
+                    },
+                    {
+                        "panelist": "Gemini 1.5 Flash",
+                        "round": 1,
+                        "quote": "사용자 피드백 루프",
+                        "stance": "build",
+                    },
+                ],
                 "no_new_arguments": False,
-                "agreements": ["사용자 가치 검증이 최우선이라는 점에 동의합니다."],
-                "disagreements": [
-                    {
-                        "point": "초기 투자 규모는 다소 과도합니다.",
-                        "reasoning": "현금 흐름 변동성이 커질 수 있으므로 단계적 확대가 필요합니다.",
-                    }
-                ],
-                "additions": [
-                    {
-                        "point": "실행 책임자 지정과 위험 관리 플랜이 필요합니다.",
-                        "reasoning": "명확한 책임 구조가 있어야 실행력이 확보됩니다.",
-                    }
-                ],
             }
         if "initial analysis" in lower_prompt or "initial_analysis" in lower_prompt:
             topic = self._extract_between(user_prompt, "Topic:", "\n") or "주제"
+            cleaned_topic = topic.strip()
             return {
                 "round": 1,
-                "key_takeaway": f"{topic.strip()}에 대한 초기 분석을 완료했습니다.",
-                "arguments": [
-                    "시장 성장 가능성이 높으며 빠른 학습이 중요합니다.",
-                    "팀 역량 강화를 위한 명확한 교육 계획이 필요합니다.",
-                ],
-                "risks": [
-                    "과도한 확장으로 자원이 분산될 수 있습니다.",
-                    "보안 및 규제 리스크를 선제적으로 점검해야 합니다.",
-                ],
-                "opportunities": [
-                    "선제적 실행으로 브랜드 리더십을 확보할 수 있습니다.",
-                    "외부 파트너십 확장을 통해 시너지를 얻을 수 있습니다.",
-                ],
+                "panelist": "Panelist",
+                "message": f"{cleaned_topic}을(를) 시험해 볼 좋은 시점이에요. 초기 30일은 작은 고객군으로 빠르게 실험하고, 동시에 품질 게이트와 데이터 로그 수집 루틴을 세팅합시다.",
+                "key_takeaway": f"{cleaned_topic}은(는) 30일 파일럿으로 학습 시작.",
+                "references": [],
+                "no_new_arguments": False,
             }
         return {"result": "ok"}
 

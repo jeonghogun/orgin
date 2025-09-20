@@ -231,158 +231,175 @@ class ReviewService:
             "GPT-4o": {
                 "round1": {
                     "round": 1,
-                    "key_takeaway": (
-                        f"{topic}은/는 빠른 실험으로 시장 반응을 학습할 기회입니다. 단, 품질 안전망을 같이 준비해야 합니다."
+                    "panelist": "GPT-4o",
+                    "message": (
+                        f"{topic}을(를) 두고만 있지 말고 30일 파일럿을 바로 띄워봅시다. 핵심 고객 200명을 묶어 빠르게 실험하면 시장 반응과 장애 요소를 동시에 확인할 수 있어요."
                     ),
-                    "arguments": [
-                        "초기 4주 동안 제한된 고객군과 베타 테스트를 운영하면 실사용 데이터를 확보할 수 있습니다.",
-                        "수집된 데이터로 ROI 가설과 운영 지표를 설정하면 의사결정 속도를 높일 수 있습니다.",
-                    ],
-                    "risks": [
-                        "품질 기준이 모호하면 베타 단계에서 부정적 피드백이 확대될 수 있습니다.",
-                        "조직의 우선순위가 분산되면 실험 속도가 둔화될 위험이 있습니다.",
-                    ],
-                    "opportunities": [
-                        "시장 반응을 조기에 확인해 경쟁사 대비 학습 곡선을 앞당길 수 있습니다.",
-                        "크로스펑셔널 팀이 협업하면서 실험 문화가 강화됩니다.",
-                    ],
+                    "key_takeaway": "30일 파일럿으로 시장 반응을 빠르게 수집.",
+                    "references": [],
+                    "no_new_arguments": False,
                 },
                 "round2": {
                     "round": 2,
+                    "panelist": "GPT-4o",
+                    "message": (
+                        "Claude 3 Haiku가 말한 체크리스트는 전적으로 동의합니다. 다만 Gemini 1.5 Flash가 제안한 사용자 확장은, 파일럿 품질 게이트를 먼저 통과한 뒤에 바로 붙여보죠. 실험 대시보드를 첫 주 안에 열어 투명하게 공유합시다."
+                    ),
+                    "key_takeaway": "통제 절차를 붙인 상태에서 속도를 유지해야 한다.",
+                    "references": [
+                        {
+                            "panelist": "Claude 3 Haiku",
+                            "round": 1,
+                            "quote": "통제 범위를 선명하게",
+                            "stance": "support",
+                        },
+                        {
+                            "panelist": "Gemini 1.5 Flash",
+                            "round": 1,
+                            "quote": "사용자 서브셋을 넓히자",
+                            "stance": "build",
+                        },
+                    ],
                     "no_new_arguments": False,
-                    "agreements": [
-                        "Claude 3 Haiku가 말한 “데이터 거버넌스 확보”는 베타 런칭 전에 반드시 맞춰야 합니다."
-                    ],
-                    "disagreements": [
-                        {
-                            "point": "Gemini 1.5 Flash의 “장기 합의가 필요하다”는 우려를 너무 오래 끌면 모멘텀을 잃을 수 있습니다.",
-                            "reasoning": "의사결정 창을 30일 이내로 제한하고, 미해결 쟁점은 별도 워킹그룹에서 병행 처리해야 속도를 유지할 수 있습니다.",
-                        }
-                    ],
-                    "additions": [
-                        {
-                            "point": "실험 로그를 실시간으로 리뷰할 수 있는 대시보드를 출범 주간에 준비합시다.",
-                            "reasoning": "데이터를 투명하게 공유해야 Skeptic 관점의 검증 요구와 속도 요구를 동시에 충족할 수 있습니다.",
-                        }
-                    ],
                 },
                 "round3": {
                     "round": 3,
-                    "no_new_arguments": False,
-                    "executive_summary": "세 모델 모두 “빠른 실험”과 “통제된 확장”에 공감했습니다. GPT-4o는 실행 속도를, Claude 3 Haiku는 위험 관리 절차를, Gemini 1.5 Flash는 단계적 확장 전략을 강조했습니다.",
-                    "conclusion": (
-                        f"{topic}을(를) 30일 베타 → 60일 확장 검증으로 나누고, 매 단계마다 품질 게이트와 ROI 검토를 병행하면 현실적인 균형을 만들 수 있습니다."
+                    "panelist": "GPT-4o",
+                    "message": (
+                        "이제 모두 같은 그림을 그리네요. Claude 3 Haiku가 라운드 2에서 강조한 체크리스트 통과 기준을 각 단계 게이트로 두고, Gemini 1.5 Flash가 말한 실시간 피드백 스트림을 성공 판정 지표로 삼겠습니다. 이렇게 하면 30일 파일럿 후 60일 확장 검증으로 자연스럽게 넘어갈 수 있어요."
                     ),
-                    "recommendations": [
-                        "베타 시작 전에 공통 대시보드와 품질 체크리스트를 확정한다.",
-                        "주차별 리스크 리뷰 세션에 세 모델이 합의한 담당자를 지정한다.",
-                        "60일째에 투자/중단 결정을 위한 경영 리뷰를 예약한다.",
+                    "key_takeaway": "체크리스트와 피드백을 묶은 30일→60일 로드맵.",
+                    "references": [
+                        {
+                            "panelist": "Claude 3 Haiku",
+                            "round": 2,
+                            "quote": "체크리스트 없으면 리스크가 남는다",
+                            "stance": "support",
+                        },
+                        {
+                            "panelist": "Gemini 1.5 Flash",
+                            "round": 2,
+                            "quote": "실험 로그를 스트리밍하자",
+                            "stance": "build",
+                        },
                     ],
+                    "no_new_arguments": False,
                 },
             },
             "Claude 3 Haiku": {
                 "round1": {
                     "round": 1,
-                    "key_takeaway": (
-                        f"{topic}은 매력적이지만, 시작 전에 통제 범위와 리스크 대응 계획을 선명하게 해야 합니다."
+                    "panelist": "Claude 3 Haiku",
+                    "message": (
+                        f"{topic}이(가) 흥미롭긴 하지만, 시작 전에 통제 경계를 먼저 그립시다. 데이터 사용 목적과 보안 요건을 명문화하지 않으면 초기에 얻은 신뢰를 잃을 수 있어요."
                     ),
-                    "arguments": [
-                        "법적·보안 요건을 명확히 검토하지 않으면 베타 단계에서 바로 제동이 걸릴 수 있습니다.",
-                        "ROI 가설을 선제적으로 준비해야 경영진 설득과 후속 투자 논의가 수월합니다.",
-                    ],
-                    "risks": [
-                        "규제 요구사항 누락으로 출시 일정이 미뤄질 수 있습니다.",
-                        "장기간 실험이 이어지면 조직 피로도가 커질 수 있습니다.",
-                    ],
-                    "opportunities": [
-                        "사전 통제를 준비하면 실패 비용을 크게 줄일 수 있습니다.",
-                        "구축한 거버넌스 체계는 다른 프로젝트에도 재사용할 수 있습니다.",
-                    ],
+                    "key_takeaway": "파일럿 전에 통제 경계와 감사 기준을 잠그자.",
+                    "references": [],
+                    "no_new_arguments": False,
                 },
                 "round2": {
                     "round": 2,
+                    "panelist": "Claude 3 Haiku",
+                    "message": (
+                        "GPT-4o의 30일 타임라인은 좋지만, 법무·보안 검토 시간을 포함해야 합니다. Gemini 1.5 Flash가 말한 실험 대시보드를 감사 로그로 활용하면 속도와 투명성을 동시에 확보할 수 있겠네요."
+                    ),
+                    "key_takeaway": "속도를 인정하되 법무·보안 체크포인트는 반드시 유지.",
+                    "references": [
+                        {
+                            "panelist": "GPT-4o",
+                            "round": 1,
+                            "quote": "30일 파일럿",
+                            "stance": "build",
+                        },
+                        {
+                            "panelist": "Gemini 1.5 Flash",
+                            "round": 1,
+                            "quote": "실험 대시보드",
+                            "stance": "support",
+                        },
+                    ],
                     "no_new_arguments": False,
-                    "agreements": [
-                        "GPT-4o가 강조한 “실제 사용자 데이터로 학습한다”는 접근은 설득력 있습니다."
-                    ],
-                    "disagreements": [
-                        {
-                            "point": "“30일 내 의사결정”만으로는 법무·보안 검토 시간을 확보하기 어렵습니다.",
-                            "reasoning": "중간 게이트와 필수 체크리스트를 통과해야 다음 단계로 넘어가도록 합시다.",
-                        }
-                    ],
-                    "additions": [
-                        {
-                            "point": "감사 로그와 데이터 사용 목적을 초기부터 문서화합시다.",
-                            "reasoning": "Gemini 1.5 Flash가 지적한 조직 정렬 문제를 해결하고, 향후 감사 대응에도 도움이 됩니다.",
-                        }
-                    ],
                 },
                 "round3": {
                     "round": 3,
-                    "no_new_arguments": False,
-                    "executive_summary": "Claude 3 Haiku는 “속도와 통제의 균형”을 강조하며 GPT-4o의 실험 드라이브와 Gemini 1.5 Flash의 단계적 확장 제안을 조화시켰습니다.",
-                    "conclusion": (
-                        f"파일럿을 제한된 데이터와 명확한 KPI로 시작하고, 각 단계마다 법무·보안 검토를 완료한 뒤 확장하도록 운영하면 {topic}의 기대 효과와 리스크를 동시에 관리할 수 있습니다."
+                    "panelist": "Claude 3 Haiku",
+                    "message": (
+                        "라운드 2에서 합의한 대시보드가 있으면 감사팀도 안심할 수 있겠습니다. GPT-4o가 제안한 30일→60일 구조에 동의하되, 각 단계 입구에서 법무·보안·데이터 담당자가 체크리스트를 승인하는 절차를 넣읍시다."
                     ),
-                    "recommendations": [
-                        "각 단계별 필수 체크리스트와 승인 권한을 문서화해 공유한다.",
-                        "보안·법무 검토 일정과 실험 일정이 충돌하지 않도록 통합 캘린더를 운영한다.",
-                        "리스크 대응 로그를 주 단위로 관찰자에게 보고한다.",
+                    "key_takeaway": "30일→60일 전환 시 감사 승인 게이트를 추가.",
+                    "references": [
+                        {
+                            "panelist": "GPT-4o",
+                            "round": 3,
+                            "quote": "30일 파일럿 후 60일 확장",
+                            "stance": "support",
+                        },
+                        {
+                            "panelist": "Gemini 1.5 Flash",
+                            "round": 2,
+                            "quote": "실험 대시보드를 감사 로그로",
+                            "stance": "build",
+                        },
                     ],
+                    "no_new_arguments": False,
                 },
             },
             "Gemini 1.5 Flash": {
                 "round1": {
                     "round": 1,
-                    "key_takeaway": (
-                        f"{topic}을(를) 현실적으로 추진하려면 단계별 합의와 명확한 커뮤니케이션 구조가 필요합니다."
+                    "panelist": "Gemini 1.5 Flash",
+                    "message": (
+                        f"{topic}을(를) 활용하면 얼리어답터 그룹에서 얻은 피드백을 빠르게 제품 개선으로 돌릴 수 있어요. 실험을 세 단계로 나눠 각 단계마다 학습 목표를 정리해 두면 확장 타이밍을 스스로 증명할 수 있습니다."
                     ),
-                    "arguments": [
-                        "초기 파일럿 범위를 좁게 설정해 학습과 리스크를 동시에 관리해야 합니다.",
-                        "관계자별 역할과 책임(RACI)을 명확히 하지 않으면 실행이 느려집니다.",
-                    ],
-                    "risks": [
-                        "내부 합의 없이 확장하면 프로젝트가 중도에 멈출 수 있습니다.",
-                        "과도한 문서화는 민첩성을 떨어뜨릴 수 있으므로 최소한의 형식만 유지해야 합니다.",
-                    ],
-                    "opportunities": [
-                        "단계별 학습을 구조화하면 조직 전체의 실행력을 높일 수 있습니다.",
-                        "획득한 인사이트를 다른 팀에도 공유해 레버리지를 만들 수 있습니다.",
-                    ],
+                    "key_takeaway": "세 단계 실험으로 학습과 확장을 동시에 설계.",
+                    "references": [],
+                    "no_new_arguments": False,
                 },
                 "round2": {
                     "round": 2,
+                    "panelist": "Gemini 1.5 Flash",
+                    "message": (
+                        "GPT-4o의 속도 제안은 마음에 들어요. 다만 Claude 3 Haiku가 요구한 통제를 충족시키려면 실험 로그를 스트리밍으로 공유하고, 사용자 반응 하이라이트를 매주 시각화해 드리죠."
+                    ),
+                    "key_takeaway": "속도에 투명성을 얹어 모두가 안심하도록 만들자.",
+                    "references": [
+                        {
+                            "panelist": "GPT-4o",
+                            "round": 1,
+                            "quote": "빠르게 실험",
+                            "stance": "support",
+                        },
+                        {
+                            "panelist": "Claude 3 Haiku",
+                            "round": 1,
+                            "quote": "통제 경계를 선명하게",
+                            "stance": "build",
+                        },
+                    ],
                     "no_new_arguments": False,
-                    "agreements": [
-                        "GPT-4o가 제안한 “실험 데이터를 빠르게 공유”한다는 원칙은 협업에 도움이 됩니다.",
-                        "Claude 3 Haiku의 “감사 로그 문서화” 요구는 장기적으로 조직 신뢰를 높입니다."
-                    ],
-                    "disagreements": [
-                        {
-                            "point": "GPT-4o의 “모든 미합의 쟁점을 30일 안에 해결하자”는 제안은 현실적으로 버겁습니다.",
-                            "reasoning": "핵심 의사결정은 30일 안에 두되, 복잡한 항목은 병렬 워킹그룹으로 넘기는 완충 장치가 필요합니다.",
-                        }
-                    ],
-                    "additions": [
-                        {
-                            "point": "라운드마다 관찰자에게 요약 브리핑을 제공합시다.",
-                            "reasoning": "공유된 맥락이 있어야 결정 지연을 줄이고 팀 몰입감을 유지할 수 있습니다.",
-                        }
-                    ],
                 },
                 "round3": {
                     "round": 3,
-                    "no_new_arguments": False,
-                    "executive_summary": "Gemini 1.5 Flash는 두 모델의 논리를 종합해 “실험 속도를 유지하되 투명한 합의 구조로 리스크를 관리하자”는 결론을 제시합니다.",
-                    "conclusion": (
-                        f"{topic} 추진은 베타 단계, 확장 검증, 전사 확산의 세 구간으로 나누고 각 구간마다 명확한 합의 지점과 커뮤니케이션 리듬을 정의할 때 성공 확률이 높습니다."
+                    "panelist": "Gemini 1.5 Flash",
+                    "message": (
+                        "두 분의 합의 덕분에 그림이 깔끔해졌네요. GPT-4o가 말한 30일 파일럿이 끝나면, Claude 3 Haiku가 요구한 승인 게이트를 통과한 뒤 다음 60일 동안 성장 지표를 확장 실험에 연결해보겠습니다."
                     ),
-                    "recommendations": [
-                        "RACI 매트릭스를 업데이트해 각 단계 책임자를 명확히 한다.",
-                        "주요 결정 사항과 데이터 인사이트를 주차별 노트로 남겨 향후 리뷰에 활용한다.",
-                        "확장 단계 전에 추가 리소스와 예산 확보 계획을 검토한다.",
+                    "key_takeaway": "승인 게이트 뒤에 성장 지표를 붙여 확장 속도를 유지.",
+                    "references": [
+                        {
+                            "panelist": "GPT-4o",
+                            "round": 2,
+                            "quote": "대시보드를 첫 주에 열자",
+                            "stance": "support",
+                        },
+                        {
+                            "panelist": "Claude 3 Haiku",
+                            "round": 3,
+                            "quote": "법무·보안 승인 게이트",
+                            "stance": "build",
+                        },
                     ],
+                    "no_new_arguments": False,
                 },
             },
         }

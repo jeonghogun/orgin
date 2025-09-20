@@ -93,6 +93,9 @@ const Review = ({ reviewId, isSplitView = false, createRoomMutation }) => {
           if (!structuredPersona && typeof parsed.payload.persona === 'string') {
             structuredPersona = parsed.payload.persona;
           }
+          if (!structuredPersona && typeof parsed.payload.panelist === 'string') {
+            structuredPersona = parsed.payload.panelist;
+          }
           if (
             structuredRound === undefined &&
             typeof parsed.payload.round === 'number'
@@ -187,23 +190,8 @@ const Review = ({ reviewId, isSplitView = false, createRoomMutation }) => {
         if (typeof payload.key_takeaway === 'string' && payload.key_takeaway) {
           return payload.key_takeaway;
         }
-        if (
-          typeof payload.executive_summary === 'string' &&
-          payload.executive_summary
-        ) {
-          return payload.executive_summary;
-        }
-        if (Array.isArray(payload.agreements) && payload.agreements.length > 0) {
-          return `동의: ${payload.agreements[0]}`;
-        }
-        if (Array.isArray(payload.additions) && payload.additions.length > 0) {
-          const addition = payload.additions[0];
-          if (typeof addition === 'string') {
-            return `추가: ${addition}`;
-          }
-          if (addition?.point) {
-            return `추가: ${addition.point}`;
-          }
+        if (typeof payload.message === 'string' && payload.message) {
+          return payload.message.replace(/\s+/g, ' ').slice(0, 140);
         }
       }
       return (message.content || '').replace(/\s+/g, ' ').slice(0, 140);

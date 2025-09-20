@@ -39,10 +39,11 @@ def test_full_review_prompt_logic(
     # --- ROUND 1: Initial Turn ---
     round_1_output = {
         "round": 1,
-        "key_takeaway": "This is the key takeaway.",
-        "arguments": ["Argument 1"],
-        "risks": ["Risk 1"],
-        "opportunities": ["Opportunity 1"],
+        "panelist": "GPT-4o",
+        "message": "우리는 30일 파일럿으로 빠르게 사용자 반응을 확인해 봅시다.",
+        "key_takeaway": "30일 파일럿으로 학습 시작.",
+        "references": [],
+        "no_new_arguments": False,
     }
     mock_llm_instance.invoke_sync.return_value = (json.dumps(round_1_output), {"total_tokens": 10})
 
@@ -59,7 +60,7 @@ def test_full_review_prompt_logic(
     assert mock_llm_instance.invoke_sync.call_count == 2
     prompt_r1 = mock_llm_instance.invoke_sync.call_args_list[0].kwargs["user_prompt"]
     assert "Round 1 – Independent Perspective" in prompt_r1
-    assert "Topic: Test Topic" in prompt_r1
+    assert "JSON은 아래 스키마" in prompt_r1
 
     rebuttal_kwargs = mock_rebuttal_delay.call_args.kwargs
     turn_1_outputs_for_r2 = rebuttal_kwargs["turn_1_outputs"]
@@ -71,9 +72,24 @@ def test_full_review_prompt_logic(
     mock_llm_instance.invoke_sync.reset_mock()
     round_2_output = {
         "round": 2,
-        "agreements": ["Agree with Arg 1"],
-        "disagreements": [{"point": "Risk 1 is overstated", "reasoning": "Because..."}],
-        "additions": [{"point": "Consider X", "reasoning": "Because..."}],
+        "panelist": "GPT-4o",
+        "message": "Claude 3 Haiku가 지적한 통제 포인트에 동의하지만, 속도는 그대로 유지하죠.",
+        "key_takeaway": "통제를 붙여도 속도는 유지.",
+        "references": [
+            {
+                "panelist": "Claude 3 Haiku",
+                "round": 1,
+                "quote": "통제 경계를 명확히",
+                "stance": "support",
+            },
+            {
+                "panelist": "Gemini 1.5 Flash",
+                "round": 1,
+                "quote": "실험 범위를 넓히자",
+                "stance": "build",
+            },
+        ],
+        "no_new_arguments": False,
     }
     mock_llm_instance.invoke_sync.return_value = (json.dumps(round_2_output), {"total_tokens": 20})
 
@@ -91,7 +107,7 @@ def test_full_review_prompt_logic(
     assert mock_llm_instance.invoke_sync.call_count == 2
     prompt_r2 = mock_llm_instance.invoke_sync.call_args_list[0].kwargs["user_prompt"]
     assert "Round 2 – Response & Reflection (GPT-4o)" in prompt_r2
-    assert "Snapshot of your prior position:" in prompt_r2
+    assert "references 배열" in prompt_r2
 
     synthesis_kwargs = mock_synthesis_delay.call_args.kwargs
     turn_1_outputs_for_r3 = synthesis_kwargs["turn_1_outputs"]
@@ -103,9 +119,17 @@ def test_full_review_prompt_logic(
     mock_llm_instance.invoke_sync.reset_mock()
     round_3_output = {
         "round": 3,
-        "executive_summary": "Final summary.",
-        "conclusion": "Detailed conclusion.",
-        "recommendations": ["Do this."],
+        "panelist": "GPT-4o",
+        "message": "이제 30일 파일럿 뒤 60일 확장 검증으로 이어가며 합의한 체크리스트를 적용합시다.",
+        "key_takeaway": "30일→60일 로드맵 정리.",
+        "references": [
+            {
+                "panelist": "Claude 3 Haiku",
+                "round": 2,
+                "quote": "체크리스트 통과",
+                "stance": "support",
+            }
+        ],
         "no_new_arguments": False,
     }
     mock_llm_instance.invoke_sync.return_value = (json.dumps(round_3_output), {"total_tokens": 30})
@@ -125,7 +149,7 @@ def test_full_review_prompt_logic(
     assert mock_llm_instance.invoke_sync.call_count == 2
     prompt_r3 = mock_llm_instance.invoke_sync.call_args.kwargs["user_prompt"]
     assert "Round 3 – Joint Synthesis (GPT-4o)" in prompt_r3
-    assert "Conversation highlights so far:" in prompt_r3
+    assert "세 패널이 함께" in prompt_r3
 
     report_kwargs = mock_report_delay.call_args.kwargs
     panel_history_for_final = report_kwargs["panel_history"]

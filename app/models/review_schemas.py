@@ -1,55 +1,47 @@
+"""Pydantic models for validating the structured JSON output from LLMs.
+
+The new conversation-oriented format keeps the multi-round structure but expects
+each panelist turn to look like a real chat bubble with explicit cross
+references.  Downstream code still relies on structured fields to build light
+weight digests for subsequent prompts, so the schema keeps a concise
+``key_takeaway`` in addition to the natural language ``message``.
 """
-Pydantic models for validating the structured JSON output from LLMs
-during the multi-round review process.
-"""
-from typing import List
+
+from typing import List, Literal
+
 from pydantic import BaseModel, Field
 
-class Disagreement(BaseModel):
-    """A model for a disagreement point in the rebuttal round."""
-    point: str = Field(..., description="The argument being challenged or refined.")
-    reasoning: str = Field(..., description="The logical flaw or reason for the challenge.")
 
-class Addition(BaseModel):
-    """A model for a new point raised in the rebuttal round."""
-    point: str = Field(..., description="A new consideration missed in the previous round.")
-    reasoning: str = Field(..., description="Why this new point is important.")
+class ConversationReference(BaseModel):
+    """Reference to another panelist's earlier contribution."""
 
-class LLMReviewInitialAnalysis(BaseModel):
-    """
-    Expected JSON structure for Round 1 (Initial Analysis).
-    """
-    round: int
-    key_takeaway: str = Field(..., description="A brief summary of the main finding.")
-    arguments: List[str] = Field(..., description="A list of core arguments with reasoning.")
-    risks: List[str] = Field(..., description="A list of anticipated or potential risks.")
-    opportunities: List[str] = Field(..., description="A list of discovered or potential opportunities.")
+    panelist: str = Field(..., description="Name of the panelist being referenced.")
+    round: int = Field(..., ge=1, description="Round number for the referenced remark.")
+    quote: str = Field(..., description="Short quote or paraphrase being referenced.")
+    stance: Literal["support", "challenge", "build", "clarify"] = Field(
+        ..., description="How the speaker is using the reference."
+    )
 
-class LLMReviewRebuttal(BaseModel):
-    """
-    Expected JSON structure for Round 2 (Rebuttal).
-    """
-    round: int
+
+class LLMReviewTurn(BaseModel):
+    """Unified schema for every conversational turn across rounds."""
+
+    round: int = Field(..., ge=1, description="Current round number.")
+    panelist: str = Field(..., description="Panelist delivering the message.")
+    message: str = Field(
+        ..., description="Natural language chat bubble styled for the live debate."
+    )
+    key_takeaway: str = Field(
+        ..., description="One-line digest reused when prompting future rounds."
+    )
+    references: List[ConversationReference] = Field(
+        default_factory=list,
+        description="Cross references to other panelists' remarks.",
+    )
     no_new_arguments: bool = Field(
         default=False,
-        description="Set to true if the panelist has no meaningful rebuttal to add.",
+        description="True if the panelist has nothing substantive to add this round.",
     )
-    agreements: List[str] = Field(..., description="A list of round 1 arguments that are agreed with.")
-    disagreements: List[Disagreement] = Field(..., description="A list of points of disagreement with reasoning.")
-    additions: List[Addition] = Field(..., description="A list of new points or additions with reasoning.")
-
-class LLMReviewSynthesis(BaseModel):
-    """
-    Expected JSON structure for Round 3 (Synthesis).
-    """
-    round: int
-    no_new_arguments: bool = Field(
-        default=False,
-        description="Set to true if the panelist has nothing new to contribute for the alignment round.",
-    )
-    executive_summary: str = Field(..., description="A high-level summary of the final synthesized position.")
-    conclusion: str = Field(..., description="The detailed, comprehensive conclusion supporting the summary.")
-    recommendations: List[str] = Field(..., description="A list of specific, actionable recommendations.")
 
 class LLMFinalReport(BaseModel):
     """

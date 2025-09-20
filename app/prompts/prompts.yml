@@ -16,21 +16,19 @@ review_initial_analysis:
         Topic: {topic}
         Instruction: {instruction}
 
-        You are participating as {panelist}. Share your candid assessment exactly as you normally would.
-        - Be realistic and pragmatic about trade-offs, constraints, and upside.
-        - Keep the tone analytical rather than theatrical; you are not role-playing.
-        - Organize your thoughts for a teammate who will read this later.
-        - Respond in the user's language when obvious, otherwise default to English.
-        - The JSON schema you must emit is:
+        당신은 {panelist}입니다. {persona_trait}
+        - 회의실에서 동료와 나누는 대화처럼 2~4문장으로 말하고, 불릿 대신 자연스러운 문장을 사용하세요.
+        - 실행을 위해 눈여겨봐야 할 구체적인 사실이나 지표를 한두 개 포함하세요.
+        - round 1에서는 references 배열을 비워 둡니다.
+        - key_takeaway는 80자 내외의 한 줄 요약으로 남겨 다음 라운드 프롬프트에 활용합니다.
+        - JSON은 아래 스키마를 그대로 따르세요 (불필요한 필드는 추가하지 마세요).
           {{
             "round": 1,
-            "key_takeaway": "A concise headline capturing your stance.",
-            "arguments": [
-              "Core argument 1 (with reasoning)",
-              "Core argument 2 (with reasoning)"
-            ],
-            "risks": ["Material risk 1", "Material risk 2"],
-            "opportunities": ["Opportunity 1", "Opportunity 2"]
+            "panelist": "{panelist}",
+            "message": "대화체 메시지",
+            "key_takeaway": "짧은 요약",
+            "references": [],
+            "no_new_arguments": false
           }}
 
 review_rebuttal:
@@ -46,30 +44,26 @@ review_rebuttal:
         What the other panelists said:
         {others_digest}
 
-        Build on the live discussion realistically.
-        - Reference other panelists by name and quote short phrases when agreeing or pushing back.
-        - Focus on clarifying disagreements or surfacing missing execution details.
-        - Add practical follow-up ideas when you see a gap.
-        - If nothing meaningful changed for you, set `"no_new_arguments"` to `true` and leave the lists empty.
-        - Output must respect this JSON schema:
+        실시간 토론처럼 다른 패널의 말을 직접 인용하며 응답하세요. {persona_trait}
+        - 최소 두 개 이상의 문장에서 상대 발언을 찬성/반박/보완해 주세요.
+        - 메시지에는 패널 이름을 자연스럽게 언급하고, references 배열에 각각의 인용을 기록합니다.
+        - references.stance 값은 support, challenge, build, clarify 중 하나여야 합니다.
+        - 새로운 말이 전혀 없다면 `"no_new_arguments"`를 true로, 그렇지 않다면 false로 두세요.
+        - JSON 스키마는 아래 예시와 동일해야 합니다.
           {{
             "round": 2,
-            "no_new_arguments": false,
-            "agreements": [
-              "One short sentence quoting or paraphrasing another panelist you agree with"
-            ],
-            "disagreements": [
+            "panelist": "{panelist}",
+            "message": "대화체 메시지",
+            "key_takeaway": "짧은 요약",
+            "references": [
               {{
-                "point": "Quote or paraphrase the argument you are challenging",
-                "reasoning": "Succinct explanation of your concern"
+                "panelist": "다른 패널 이름",
+                "round": 1,
+                "quote": "짧은 인용",
+                "stance": "support"
               }}
             ],
-            "additions": [
-              {{
-                "point": "New insight or operational detail to add",
-                "reasoning": "Why it matters now"
-              }}
-            ]
+            "no_new_arguments": false
           }}
 
 review_synthesis:
@@ -82,21 +76,26 @@ review_synthesis:
         Conversation highlights so far:
         {conversation_digest}
 
-        Produce a grounded summary that moves the group toward an implementable plan.
-        - Weave in the strongest points from others when forming your executive summary.
-        - Call out the trade-offs you still worry about and how to monitor them.
-        - Deliver concrete next steps that a project lead could execute immediately.
-        - If you truly have nothing to add, set `"no_new_arguments"` to `true`.
-        - Emit JSON using this schema:
+        세 패널이 함께 전략을 정리하는 장면처럼 말하세요. {persona_trait}
+        - 메시지는 3~4문장 내에서 합의/쟁점을 요약하고, 다음 단계의 책임과 속도를 명확히 합니다.
+        - references 배열에는 이번 라운드에서 언급한 핵심 인용을 기록하고 stance 값을 정확히 지정하세요.
+        - key_takeaway는 실행 책임자가 바로 이해할 수 있는 한 줄이어야 합니다.
+        - 새로운 주장이 없다면 `"no_new_arguments"`를 true로 바꾸고 message를 짧게 유지합니다.
+        - JSON 스키마는 아래 형식과 동일해야 합니다.
           {{
             "round": 3,
-            "no_new_arguments": false,
-            "executive_summary": "Synthesis referencing the most persuasive quotes.",
-            "conclusion": "Narrative explaining how the team should proceed.",
-            "recommendations": [
-              "Actionable recommendation 1",
-              "Actionable recommendation 2"
-            ]
+            "panelist": "{panelist}",
+            "message": "대화체 메시지",
+            "key_takeaway": "짧은 요약",
+            "references": [
+              {{
+                "panelist": "다른 패널 이름",
+                "round": 2,
+                "quote": "핵심 인용",
+                "stance": "build"
+              }}
+            ],
+            "no_new_arguments": false
           }}
 
 review_resolution:

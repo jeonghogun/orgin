@@ -15,12 +15,7 @@ from pydantic import BaseModel, ValidationError
 from app.celery_app import celery_app
 from app.config.settings import get_effective_redis_url, settings
 from app.models.schemas import Message, WebSocketMessage
-from app.models.review_schemas import (
-    LLMReviewInitialAnalysis,
-    LLMReviewRebuttal,
-    LLMReviewSynthesis,
-    LLMFinalReport,
-)
+from app.models.review_schemas import LLMReviewTurn, LLMFinalReport
 from app.services.redis_pubsub import redis_pubsub_manager
 from app.services.llm_strategy import llm_strategy_service, ProviderPanelistConfig
 from app.services.review_templates import build_final_report_message
@@ -31,6 +26,25 @@ from app.services.llm_service import LLMService
 from app.services.storage_service import storage_service
 
 logger = logging.getLogger(__name__)
+
+PERSONA_STYLE_HINTS: Dict[str, str] = {
+    "GPT-4o": "현실적인 실행력을 중시하는 결단력 있는 운영 리더의 시각으로 이야기합니다.",
+    "Claude 3 Haiku": "위험과 거버넌스를 세심하게 챙기는 신중한 감사 담당자의 시각으로 말합니다.",
+    "Gemini 1.5 Flash": "새로운 가능성에 밝고 확장을 즐기는 낙관적 전략가의 어조로 제안합니다.",
+}
+
+DEFAULT_STYLE_HINT = "실용적인 제품 리더처럼 구체적이고 실행 가능한 제안을 제시합니다."
+
+STANCE_SUMMARY = {
+    "support": "공감",
+    "challenge": "반박",
+    "build": "보완",
+    "clarify": "질문",
+}
+
+
+def _persona_style(persona: str) -> str:
+    return PERSONA_STYLE_HINTS.get(persona, DEFAULT_STYLE_HINT)
 
 class BudgetExceededError(Exception):
     """Custom exception for when a budget is exceeded."""
@@ -168,66 +182,97 @@ def _collect_completed_rounds(panel_history: Dict[str, Dict[str, Any]]) -> List[
                 continue
     return sorted(rounds)
 
-def _fallback_round_payload(
-    validation_model: Type[BaseModel],
-    persona: str,
-    round_num: int,
-) -> Dict[str, Any]:
-    if validation_model is LLMReviewInitialAnalysis:
-        return {
-            "round": round_num,
-            "key_takeaway": "Initial analysis completed with a focus on balanced execution.",
-            "arguments": [
-                "Small pilot launches create fast feedback loops.",
-                "Clear success metrics keep the team aligned.",
-            ],
-            "risks": [
-                "Rushing implementation could exhaust the budget.",
-                "Lack of ownership may slow decision making.",
-            ],
-            "opportunities": [
-                "Position the team as a leader in responsible AI.",
-                "Use early learnings to inform wider adoption plans.",
-            ],
-        }
-    if validation_model is LLMReviewRebuttal:
-        return {
-            "round": round_num,
-            "no_new_arguments": False,
-            "agreements": [
-                "I agree that quick experimentation needs paired guardrails."
-            ],
-            "disagreements": [
-                {
-                    "point": "Rushing headcount expansion would strain the team.",
-                    "reasoning": "Stage investment behind clear milestones so momentum is earned.",
-                }
-            ],
-            "additions": [
-                {
-                    "point": "Define ownership for the rollout team immediately.",
-                    "reasoning": "Without a single accountable lead execution will drift.",
-                }
-            ],
-        }
-    if validation_model is LLMReviewSynthesis:
-        return {
-            "round": round_num,
-            "no_new_arguments": False,
-            "executive_summary": "Panelists agree to pursue the opportunity with measured checkpoints.",
-            "conclusion": "Adopt a pilot-first approach that preserves flexibility while proving value.",
-            "recommendations": [
-                "Launch Alternative 1 with a 30-day milestone plan.",
-                "Share weekly updates on risks and mitigations.",
-            ],
-        }
-    return {}
+def _fallback_round_payload(round_num: int, persona: str) -> Dict[str, Any]:
+    """Generate a conversational fallback payload for the given round."""
+
+    base_payload: Dict[str, Any] = {
+        "round": round_num,
+        "panelist": persona,
+        "message": "",
+        "key_takeaway": "",
+        "references": [],
+        "no_new_arguments": False,
+    }
+
+    if round_num == 1:
+        base_payload.update(
+            {
+                "message": (
+                    "핵심 가정을 빠르게 검증하면서도 품질 안전망을 동시에 준비해야 해요. "
+                    "실행팀이 바로 움직일 수 있도록 30일짜리 파일럿을 제안합니다."
+                ),
+                "key_takeaway": "30일 파일럿으로 속도와 안전망을 동시에 챙기자.",
+            }
+        )
+        return base_payload
+
+    if round_num == 2:
+        base_payload.update(
+            {
+                "message": (
+                    "GPT-4o가 말한 속도감에는 공감하지만, Claude 3 Haiku가 지적한 통제 절차를 같이 넣어야 해요. "
+                    "Gemini 1.5 Flash가 언급한 사용자 피드백 루프를 실험 설계에 바로 포함시키죠."
+                ),
+                "key_takeaway": "속도와 통제, 사용자 피드백을 묶은 현실적 실행안 제시.",
+                "references": [
+                    {
+                        "panelist": "GPT-4o",
+                        "round": 1,
+                        "quote": "빠른 실험으로 시장 반응을 학습",
+                        "stance": "support",
+                    },
+                    {
+                        "panelist": "Claude 3 Haiku",
+                        "round": 1,
+                        "quote": "통제 범위와 리스크 대응 계획",
+                        "stance": "build",
+                    },
+                    {
+                        "panelist": "Gemini 1.5 Flash",
+                        "round": 1,
+                        "quote": "사용자 피드백 루프",
+                        "stance": "build",
+                    },
+                ],
+            }
+        )
+        return base_payload
+
+    if round_num == 3:
+        base_payload.update(
+            {
+                "message": (
+                    "이제 세 가지 관점을 합쳐서 30일 파일럿 → 60일 확장 검증 구조로 정리할 수 있겠어요. "
+                    "Claude 3 Haiku가 강조한 통제 포인트는 게이트마다 체크하고, Gemini 1.5 Flash의 낙관적인 지표는 성공판정 기준으로 삼죠."
+                ),
+                "key_takeaway": "30일 파일럿과 60일 확장을 잇는 단계별 합의안.",
+                "references": [
+                    {
+                        "panelist": "Claude 3 Haiku",
+                        "round": 2,
+                        "quote": "체크리스트를 통과해야 다음 단계로",
+                        "stance": "support",
+                    },
+                    {
+                        "panelist": "Gemini 1.5 Flash",
+                        "round": 2,
+                        "quote": "사용자 반응을 바로 제품 개선으로",
+                        "stance": "build",
+                    },
+                ],
+            }
+        )
+        return base_payload
+
+    return base_payload
 
 
-def _clip_list(items: Optional[List[str]], limit: int = 2) -> List[str]:
-    if not items:
+def _clip_references(
+    refs: Optional[List[Dict[str, Any]]], limit: int = 2
+) -> List[Dict[str, Any]]:
+    if not refs:
         return []
-    return [item for item in items if item][:limit]
+    return [ref for ref in refs if ref][:limit]
 
 
 def _squash_text(text: str) -> str:
@@ -249,9 +294,7 @@ def _round1_self_snapshot(output: Dict[str, Any]) -> str:
     snapshot = {
         "round": output.get("round", 1),
         "key_takeaway": output.get("key_takeaway", ""),
-        "arguments": _clip_list(output.get("arguments", []), 2),
-        "risks": _clip_list(output.get("risks", []), 2),
-        "opportunities": _clip_list(output.get("opportunities", []), 2),
+        "sample_line": _quote_text(output.get("message", ""), 140),
     }
     return json.dumps(snapshot, ensure_ascii=False, indent=2)
 
@@ -263,14 +306,14 @@ def _round1_competitor_digest(
     for persona, output in turn_1_outputs.items():
         if persona == target_persona:
             continue
-        key = _quote_text(output.get("key_takeaway", "")) or "요약 없음"
-        arguments = _clip_list(output.get("arguments", []), 1)
-        risks = _clip_list(output.get("risks", []), 1)
+        key = _quote_text(output.get("key_takeaway") or output.get("message", "")) or "요약 없음"
         lines = [f"- {persona}: {key}"]
-        if arguments:
-            lines.append(f"  • 핵심 근거: {_quote_text(arguments[0], 140)}")
-        if risks:
-            lines.append(f"  • 경고: {_quote_text(risks[0], 140)}")
+        tone_hint = _persona_style(persona)
+        if tone_hint:
+            lines.append(f"  • 톤: {tone_hint}")
+        excerpt = _quote_text(output.get("message", ""), 140)
+        if excerpt:
+            lines.append(f"  • 한 줄 메모: {excerpt}")
         sections.append("\n".join(lines))
     if not sections:
         return "- 다른 패널의 발언이 아직 없습니다."
@@ -281,23 +324,18 @@ def _summarize_round2_output(output: Dict[str, Any]) -> str:
     if output.get("no_new_arguments"):
         return "no new arguments"
     parts: List[str] = []
-    for agree in _clip_list(output.get("agreements", []), 1):
-        parts.append(f"agreed with {_quote_text(agree, 120)}")
-    for disagreement in _clip_list(output.get("disagreements", []), 1):
-        point = disagreement.get("point")
-        reasoning = disagreement.get("reasoning")
-        segment = f"challenged {_quote_text(point, 120)}"
-        if reasoning:
-            segment += f" because {_squash_text(reasoning)}"
-        parts.append(segment)
-    for addition in _clip_list(output.get("additions", []), 1):
-        point = addition.get("point")
-        reasoning = addition.get("reasoning")
-        segment = f"added {_quote_text(point, 120)}"
-        if reasoning:
-            segment += f" ({_squash_text(reasoning)})"
-        parts.append(segment)
-    return "; ".join(parts)
+    for ref in _clip_references(output.get("references", []), 2):
+        stance = STANCE_SUMMARY.get(ref.get("stance"), "참조")
+        quote = _quote_text(ref.get("quote", ""), 120)
+        target = ref.get("panelist") or "다른 패널"
+        round_info = ref.get("round")
+        round_str = f" R{round_info}" if round_info else ""
+        fragment = f"{stance} {target}{round_str} {quote}".strip()
+        parts.append(fragment)
+    message_excerpt = _quote_text(output.get("message", ""), 140)
+    if message_excerpt:
+        parts.append(f"메시지: {message_excerpt}")
+    return "; ".join(filter(None, parts))
 
 
 def _conversation_digest(
@@ -306,11 +344,11 @@ def _conversation_digest(
 ) -> str:
     blocks: List[str] = []
     for speaker, round1 in turn_1_outputs.items():
-        key_line = _quote_text(round1.get("key_takeaway", "")) or "요약 없음"
-        arguments = _clip_list(round1.get("arguments", []), 1)
+        key_line = _quote_text(round1.get("key_takeaway") or round1.get("message", "")) or "요약 없음"
         block_lines = [f"- {speaker} R1: {key_line}"]
-        if arguments:
-            block_lines.append(f"  • 근거: {_quote_text(arguments[0], 140)}")
+        tone_hint = _persona_style(speaker)
+        if tone_hint:
+            block_lines.append(f"  • 톤: {tone_hint}")
         r2 = turn_2_outputs.get(speaker)
         if r2:
             summary = _summarize_round2_output(r2)
@@ -368,8 +406,10 @@ def _process_turn_results(
                 data = json.loads(content)
                 # Then, validate the data against the provided Pydantic model
                 validated_data = validation_model.model_validate(data)
-                # Store the validated data as a dictionary
-                turn_outputs[persona] = validated_data.model_dump()
+                payload = validated_data.model_dump()
+                # Ensure the persona label is consistent for downstream renderers.
+                payload["panelist"] = persona
+                turn_outputs[persona] = payload
 
                 round_metrics.append(metrics)
                 successful_panelists.append(panelist_config)
@@ -387,7 +427,7 @@ def _process_turn_results(
             except (json.JSONDecodeError, ValidationError) as e:
                 error_message = f"Panelist {persona} in round {round_num} returned invalid or non-validating JSON. Error: {e}. Raw content: {content}"
                 logger.error(error_message)
-                fallback_payload = _fallback_round_payload(validation_model, persona, round_num)
+                fallback_payload = _fallback_round_payload(round_num, persona)
                 if fallback_payload:
                     metrics_record = {
                         "persona": persona,
@@ -473,6 +513,7 @@ def run_initial_panel_turn(self: BaseTask, review_id: str, review_room_id: str, 
                 topic=topic,
                 instruction=instruction,
                 panelist=p_config.persona,
+                persona_trait=_persona_style(p_config.persona),
             )
             prompts_by_persona[p_config.persona] = prompt
             initial_results.append(
@@ -514,7 +555,7 @@ def run_initial_panel_turn(self: BaseTask, review_id: str, review_room_id: str, 
 
 
         turn_outputs, round_metrics, successful_panelists = _process_turn_results(
-            review_id, review_room_id, 1, final_results, [], validation_model=LLMReviewInitialAnalysis
+            review_id, review_room_id, 1, final_results, [], validation_model=LLMReviewTurn
         )
 
         panel_history = _merge_round_outputs({}, 1, turn_outputs)
@@ -580,6 +621,7 @@ def run_rebuttal_turn(
                 panelist=p_config.persona,
                 self_snapshot=self_snapshot,
                 others_digest=competitors_digest,
+                persona_trait=_persona_style(p_config.persona),
             )
 
             prompts_by_persona[p_config.persona] = prompt
@@ -621,7 +663,7 @@ def run_rebuttal_turn(
                 final_results.append((p_config, result))
 
         turn_outputs, round_metrics, successful_panelists = _process_turn_results(
-            review_id, review_room_id, 2, final_results, all_metrics, validation_model=LLMReviewRebuttal
+            review_id, review_room_id, 2, final_results, all_metrics, validation_model=LLMReviewTurn
         )
 
         panel_history = _merge_round_outputs(panel_history, 2, turn_outputs)
@@ -700,6 +742,7 @@ def run_synthesis_turn(
                 "review_synthesis",
                 panelist=persona,
                 conversation_digest=conversation_digest,
+                persona_trait=_persona_style(persona),
             )
             prompts_by_persona[persona] = prompt
             all_results.append(run_panelist_turn(self.llm_service, p_config, prompt, f"{trace_id}-r3-{p_config.provider}"))
@@ -740,7 +783,7 @@ def run_synthesis_turn(
                 final_results.append((p_config, result))
 
         turn_outputs, round_metrics, successful_panelists = _process_turn_results(
-            review_id, review_room_id, 3, final_results, all_metrics, validation_model=LLMReviewSynthesis
+            review_id, review_room_id, 3, final_results, all_metrics, validation_model=LLMReviewTurn
         )
 
         panel_history = _merge_round_outputs(panel_history, 3, turn_outputs)
