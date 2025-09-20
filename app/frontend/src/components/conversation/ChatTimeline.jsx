@@ -1,14 +1,16 @@
 import React, { useEffect, useRef } from 'react';
+import PropTypes from 'prop-types';
 import MessageCard from './MessageCard';
 
 const ChatTimeline = ({ messages, isLoading, error, onViewHistory }) => {
   const scrollRef = useRef(null);
+  const safeMessages = Array.isArray(messages) ? messages : [];
 
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [messages.length, messages[messages.length - 1]?.content]);
+  }, [safeMessages.length, safeMessages[safeMessages.length - 1]?.content]);
 
   if (isLoading) {
     return <div className="text-center p-8">Loading conversation...</div>;
@@ -19,12 +21,19 @@ const ChatTimeline = ({ messages, isLoading, error, onViewHistory }) => {
 
   return (
     <div className="h-full overflow-y-auto space-y-4">
-      {messages.map((msg) => (
+      {safeMessages.map((msg) => (
         <MessageCard key={msg.id} message={msg} onViewHistory={onViewHistory} />
       ))}
       <div ref={scrollRef} />
     </div>
   );
+};
+
+ChatTimeline.propTypes = {
+  messages: PropTypes.arrayOf(PropTypes.object),
+  isLoading: PropTypes.bool,
+  error: PropTypes.shape({ message: PropTypes.string }),
+  onViewHistory: PropTypes.func,
 };
 
 export default ChatTimeline;

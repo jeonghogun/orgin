@@ -1,0 +1,61 @@
+groups:
+  - name: origin-api
+    rules:
+      - alert: OriginHighErrorRate
+        expr: |
+          clamp_min(
+            sum(increase(http_requests_total{status=~"5.."}[5m]))
+            /
+            sum(increase(http_requests_total[5m])),
+            0
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High API error rate"
+          description: |
+            More than 5% of requests have returned 5xx over the last 5 minutes.
+            Inspect the FastAPI logs and recent deployments.
+
+      - alert: OriginP95LatencyDegraded
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(http_request_duration_seconds_bucket[5m])) by (le)
+          ) > 2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "P95 latency is above 2s"
+          description: |
+            The 95th percentile latency has been greater than two seconds for 10 minutes.
+            Check downstream provider response times and database health.
+
+  - name: origin-celery
+    rules:
+      - alert: CeleryWorkerUnavailable
+        expr: absent(celery_worker_up) == 1
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Celery workers are not reporting as up"
+          description: |
+            No Celery workers have reported the `celery_worker_up` metric in the last 2 minutes.
+            Ensure the worker deployment and broker are healthy.
+
+      - alert: CeleryQueueBacklog
+        expr: |
+          max(
+            increase(celery_tasks_in_queue_total[10m])
+          ) > 100
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Celery queue backlog is growing"
+          description: |
+            More than 100 tasks were enqueued within 10 minutes without being drained.
+            Scale workers or inspect task failures.

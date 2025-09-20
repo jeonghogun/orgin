@@ -1,4 +1,5 @@
 import React from 'react';
+import PropTypes from 'prop-types';
 import ReactMarkdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
@@ -10,6 +11,10 @@ import { UserCircleIcon, CpuChipIcon, ClockIcon, ClipboardIcon, CheckIcon } from
 const BlinkingCursor = () => <span className="inline-block w-2 h-5 bg-blue-500 animate-blink" />;
 
 const MessageCard = ({ message, onViewHistory }) => {
+  if (!message) {
+    return null;
+  }
+
   const isUser = message.role === 'user';
 
   return (
@@ -71,16 +76,16 @@ const MessageCard = ({ message, onViewHistory }) => {
           {message.status === 'draft' && <BlinkingCursor />}
         </div>
         {message.meta?.attachments?.length > 0 && (
-            <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
-                <p className="text-xs font-semibold text-gray-600 dark:text-gray-400">Attachments:</p>
-                <div className="flex flex-wrap gap-2 mt-1">
-                    {message.meta.attachments.map(att => (
-                        <div key={att.id} className="bg-gray-200 dark:bg-gray-700 text-xs rounded-md px-2 py-1">
-                            {att.name}
-                        </div>
-                    ))}
+          <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
+            <p className="text-xs font-semibold text-gray-600 dark:text-gray-400">Attachments:</p>
+            <div className="flex flex-wrap gap-2 mt-1">
+              {message.meta.attachments.map((att) => (
+                <div key={att.id || att.name} className="bg-gray-200 dark:bg-gray-700 text-xs rounded-md px-2 py-1">
+                  {att.name || att.id}
                 </div>
+              ))}
             </div>
+          </div>
         )}
         {message.meta && message.meta.tokens_output && (
           <div className="text-xs text-gray-400 dark:text-gray-500 mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
@@ -91,6 +96,18 @@ const MessageCard = ({ message, onViewHistory }) => {
       </div>
     </div>
   );
+};
+
+MessageCard.propTypes = {
+  message: PropTypes.shape({
+    id: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+    role: PropTypes.string,
+    model: PropTypes.string,
+    content: PropTypes.string,
+    status: PropTypes.string,
+    meta: PropTypes.object,
+  }),
+  onViewHistory: PropTypes.func,
 };
 
 export default MessageCard;

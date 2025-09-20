@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
+import PropTypes from 'prop-types';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 import { useMessages, useGenerationSettings, setMessages, addMessage, appendStreamChunk } from '../../store/useConversationStore';
@@ -30,6 +31,11 @@ const ChatView = ({ threadId }) => {
       return data;
     },
     enabled: !!threadId,
+    retry: 1,
+    onError: (queryError) => {
+      const detail = queryError?.response?.data?.detail || '대화를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.';
+      toast.error(detail);
+    },
   });
 
   useEffect(() => {
@@ -58,7 +64,13 @@ const ChatView = ({ threadId }) => {
   });
 
   const sendMessageMutation = useMutation({
-    mutationFn: (newMessage) => axios.post(`/api/convo/threads/${threadId}/messages`, newMessage),
+    mutationFn: async (newMessage) => {
+      if (!threadId) {
+        throw new Error('활성화된 스레드가 없어 메시지를 보낼 수 없습니다.');
+      }
+      const response = await axios.post(`/api/convo/threads/${threadId}/messages`, newMessage);
+      return response;
+    },
     onSuccess: (response, variables) => {
       const { messageId } = response.data;
       addMessage(threadId, {
@@ -73,6 +85,10 @@ const ChatView = ({ threadId }) => {
       setAttachments([]);
       setActiveMessageId(messageId);
       setActiveStreamUrl(`/api/convo/messages/${messageId}/stream`);
+    },
+    onError: (mutationError) => {
+      const detail = mutationError?.response?.data?.detail || '메시지 전송에 실패했어요. 다시 시도해주세요.';
+      toast.error(detail);
     },
   });
 
@@ -124,10 +140,16 @@ const ChatView = ({ threadId }) => {
   };
 
   const createExportJobMutation = useMutation({
-    mutationFn: (format) => axios.post(`/api/threads/${threadId}/export/jobs`, null, { params: { format } }),
+    mutationFn: async (format) => {
+      if (!threadId) {
+        throw new Error('활성화된 스레드가 없어 내보내기를 시작할 수 없습니다.');
+      }
+      return axios.post(`/api/threads/${threadId}/export/jobs`, null, { params: { format } });
+    },
     onSuccess: (response) => setExportJob(response.data),
-    onError: (error) => {
-      // Maybe show an error to the user in the future.
+    onError: (mutationError) => {
+      const detail = mutationError?.response?.data?.detail || '내보내기 작업을 시작하지 못했습니다.';
+      toast.error(detail);
     }
   });
 
@@ -181,6 +203,10 @@ const ChatView = ({ threadId }) => {
       </div>
     </div>
   );
+};
+
+ChatView.propTypes = {
+  threadId: PropTypes.string,
 };
 
 export default ChatView;

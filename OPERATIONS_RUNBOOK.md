@@ -31,7 +31,9 @@ Origin 플랫폼을 운영 환경에 배포하고 유지보수할 때 따라야 
 
 ## 3. 모니터링 & 알림 체계
 - **로컬 관측성 스택**: `docker-compose.monitoring.yml`은 Prometheus/Grafana 구성을 제공하며, API는 `/metrics` 엔드포인트로 메트릭을 노출합니다.【F:docker-compose.monitoring.yml†L1-L68】
-- **대시보드 지표**: Grafana 대시보드는 RPS, 오류율, P95 지연, 메모리 사용량을 기본으로 제공합니다. 추가 패널은 `OBSERVABILITY_GUIDE.md`의 절차를 따라 커스터마이징할 수 있습니다.【F:OBSERVABILITY_GUIDE.md†L1-L40】
+- **대시보드 지표**: Grafana 대시보드는 RPS, 오류율, P95 지연, 메모리 사용량을 기본으로 제공합니다. 추가 패널은 `OBSERVABILITY_GUIDE.md`의 절차를 따라 커스터마이징할 수 있습니다.【F:OBSERVABILITY_GUIDE.md†L1-L49】
+- **프로덕션 알림**: `config/prometheus/alerts.yml`에 기본 Alert 룰을 정의해 두었습니다. Prometheus를 재시작하면 API 오류율/지연/워크플로 상태를 자동으로 감시하며, Alertmanager URL을 지정하면 슬랙·PagerDuty 등으로 통보할 수 있습니다.【F:config/prometheus/alerts.yml†L1-L40】
+- **Celery 스모크 테스트**: 신규 환경에서는 워커 기동 후 `./scripts/run_celery_smoke_test.py`를 실행해 브로커·백엔드·워커 간 데이터 흐름이 정상인지 점검하세요. 실패 시 브로커 URL, 워커 로그, Redis 상태를 우선 확인합니다.【F:scripts/run_celery_smoke_test.py†L1-L54】
 - **추적/로그 연동**: OpenTelemetry 수집 엔드포인트는 환경 변수(`OTEL_EXPORTER_OTLP_ENDPOINT`)로 제어되므로, 운영 환경에서는 APM 백엔드 주소를 주입해 추적 데이터를 수집하세요.【F:app/config/settings.py†L78-L118】
 
 ## 4. 사고 대응 & 상태 초기화

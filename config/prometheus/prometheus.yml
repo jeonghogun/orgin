@@ -7,3 +7,5 @@ scrape_configs:
       # When running with docker-compose, prometheus can resolve the 'api' service name.
       # This assumes the main app is running via `docker-compose up` and is on the same network.
       - targets: ['api:8000']
+rule_files:
+  - alerts.yml

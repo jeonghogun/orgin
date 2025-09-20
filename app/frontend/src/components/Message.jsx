@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import PropTypes from 'prop-types';
 import ReactMarkdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
@@ -8,6 +9,10 @@ import DiffViewModal from './conversation/DiffViewModal';
 const Message = ({ message }) => {
   const [isHovered, setIsHovered] = useState(false);
   const [showDiff, setShowDiff] = useState(false);
+  if (!message) {
+    return null;
+  }
+
   const isUser = message.role === 'user';
 
   const handleCopy = () => {
@@ -68,7 +73,7 @@ const Message = ({ message }) => {
             className="prose prose-sm dark:prose-invert max-w-none"
             components={{ code: CodeBlock }}
           >
-            {message.content}
+            {message.content || ''}
           </ReactMarkdown>
           {isHovered && (
             <div className="absolute -top-3 -right-3 flex gap-1">
@@ -90,13 +95,24 @@ const Message = ({ message }) => {
           )}
         </div>
         <div className={`text-meta text-muted mt-1 ${isUser ? 'text-right' : 'text-left'}`}>
-          {new Date(message.timestamp * 1000 || Date.now()).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+          {new Date((message.timestamp ?? Date.now() / 1000) * 1000).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
         </div>
       </div>
       {isUser && <Avatar role="user" />}
       {showDiff && <DiffViewModal messageId={message.message_id} onClose={() => setShowDiff(false)} />}
     </div>
   );
+};
+
+Message.propTypes = {
+  message: PropTypes.shape({
+    id: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+    message_id: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+    role: PropTypes.string,
+    content: PropTypes.string,
+    timestamp: PropTypes.number,
+    meta: PropTypes.object,
+  }),
 };
 
 export default Message;

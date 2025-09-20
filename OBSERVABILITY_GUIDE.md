@@ -38,7 +38,14 @@ The default dashboard provides a high-level overview of the API's health:
 - **API Latency P95 (seconds):** The 95th percentile of request duration. This tells you that 95% of users are getting a response time at or below this value. It's a better indicator of "worst-case" performance than an average.
 - **Memory Usage (Bytes):** Tracks the Resident Set Size (RSS) memory of the main API process. This can be useful for detecting memory leaks over time.
 
-## 4. Extending and Customizing
+## 4. Alerting & Incident Readiness
+
+- **Prometheus Alert Rules:** The monitoring stack now ships with baseline alert rules in `config/prometheus/alerts.yml`. They cover API error rate spikes, degraded P95 latency, and Celery worker health. Prometheus automatically loads the rules on startup, and you can hot-reload them by restarting the Prometheus container.
+- **Alertmanager Integration:** To forward alerts to Slack, PagerDuty, or email, point Prometheus at an Alertmanager instance by extending `docker-compose.monitoring.yml` and adding the appropriate `--alertmanager.url` flag. Each rule includes severity labels so you can route high-urgency alerts separately from warnings.
+- **Dashboards for Operators:** Grafana automatically provisions the `origin_dashboard.json` dashboard under `config/grafana/provisioning/dashboards`. Use it as the base for SLO/SLA views and export updated JSON to keep the repository in sync with production dashboards.
+- **Run Smoke Tasks:** When rolling out a new environment, run `./scripts/run_celery_smoke_test.py` after the workers are online. It executes a real Celery workflow via the configured broker to confirm queue health before directing customer traffic.
+
+## 5. Extending and Customizing
 
 The provided setup is a minimal baseline. It can be extended in several ways:
 - **Adding More Panels:** You can edit the dashboard directly in the Grafana UI and save your changes. To make them permanent, you can export the JSON model and update the `config/grafana/provisioning/dashboards/origin_dashboard.json` file.
