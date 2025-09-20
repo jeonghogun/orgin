@@ -6,7 +6,8 @@ from fastapi import APIRouter, HTTPException
 from redis.exceptions import RedisError
 
 from app.services.database_service import get_database_service
-from app.config.settings import get_effective_redis_url
+from app.config.settings import Settings, get_effective_redis_url
+from app.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +64,38 @@ async def detailed_health_check():
                 health_status["status"] = "degraded"
     else:
         health_status["components"]["redis"] = "disabled"
-    
+
+    # Check Celery worker availability
+    try:
+        inspector = celery_app.control.inspect(timeout=1)
+        ping_result = inspector.ping() if inspector else None
+        if ping_result:
+            health_status["components"]["celery"] = "healthy"
+        else:
+            health_status["components"]["celery"] = "unavailable"
+            if health_status["status"] == "healthy":
+                health_status["status"] = "degraded"
+    except Exception as celery_error:
+        logger.warning(f"Celery health check failed: {celery_error}")
+        health_status["components"]["celery"] = "unhealthy"
+        if health_status["status"] == "healthy":
+            health_status["status"] = "degraded"
+
+    # Verify required configuration secrets are present
+    settings = Settings()
+    missing_secrets = []
+    if not settings.DB_ENCRYPTION_KEY:
+        missing_secrets.append("DB_ENCRYPTION_KEY")
+    if not settings.DATABASE_URL:
+        missing_secrets.append("DATABASE_URL")
+
+    if missing_secrets:
+        health_status["components"]["configuration"] = f"missing: {', '.join(missing_secrets)}"
+        if health_status["status"] == "healthy":
+            health_status["status"] = "degraded"
+    else:
+        health_status["components"]["configuration"] = "healthy"
+
     # Return appropriate HTTP status
     if health_status["status"] == "unhealthy":
         raise HTTPException(status_code=503, detail=health_status)

@@ -402,6 +402,18 @@ class StorageService:
         )
         self.db.execute_update(query, params)
 
+    def purge_review_artifacts(self, review_id: str) -> None:
+        """Remove persisted review artifacts such as metrics and events."""
+        cleanup_statements = (
+            ("DELETE FROM review_metrics WHERE review_id = %s", (review_id,)),
+            ("DELETE FROM review_events WHERE review_id = %s", (review_id,)),
+        )
+        for statement, params in cleanup_statements:
+            try:
+                self.db.execute_update(statement, params)
+            except Exception as exc:  # pragma: no cover - defensive cleanup
+                logger.debug("Ignoring cleanup failure for %s: %s", statement, exc)
+
     def get_review_events(
         self, review_id: str, since: Optional[int] = None
     ) -> List[Dict[str, Any]]:
@@ -414,6 +426,31 @@ class StorageService:
             params = (review_id,)
 
         return self.db.execute_query(query, params)
+
+    def get_recent_status_events(self, review_id: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """Return the most recent status update events for a review in chronological order."""
+        query = (
+            "SELECT ts, content FROM review_events "
+            "WHERE review_id = %s AND type = %s "
+            "ORDER BY ts DESC LIMIT %s"
+        )
+        rows = self.db.execute_query(query, (review_id, "status_update", limit))
+        events: List[Dict[str, Any]] = []
+        for row in rows:
+            raw_content = row.get("content")
+            status_value = "unknown"
+            if isinstance(raw_content, str):
+                try:
+                    payload = json.loads(raw_content)
+                    status_value = payload.get("status", "unknown")
+                except json.JSONDecodeError:
+                    status_value = "unknown"
+            elif isinstance(raw_content, dict):
+                status_value = raw_content.get("status", "unknown")
+
+            events.append({"ts": row.get("ts"), "status": status_value})
+
+        return list(reversed(events))
 
     def save_review_metrics(self, metrics: ReviewMetrics) -> None:
         """Save review metrics to the database."""

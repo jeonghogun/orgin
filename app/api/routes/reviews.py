@@ -84,6 +84,22 @@ class CreateReviewRequest(BaseModel):
     panelists: Optional[List[str]] = None
 
 
+class ReviewStatusEvent(BaseModel):
+    ts: Optional[int]
+    status: str
+
+
+class ReviewStatusResponse(BaseModel):
+    review_id: str
+    status: str
+    current_round: int
+    total_rounds: int
+    fallback_active: bool
+    has_report: bool
+    status_history: List[ReviewStatusEvent]
+    last_event: Optional[ReviewStatusEvent] = None
+
+
 async def _maybe_get_room(storage_service: StorageService, room_id: str):
     return await asyncio.to_thread(storage_service.get_room, room_id)
 
@@ -233,6 +249,40 @@ async def get_review(
                 )
 
     return review
+
+
+@router.get("/reviews/{review_id}/status", response_model=ReviewStatusResponse)
+async def get_review_status_summary(
+    review_id: str,
+    user_info: Dict[str, str] = AUTH_DEPENDENCY,
+    storage_service: StorageService = Depends(get_storage_service),
+    review_service: ReviewService = Depends(get_review_service),
+) -> ReviewStatusResponse:
+    """Return a snapshot of the asynchronous review workflow status."""
+
+    review_meta = await asyncio.to_thread(storage_service.get_review_meta, review_id)
+    if not review_meta:
+        raise HTTPException(status_code=404, detail="Review not found")
+
+    room = await _maybe_get_room(storage_service, review_meta.room_id)
+    if not room or room.owner_id != user_info.get("user_id"):
+        raise HTTPException(status_code=403, detail="Access denied to review")
+
+    snapshot = await asyncio.to_thread(review_service.get_status_overview, review_id)
+    history = [ReviewStatusEvent(**event) for event in snapshot.get("status_history", [])]
+    last_event_payload = snapshot.get("last_event")
+    last_event = ReviewStatusEvent(**last_event_payload) if last_event_payload else None
+
+    return ReviewStatusResponse(
+        review_id=snapshot.get("review_id", review_id),
+        status=snapshot.get("status", review_meta.status),
+        current_round=snapshot.get("current_round", review_meta.current_round or 0),
+        total_rounds=snapshot.get("total_rounds", review_meta.total_rounds),
+        fallback_active=snapshot.get("fallback_active", False),
+        has_report=snapshot.get("has_report", False),
+        status_history=history,
+        last_event=last_event,
+    )
 
 
 from sse_starlette.sse import EventSourceResponse

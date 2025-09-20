@@ -53,7 +53,20 @@ class ReviewService:
         # Use .delay() to call the task, which respects task_always_eager for tests.
         # Access the task from the app's registry by name to avoid circular imports.
         task = celery_app.tasks.get("app.tasks.review_tasks.run_initial_panel_turn")
-        if task:
+        if not task:
+            logger.error("Could not find Celery task: app.tasks.review_tasks.run_initial_panel_turn")
+            self._log_status_event(review_id, "queue_unavailable")
+            await asyncio.to_thread(
+                self._run_mock_review,
+                review_id,
+                review_room_id,
+                topic,
+                instruction,
+            )
+            return
+
+        try:
+            self._log_status_event(review_id, "queued")
             task.delay(
                 review_id=review_id,
                 review_room_id=review_room_id,
@@ -62,9 +75,22 @@ class ReviewService:
                 panelists_override=panelists,
                 trace_id=trace_id,
             )
-        else:
-            # This would indicate a configuration error
-            logger.error("Could not find Celery task: app.tasks.review_tasks.run_initial_panel_turn")
+            self._log_status_event(review_id, "dispatched")
+        except Exception as dispatch_error:
+            logger.error(
+                "Failed to dispatch Celery review chain for %s: %s",
+                review_id,
+                dispatch_error,
+                exc_info=True,
+            )
+            self._log_status_event(review_id, "dispatch_failed")
+            await asyncio.to_thread(
+                self._run_mock_review,
+                review_id,
+                review_room_id,
+                topic,
+                instruction,
+            )
 
     def _save_message_and_stream(
         self,
@@ -147,6 +173,10 @@ class ReviewService:
             ).model_dump_json(),
         )
 
+    def record_status_event(self, review_id: str, status: str, *, timestamp: Optional[int] = None) -> None:
+        """Public helper for tests and admin tools to log review status transitions."""
+        self._log_status_event(review_id, status, timestamp=timestamp)
+
     def _notify_mock_celery_task(
         self,
         *,
@@ -180,6 +210,9 @@ class ReviewService:
             "No LLM providers are configured. Falling back to mock review generation.",
             extra={"review_id": review_id, "room_id": review_room_id},
         )
+
+        start_ts = get_current_timestamp()
+        self._log_status_event(review_id, "fallback_started", timestamp=start_ts)
 
         # Inform listeners that the review has started.
         try:
@@ -576,7 +609,34 @@ class ReviewService:
                 extra={"review_id": review_id, "error": str(update_error)},
             )
 
+        self._log_status_event(review_id, "fallback_finished", timestamp=round_timestamp)
         self._log_status_event(review_id, "completed", timestamp=round_timestamp)
+
+    def get_status_overview(self, review_id: str) -> Dict[str, Any]:
+        """Summarise the current status and recent history of a review."""
+        review = self.storage.get_review_meta(review_id)
+        if not review:
+            raise InvalidRequestError("Review not found")
+
+        history = self.storage.get_recent_status_events(review_id, limit=25)
+        last_event = history[-1] if history else None
+        fallback_active = any(event.get("status", "").startswith("fallback") for event in history)
+        final_report = self.storage.get_final_report(review_id)
+
+        snapshot: Dict[str, Any] = {
+            "review_id": review.review_id,
+            "status": review.status,
+            "current_round": review.current_round or 0,
+            "total_rounds": review.total_rounds,
+            "status_history": history,
+            "fallback_active": fallback_active,
+            "has_report": bool(final_report),
+        }
+
+        if last_event:
+            snapshot["last_event"] = last_event
+
+        return snapshot
 
     async def create_interactive_review(
         self,

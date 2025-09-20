@@ -360,6 +360,18 @@ def authenticated_client(isolated_test_env, test_user_id: str):
                 print(f"[TEST] Mock review service failed to call delay: {exc}")
             return None
 
+        def record_status_event(self, review_id: str, status: str, timestamp: Optional[int] = None):
+            storage = deps_module.get_storage_service()
+            from app.services.review_service import ReviewService
+
+            ReviewService(storage).record_status_event(review_id, status, timestamp=timestamp)
+
+        def get_status_overview(self, review_id: str):
+            storage = deps_module.get_storage_service()
+            from app.services.review_service import ReviewService
+
+            return ReviewService(storage).get_status_overview(review_id)
+
     def _override_get_review_service():
         return _NoOpReviewService()
 
@@ -593,6 +605,18 @@ def authenticated_client(isolated_test_env, test_user_id: str):
     print("[DEBUG] Seeded rooms for test.")
     return client
 
+
+@pytest.fixture(scope="function")
+def test_data_builder(authenticated_client, test_user_id: str):
+    """Provide a reusable builder that seeds domain scenarios via public APIs."""
+    from tests.utils.testdata import TestDataBuilder
+
+    builder = TestDataBuilder(authenticated_client, test_user_id)
+    try:
+        yield builder
+    finally:
+        builder.cleanup()
+
 @pytest.fixture(scope="function")
 def clean_authenticated_client(isolated_test_env, test_user_id: str):
     """Fixture that provides authenticated client without prerequisite rooms for room creation tests."""
@@ -670,7 +694,7 @@ def clean_authenticated_client(isolated_test_env, test_user_id: str):
             print(f"DEBUG: Calling storage.save_final_report for review_id: {review_id}")
             storage.save_final_report(review_id, final_report_data)
             print(f"DEBUG: storage.save_final_report completed for review_id: {review_id}")
-            
+
             # 테스트에서 mock_delay가 호출되도록 하기 위해 실제 Celery 태스크를 호출
             # 하지만 실제 실행은 하지 않음
             try:
@@ -682,7 +706,7 @@ def clean_authenticated_client(isolated_test_env, test_user_id: str):
                     )
             except Exception as e:
                 print(f"DEBUG: Failed to call mock_delay: {e}")
-            
+
             return {"status": "started", "review_id": review_id}
         def get_review_status(self, *args, **kwargs):
             # 실제 데이터베이스에서 상태를 가져옴
@@ -695,7 +719,19 @@ def clean_authenticated_client(isolated_test_env, test_user_id: str):
             return {"status": "pending", "final_report": None}
         def save_final_report(self, *args, **kwargs):
             pass
-    
+
+        def record_status_event(self, review_id: str, status: str, timestamp: Optional[int] = None):
+            storage = deps_module.get_storage_service()
+            from app.services.review_service import ReviewService
+
+            ReviewService(storage).record_status_event(review_id, status, timestamp=timestamp)
+
+        def get_status_overview(self, review_id: str):
+            storage = deps_module.get_storage_service()
+            from app.services.review_service import ReviewService
+
+            return ReviewService(storage).get_status_overview(review_id)
+
     app.dependency_overrides[dep_get_review_service] = lambda: _NoOpReviewService()
     
     # ConversationService 오버라이드

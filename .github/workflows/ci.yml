@@ -277,6 +277,10 @@ jobs:
         env:
           LOCUST_HOST: http://127.0.0.1:8000
           LOCUST_JWT_TOKEN: test-jwt-token
+          LOCUST_USERS: 15
+          LOCUST_SPAWN_RATE: 5
+          LOCUST_RUN_TIME: 2m
+          LOCUST_FAIL_RATIO: 0.05
         run: |
           ./scripts/run_locust_smoke.sh
       - name: Stop API server
