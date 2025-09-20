@@ -5,153 +5,31 @@ Room-related API endpoints - Refactored for synchronous operations and standardi
 import logging
 import asyncio
 from typing import Dict, List, Literal, Optional
+
 from fastapi import APIRouter, Query, Depends
 from fastapi.responses import Response, JSONResponse
 from pydantic import BaseModel
-from app.services.cache_service import CacheService, get_cache_service
 
-from app.core.errors import NotFoundError, InvalidRequestError, ForbiddenError, AppError
-from app.services.storage_service import storage_service
-from app.services.llm_service import get_llm_service
-from app.services.memory_service import get_memory_service
-from app.utils.helpers import generate_id, get_current_timestamp, maybe_await
 from app.api.dependencies import AUTH_DEPENDENCY
-from app.models.enums import RoomType
-from app.models.schemas import CreateRoomRequest, Room, ExportData, ExportableReview, Message
 from app.config.settings import settings
+from app.core.errors import NotFoundError, InvalidRequestError, ForbiddenError, AppError
+from app.models.enums import RoomType
+from app.models.schemas import CreateRoomRequest, Room, ExportData, ExportableReview
+from app.services.cache_service import CacheService, get_cache_service
+from app.services.memory_service import get_memory_service
+from app.services.storage_service import storage_service
+from app.services.sub_room_context_service import (
+    SubRoomContextRequest,
+    SubRoomContextService,
+    get_sub_room_context_service,
+)
+from app.utils.helpers import generate_id, get_current_timestamp, maybe_await
 
 
 logger = logging.getLogger(__name__)
 
 # Create router
 router = APIRouter(tags=["rooms"])
-
-
-async def _handle_sub_room_creation_context(
-    parent_room_id: str, new_room_name: str, new_room_id: str, user_id: str
-):
-    """Helper to add context to a new sub-room based on parent history."""
-    llm_service = get_llm_service()
-    memory_service = get_memory_service()
-
-    # 1. Get conversation history from parent room
-    try:
-        messages = await asyncio.to_thread(storage_service.get_messages, parent_room_id)
-    except Exception as fetch_error:
-        logger.warning(
-            "Failed to load parent room conversation for sub-room %s (%s): %s",
-            new_room_name,
-            parent_room_id,
-            fetch_error,
-            exc_info=True,
-        )
-        messages = []
-
-    full_conversation = ""
-    for msg in messages:
-        role = getattr(msg, "role", None)
-        content = getattr(msg, "content", None)
-        if role and content:
-            full_conversation += f"{role}: {content}\n"
-
-    # 2. Check if the new room's topic exists in the conversation
-    initial_message_content = ""
-    try:
-        if new_room_name.lower() in full_conversation.lower() and full_conversation.strip():
-            # Topic exists, summarize it
-            system_prompt = (
-                "You are a helpful assistant. Summarize the following conversation, focusing on the key points, "
-                "facts, and decisions related to the topic. Provide a concise summary."
-            )
-            user_prompt = f"Topic: '{new_room_name}'\n\nConversation:\n{full_conversation}"
-            summary, _ = await llm_service.invoke(
-                provider_name="openai",
-                model=settings.LLM_MODEL,
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                request_id="summary-gen"
-            )
-            initial_message_content = (
-                f"이 세부룸은 메인룸의 '{new_room_name}' 논의를 기반으로 생성되었습니다.\n\n"
-                f"**핵심 요약:**\n{summary}"
-            )
-        else:
-            # Topic is new, inherit general context and profile
-            profile = None
-            context = None
-            try:
-                profile = await maybe_await(
-                    memory_service.get_user_profile(user_id)
-                )
-            except Exception as profile_error:
-                logger.warning(
-                    "Failed to load user profile for %s while creating sub-room %s: %s",
-                    user_id,
-                    new_room_name,
-                    profile_error,
-                    exc_info=True,
-                )
-            try:
-                context = await maybe_await(
-                    memory_service.get_context(parent_room_id, user_id)
-                )
-            except Exception as context_error:
-                logger.warning(
-                    "Failed to load room context for sub-room %s (parent %s): %s",
-                    new_room_name,
-                    parent_room_id,
-                    context_error,
-                    exc_info=True,
-                )
-
-            system_prompt = (
-                "You are a helpful AI assistant starting a new conversation. Based on the user's profile and the "
-                "general context of the main room, generate a welcoming message to kick off the discussion about a new topic."
-            )
-            user_prompt = (
-                f"New Topic: '{new_room_name}'\n"
-                f"User Profile: {profile.model_dump_json() if profile else 'Not available'}\n"
-                f"Main Room Context: {context.model_dump_json() if context else 'Not available'}"
-            )
-
-            welcome_message, _ = await llm_service.invoke(
-                provider_name="openai",
-                model=settings.LLM_MODEL,
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                request_id="welcome-gen"
-            )
-            initial_message_content = welcome_message
-    except Exception as llm_error:
-        logger.warning(
-            "Failed to generate contextual message for new sub-room %s: %s",
-            new_room_name,
-            llm_error,
-        )
-        initial_message_content = (
-            f"'{new_room_name}' 주제의 세부룸이 생성되었습니다. 자유롭게 대화를 이어가 주세요!"
-        )
-
-    # 3. Add the initial message to the new room
-    if initial_message_content:
-        initial_message = Message(
-            message_id=generate_id("msg"),
-            room_id=new_room_id,
-            user_id="system",
-            role="assistant",
-            content=initial_message_content,
-            timestamp=get_current_timestamp(),
-        )
-        try:
-            await asyncio.to_thread(storage_service.save_message, initial_message)
-        except Exception as persist_error:
-            logger.error(
-                "Failed to persist initial system message for sub-room %s (%s): %s",
-                new_room_name,
-                new_room_id,
-                persist_error,
-                exc_info=True,
-            )
 
 
 def _format_export_as_markdown(export_data: ExportData) -> str:
@@ -196,6 +74,7 @@ async def create_room(
     room_request: CreateRoomRequest,
     user_info: Dict[str, str] = AUTH_DEPENDENCY,
     cache_service: CacheService = Depends(get_cache_service),
+    context_service: SubRoomContextService = Depends(get_sub_room_context_service),
 ):
     """Create a new chat room with hierarchy rules."""
     user_id = user_info.get("user_id")
@@ -267,11 +146,13 @@ async def create_room(
 
         if new_room.type == RoomType.SUB and new_room.parent_id:
             try:
-                await _handle_sub_room_creation_context(
-                    parent_room_id=new_room.parent_id,
-                    new_room_name=new_room.name,
-                    new_room_id=new_room.room_id,
-                    user_id=user_id,
+                await context_service.initialize_sub_room(
+                    SubRoomContextRequest(
+                        parent_room_id=new_room.parent_id,
+                        new_room_name=new_room.name,
+                        new_room_id=new_room.room_id,
+                        user_id=user_id,
+                    )
                 )
             except Exception as context_error:
                 logger.error(

@@ -16,6 +16,7 @@ from app.models.schemas import (
     ReviewMetrics,
 )
 from app.services.database_service import DatabaseService, get_database_service
+from app.repositories import RoomRepository
 from app.utils.helpers import get_current_timestamp
 
 logger = logging.getLogger(__name__)
@@ -51,6 +52,7 @@ class StorageService:
     def __init__(self, secret_provider: SecretProvider):
         super().__init__()
         self.db: DatabaseService = get_database_service()
+        self._room_repository = RoomRepository(self.db)
         self.db_encryption_key = secret_provider.get("DB_ENCRYPTION_KEY")
         if not self.db_encryption_key:
             raise ValueError("DB_ENCRYPTION_KEY not found for StorageService.")
@@ -65,88 +67,33 @@ class StorageService:
         parent_id: Optional[str] = None,
     ) -> Room:
         """Create a new room in the database"""
-        created_at = int(time.time())
-        updated_at = created_at
-        message_count = 0
-
-        query = """
-            INSERT INTO rooms (room_id, name, owner_id, type, parent_id, created_at, updated_at, message_count)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-        """
-        params = (
-            room_id,
-            name,
-            owner_id,
-            room_type,
-            parent_id,
-            created_at,
-            updated_at,
-            message_count,
-        )
-
-        self.db.execute_update(query, params)
-
-        return Room(
+        return self._room_repository.create_room(
             room_id=room_id,
             name=name,
             owner_id=owner_id,
-            type=room_type,
+            room_type=room_type,
             parent_id=parent_id,
-            created_at=created_at,
-            updated_at=updated_at,
-            message_count=message_count,
         )
 
     def get_room(self, room_id: str) -> Optional[Room]:
         """Get room by ID from the database"""
-        query = "SELECT * FROM rooms WHERE room_id = %s"
-        params = (room_id,)
-        result: List[RoomRow] = self.db.execute_query(query, params) # type: ignore
-
-        if not result:
-            return None
-
-        return Room(**result[0])
+        return self._room_repository.get_room(room_id)
 
     def delete_room(self, room_id: str) -> bool:
         """Delete a room and its associated data from the database."""
-
-        cleanup_statements = [
-            ("DELETE FROM conversation_messages WHERE thread_id IN (SELECT id FROM conversation_threads WHERE sub_room_id = %s)", (room_id,)),
-            ("DELETE FROM conversation_threads WHERE sub_room_id = %s", (room_id,)),
-            ("DELETE FROM messages WHERE room_id = %s", (room_id,)),
-            ("DELETE FROM memories WHERE room_id = %s", (room_id,)),
-            ("DELETE FROM reviews WHERE room_id = %s", (room_id,)),
-        ]
-
-        with self.db.transaction(query_type="delete_room") as cur:
-            for statement, params in cleanup_statements:
-                cur.execute(statement, params)
-
-            cur.execute("DELETE FROM rooms WHERE room_id = %s", (room_id,))
-            rows_affected = cur.rowcount
-
-        return rows_affected > 0
+        return self._room_repository.delete_room_and_dependencies(room_id)
 
     def get_rooms_by_owner(self, owner_id: str) -> List[Room]:
         """Get all rooms for a given owner from the database."""
-        query = "SELECT * FROM rooms WHERE owner_id = %s"
-        params = (owner_id,)
-        results: List[RoomRow] = self.db.execute_query(query, params) # type: ignore
-        return [Room(**row) for row in results]
+        return self._room_repository.list_rooms_for_owner(owner_id)
 
     def get_all_rooms(self) -> List[Room]:
         """Get all rooms in the system, e.g., for batch processing."""
-        query = "SELECT * FROM rooms"
-        results: List[RoomRow] = self.db.execute_query(query) # type: ignore
-        return [Room(**row) for row in results]
+        return self._room_repository.list_all_rooms()
 
     def update_room_name(self, room_id: str, new_name: str) -> bool:
         """Updates the name of a specific room."""
-        query = "UPDATE rooms SET name = %s, updated_at = %s WHERE room_id = %s"
-        params = (new_name, int(time.time()), room_id)
-        rows_affected = self.db.execute_update(query, params)
-        return rows_affected > 0
+        return self._room_repository.update_room_name(room_id, new_name)
 
     def add_message_version(self, message: Message) -> None:
         """Adds an old version of a message to the versioning table."""
@@ -195,13 +142,10 @@ class StorageService:
             message.content, self.db_encryption_key, message.content, message.timestamp
         )
 
-        update_query = "UPDATE rooms SET message_count = message_count + 1, updated_at = %s WHERE room_id = %s"
-        update_params = (int(time.time()), message.room_id)
-
         try:
             with self.db.transaction(query_type="write_message") as cur:
                 cur.execute(insert_query, insert_params)
-                cur.execute(update_query, update_params)
+                self._room_repository.increment_message_count(message.room_id, cursor=cur)
 
             # Dispatch the embedding task after the transaction is successfully committed.
             # Only generate embeddings for user messages to save costs/resources.

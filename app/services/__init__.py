@@ -10,6 +10,7 @@ from app.services.intent_service import IntentService
 from app.services.review_service import ReviewService
 from app.services.rag_service import RAGService
 from app.services.memory_service import MemoryService
+from app.services.sub_room_context_service import SubRoomContextService
 
 
 __all__ = [
@@ -21,4 +22,5 @@ __all__ = [
     "ReviewService",
     "RAGService",
     "MemoryService",
+    "SubRoomContextService",
 ]
