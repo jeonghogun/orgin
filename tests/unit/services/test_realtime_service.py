@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from app.api.routes.websockets import ConnectionManager
+from app.core.realtime import ConnectionManager
 from app.services.realtime_service import RealtimeService
 
 

@@ -2,8 +2,8 @@ import { useEffect, useRef, useCallback, useState, useMemo } from 'react';
 import { SSE } from 'sse.js';
 import { resolveApiUrl } from '../lib/apiClient';
 
-const MAX_RECONNECT_ATTEMPTS = 3;
-const INITIAL_RECONNECT_DELAY = 1000;
+const MAX_RECONNECT_ATTEMPTS = 1;
+const INITIAL_RECONNECT_DELAY = 2000;
 
 /**
  * A hook to manage a Server-Sent Events (SSE) connection with specific event handlers
@@ -92,6 +92,8 @@ const useEventSource = (url, eventListeners, options = {}) => {
         eventListeners.error(new Error(errorData.error || 'An unknown error occurred in the stream.'));
       }
       console.error('SSE stream "error" event received. Closing connection.');
+      // Don't reconnect on application-level errors
+      setStatus('failed');
       closeConnection();
     });
 

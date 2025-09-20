@@ -22,14 +22,27 @@ const Main = () => {
   const currentRoom = rooms.find(room => room.room_id === roomId);
 
   useEffect(() => {
-    if (rooms.length === 0 || roomId) {
+    if (rooms.length === 0) {
       return;
     }
-    const mainRoom = rooms.find((room) => room.type === ROOM_TYPES.MAIN);
-    if (mainRoom) {
-      navigate(`/rooms/${mainRoom.room_id}`, { replace: true });
+    
+    // If roomId exists but room is not found, redirect to main room
+    if (roomId && !currentRoom) {
+      const mainRoom = rooms.find((room) => room.type === ROOM_TYPES.MAIN);
+      if (mainRoom) {
+        navigate(`/rooms/${mainRoom.room_id}`, { replace: true });
+      }
+      return;
     }
-  }, [rooms, roomId, navigate]);
+    
+    // If no roomId, redirect to main room
+    if (!roomId) {
+      const mainRoom = rooms.find((room) => room.type === ROOM_TYPES.MAIN);
+      if (mainRoom) {
+        navigate(`/rooms/${mainRoom.room_id}`, { replace: true });
+      }
+    }
+  }, [rooms, roomId, currentRoom, navigate]);
 
   const renderMainContent = () => {
     if (isLoading) {

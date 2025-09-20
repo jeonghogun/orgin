@@ -29,12 +29,13 @@ const MessageList = ({ roomId, currentRoom }) => {
   const messagesEndRef = useRef(null);
   const queryClient = useQueryClient();
 
+  // All hooks must be called before any conditional returns
   const promoteMemoryMutation = useMutation({
     mutationFn: promoteMemory,
     onSuccess: (data) => {
       toast.success('Memory promoted successfully!');
       // Optionally, invalidate queries if the UI should reflect the new memory
-      // queryClient.invalidateQueries(['facts', currentRoom.parent_id]);
+      // queryClient.invalidateQueries(['facts', currentRoom?.parent_id]);
     },
     onError: (error) => {
       console.error("Failed to promote memory:", error);
@@ -43,6 +44,7 @@ const MessageList = ({ roomId, currentRoom }) => {
   });
 
   const handleNewMessage = useCallback((message) => {
+    if (!roomId) return;
     queryClient.setQueryData(['messages', roomId], (oldData) => {
       if (!oldData) return [message];
       if (oldData.some((m) => m.message_id === message.message_id)) {
@@ -61,7 +63,7 @@ const MessageList = ({ roomId, currentRoom }) => {
     heartbeat: () => {},
   }), [handleNewMessage]);
 
-  const eventsUrl = roomId ? `/api/rooms/${roomId}/messages/events` : null;
+  const eventsUrl = (roomId && currentRoom) ? `/api/rooms/${roomId}/messages/events` : null;
   const { status: connectionStatus } = useRealtimeChannel({
     url: eventsUrl,
     events: eventHandlers,
@@ -71,12 +73,13 @@ const MessageList = ({ roomId, currentRoom }) => {
     },
   });
 
-
   const { data: messages = [], isLoading } = useQuery({
     queryKey: ['messages', roomId],
     queryFn: () => fetchMessages(roomId),
-    enabled: !!roomId,
+    enabled: !!roomId && !!currentRoom,
     staleTime: 1000 * 60 * 5, // 5 minutes
+    retry: 1,
+    refetchOnWindowFocus: false,
   });
 
   const contextMessage = useMemo(() => {
@@ -99,16 +102,25 @@ const MessageList = ({ roomId, currentRoom }) => {
     return messages.filter((msg) => msg.message_id !== contextMessage.message_id);
   }, [messages, contextMessage]);
 
-
   useEffect(() => {
     // Scroll to bottom when new messages are added
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [displayMessages]);
 
-  if (!roomId) {
-    // TODO: Replace with example prompts component
-      return <div className="flex items-center justify-center h-full text-muted text-body">Select a room to start a conversation.</div>;
+  // Now safe to do conditional returns after all hooks are called
+  if (!roomId || !currentRoom) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <div className="text-center">
+          <h2 className="text-h2">Room not found</h2>
+          <p className="text-muted">
+            The requested room could not be found. Please select a valid room from the sidebar.
+          </p>
+        </div>
+      </div>
+    );
   }
+
 
   if (isLoading) {
     return <div className="flex items-center justify-center h-full text-muted">Loading messages...</div>;

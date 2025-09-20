@@ -5,6 +5,7 @@ Now includes both async and sync methods for use in API and Celery contexts.
 import asyncio
 import json
 import logging
+import os
 import re
 import time
 from typing import Dict, Any, Tuple, List, Optional
@@ -822,43 +823,119 @@ class LLMService:
         self.providers: Dict[str, LLMProvider] = {}
         self._initialized = False
         self._mock_provider: Optional[MockLLMProvider] = None
+        self._initialization_errors: Dict[str, str] = {}
 
     def _initialize_providers(self):
         if self._initialized:
             return
-        if self.secret_provider.get("OPENAI_API_KEY"):
+
+        if settings.MOCK_LLM:
+            logger.info("MOCK_LLM flag enabled; using deterministic mock provider.")
+            self.providers = {"mock": self._ensure_mock_provider()}
+            self._initialized = True
+            return
+
+        self.providers = {}
+        self._initialization_errors = {}
+
+        openai_key = self.secret_provider.get("OPENAI_API_KEY")
+        if openai_key:
             try:
                 self.providers["openai"] = OpenAIProvider(self.secret_provider)
                 logger.info("OpenAI provider initialized.")
-            except Exception as e:
-                logger.warning(f"Failed to initialize OpenAI provider: {e}")
-        if self.secret_provider.get("GEMINI_API_KEY"):
+            except Exception as exc:  # pragma: no cover - defensive logging
+                logger.error("Failed to initialize OpenAI provider: %s", exc, exc_info=True)
+                self._initialization_errors["openai"] = str(exc)
+        else:
+            self._initialization_errors["openai"] = "OPENAI_API_KEY is not configured."
+
+        gemini_key = self.secret_provider.get("GEMINI_API_KEY")
+        if gemini_key:
             try:
                 self.providers["gemini"] = GeminiProvider(self.secret_provider)
                 logger.info("Gemini provider initialized.")
-            except Exception as e:
-                logger.warning(f"Failed to initialize Gemini provider: {e}")
-        if self.secret_provider.get("ANTHROPIC_API_KEY"):
+            except Exception as exc:  # pragma: no cover - defensive logging
+                logger.error("Failed to initialize Gemini provider: %s", exc, exc_info=True)
+                self._initialization_errors["gemini"] = str(exc)
+        else:
+            self._initialization_errors["gemini"] = "GEMINI_API_KEY is not configured."
+
+        anthropic_key = self.secret_provider.get("ANTHROPIC_API_KEY")
+        if anthropic_key:
             try:
                 self.providers["claude"] = ClaudeProvider(self.secret_provider)
                 logger.info("Claude provider initialized.")
-            except Exception as e:
-                logger.warning(f"Failed to initialize Claude provider: {e}")
+            except Exception as exc:  # pragma: no cover - defensive logging
+                logger.error("Failed to initialize Claude provider: %s", exc, exc_info=True)
+                self._initialization_errors["claude"] = str(exc)
+        else:
+            self._initialization_errors["claude"] = "ANTHROPIC_API_KEY is not configured."
+
         if not self.providers:
-            logger.info("No external LLM providers configured; enabling mock fallback provider.")
-            self._mock_provider = self._mock_provider or MockLLMProvider()
-            self.providers["mock"] = self._mock_provider
+            if self._allow_mock_provider():
+                logger.info(
+                    "No external LLM providers available; using deterministic mock provider for this run."
+                )
+                self.providers["mock"] = self._ensure_mock_provider()
+                self._initialized = True
+                return
+
+            issues = "; ".join(
+                f"{name}: {reason}" for name, reason in sorted(self._initialization_errors.items())
+            ) or "No provider configuration detected."
+            error_message = (
+                "No LLM providers could be initialized. "
+                f"{issues} Configure a provider API key or set MOCK_LLM=1 for local development."
+            )
+            raise LLMError(
+                error_code=LLMErrorCode.PROVIDER_UNAVAILABLE,
+                provider=settings.LLM_PROVIDER,
+                error_message=error_message,
+                retryable=False,
+            )
+
         self._initialized = True
-        logger.info(f"LLM service initialized with providers: {list(self.providers.keys())}")
+        logger.info("LLM service initialized with providers: %s", list(self.providers.keys()))
+
+    def _allow_mock_provider(self) -> bool:
+        if settings.MOCK_LLM:
+            return True
+        if settings.TESTING:
+            return True
+        if os.getenv("PYTEST_CURRENT_TEST"):
+            return True
+        env_name = settings.ENVIRONMENT.lower()
+        return env_name in {"test", "testing"}
 
     def get_provider(self, provider_name: str = "openai") -> LLMProvider:
-        self._initialize_providers()
+        try:
+            self._initialize_providers()
+        except LLMError:
+            raise
+
         if provider_name not in self.providers:
-            default_provider = "openai"
-            if default_provider not in self.providers:
-                raise LLMError(error_code=LLMErrorCode.PROVIDER_UNAVAILABLE, provider=provider_name, retryable=False, error_message=f"No LLM providers are available. Requested: {provider_name}")
-            logger.warning(f"Provider '{provider_name}' not available, falling back to '{default_provider}'.")
-            return self.providers[default_provider]
+            if settings.FORCE_DEFAULT_PROVIDER:
+                default_provider = settings.LLM_PROVIDER
+                if default_provider in self.providers:
+                    logger.warning(
+                        "Provider '%s' unavailable; forcing default provider '%s'.",
+                        provider_name,
+                        default_provider,
+                    )
+                    return self.providers[default_provider]
+
+            available = ", ".join(sorted(self.providers.keys())) or "none"
+            raise LLMError(
+                error_code=LLMErrorCode.PROVIDER_UNAVAILABLE,
+                provider=provider_name,
+                retryable=False,
+                error_message=(
+                    f"Provider '{provider_name}' is not configured. "
+                    f"Available providers: {available}. "
+                    "Set MOCK_LLM=1 to enable the deterministic mock provider in local development."
+                ),
+            )
+
         return self.providers[provider_name]
 
     def _ensure_mock_provider(self) -> MockLLMProvider:
@@ -872,7 +949,7 @@ class LLMService:
         try:
             return self.get_provider(provider_name)
         except LLMError as exc:
-            if exc.error_code == LLMErrorCode.PROVIDER_UNAVAILABLE:
+            if exc.error_code == LLMErrorCode.PROVIDER_UNAVAILABLE and self._allow_mock_provider():
                 logger.info(
                     "Provider '%s' unavailable; using mock provider for this request.",
                     provider_name,

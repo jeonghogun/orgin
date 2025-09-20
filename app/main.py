@@ -78,12 +78,18 @@ def limit_typed(
 
 
 from app.services.redis_pubsub import redis_pubsub_manager
+from app.core.startup_checks import run_startup_checks
 from app.core.telemetry import setup_telemetry
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan management"""
     logger.info("Starting application...")
+    try:
+        await run_startup_checks()
+    except Exception:
+        logger.critical("Startup checks failed; aborting application startup.", exc_info=True)
+        raise
     # Configure OpenTelemetry on startup
     setup_telemetry()
     redis_pubsub_manager.start_listener()
