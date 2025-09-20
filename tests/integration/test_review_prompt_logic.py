@@ -5,15 +5,14 @@ from app.tasks.review_tasks import (
     run_initial_panel_turn,
     run_rebuttal_turn,
     run_synthesis_turn,
-    run_resolution_turn,
     generate_consolidated_report,
 )
 from app.services.llm_strategy import ProviderPanelistConfig
 
 # Mock panelist configurations that will be returned by the mocked strategy service
 mock_panelists = [
-    ProviderPanelistConfig(provider="openai", persona="Optimist", model="gpt-4"),
-    ProviderPanelistConfig(provider="claude", persona="Skeptic", model="claude-3"),
+    ProviderPanelistConfig(provider="openai", persona="GPT-4o", model="gpt-4"),
+    ProviderPanelistConfig(provider="claude", persona="Claude 3 Haiku", model="claude-3"),
 ]
 mock_panelist_dicts = [p.model_dump() for p in mock_panelists]
 
@@ -59,14 +58,14 @@ def test_full_review_prompt_logic(
 
     assert mock_llm_instance.invoke_sync.call_count == 2
     prompt_r1 = mock_llm_instance.invoke_sync.call_args_list[0].kwargs["user_prompt"]
+    assert "Round 1 – Independent Perspective" in prompt_r1
     assert "Topic: Test Topic" in prompt_r1
-    assert '"round": 1' in prompt_r1
 
     rebuttal_kwargs = mock_rebuttal_delay.call_args.kwargs
     turn_1_outputs_for_r2 = rebuttal_kwargs["turn_1_outputs"]
     panel_history_for_r2 = rebuttal_kwargs["panel_history"]
     all_metrics_after_r1 = rebuttal_kwargs["all_metrics"]
-    assert panel_history_for_r2["Optimist"]["1"]["round"] == 1
+    assert panel_history_for_r2["GPT-4o"]["1"]["round"] == 1
 
     # --- ROUND 2: Rebuttal Turn ---
     mock_llm_instance.invoke_sync.reset_mock()
@@ -91,8 +90,8 @@ def test_full_review_prompt_logic(
 
     assert mock_llm_instance.invoke_sync.call_count == 2
     prompt_r2 = mock_llm_instance.invoke_sync.call_args_list[0].kwargs["user_prompt"]
-    assert "Rebuttal Round" in prompt_r2
-    assert "Key Takeaway: This is the key takeaway." in prompt_r2
+    assert "Round 2 – Response & Reflection (GPT-4o)" in prompt_r2
+    assert "Snapshot of your prior position:" in prompt_r2
 
     synthesis_kwargs = mock_synthesis_delay.call_args.kwargs
     turn_1_outputs_for_r3 = synthesis_kwargs["turn_1_outputs"]
@@ -111,7 +110,7 @@ def test_full_review_prompt_logic(
     }
     mock_llm_instance.invoke_sync.return_value = (json.dumps(round_3_output), {"total_tokens": 30})
 
-    with patch("app.tasks.review_tasks.run_resolution_turn.delay") as mock_resolution_delay:
+    with patch("app.tasks.review_tasks.generate_consolidated_report.delay") as mock_report_delay:
         run_synthesis_turn(
             review_id="test_review_1",
             review_room_id="test_room_1",
@@ -125,46 +124,14 @@ def test_full_review_prompt_logic(
 
     assert mock_llm_instance.invoke_sync.call_count == 2
     prompt_r3 = mock_llm_instance.invoke_sync.call_args.kwargs["user_prompt"]
-    assert "Synthesis Round" in prompt_r3
-    assert "Point: Risk 1 is overstated" in prompt_r3
-
-    resolution_kwargs = mock_resolution_delay.call_args.kwargs
-    panel_history_for_r4 = resolution_kwargs["panel_history"]
-    round_3_outputs_for_r4 = resolution_kwargs["round_3_outputs"]
-    all_metrics_after_r3 = resolution_kwargs["all_metrics"]
-
-    # --- ROUND 4: Final Alignment Turn ---
-    mock_llm_instance.invoke_sync.reset_mock()
-    round_4_output = {
-        "round": 4,
-        "no_new_arguments": False,
-        "final_position": "Final stance.",
-        "consensus_highlights": ["Consensus 1"],
-        "open_questions": ["Question 1"],
-        "next_steps": ["Next 1"],
-    }
-    mock_llm_instance.invoke_sync.return_value = (json.dumps(round_4_output), {"total_tokens": 35})
-
-    with patch("app.tasks.review_tasks.generate_consolidated_report.delay") as mock_report_delay:
-        run_resolution_turn(
-            review_id="test_review_1",
-            review_room_id="test_room_1",
-            panel_history=panel_history_for_r4,
-            round_3_outputs=round_3_outputs_for_r4,
-            all_metrics=all_metrics_after_r3,
-            successful_panelists=mock_panelist_dicts,
-            trace_id="test-trace-id",
-        )
-
-    assert mock_llm_instance.invoke_sync.call_count == 2
-    prompt_r4 = mock_llm_instance.invoke_sync.call_args.kwargs["user_prompt"]
-    assert "Final Alignment Round" in prompt_r4
+    assert "Round 3 – Joint Synthesis (GPT-4o)" in prompt_r3
+    assert "Conversation highlights so far:" in prompt_r3
 
     report_kwargs = mock_report_delay.call_args.kwargs
     panel_history_for_final = report_kwargs["panel_history"]
     all_metrics_for_final = report_kwargs["all_metrics"]
     executed_rounds_for_final = report_kwargs["executed_rounds"]
-    assert executed_rounds_for_final[-1] == 4
+    assert executed_rounds_for_final[-1] == 3
 
     # --- FINAL REPORT ---
     mock_llm_instance.invoke_sync.reset_mock()

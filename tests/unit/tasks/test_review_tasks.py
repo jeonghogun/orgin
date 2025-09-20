@@ -34,8 +34,8 @@ class TestReviewTasks(unittest.TestCase):
         mock_task.llm_service = MagicMock()
 
         # Mock panelist configurations
-        openai_config = ProviderPanelistConfig(provider='openai', persona='Optimist', model='gpt-4o-mini')
-        claude_config = ProviderPanelistConfig(provider='claude', persona='Skeptic', model='claude-3-haiku')
+        openai_config = ProviderPanelistConfig(provider='openai', persona='GPT-4o', model='gpt-4o-mini')
+        claude_config = ProviderPanelistConfig(provider='claude', persona='Claude 3 Haiku', model='claude-3-haiku')
         panel_configs = [openai_config, claude_config]
         mock_llm_strategy.get_default_panelists.return_value = panel_configs
 
@@ -47,9 +47,9 @@ class TestReviewTasks(unittest.TestCase):
             if p_config.provider == 'claude':
                 return (p_config, ValueError("Claude API Error"))
             elif p_config.provider == 'openai':
-                if p_config.persona == 'Skeptic': # This is the fallback call
+                if p_config.persona == claude_config.persona:  # This is the fallback call
                     return (p_config, ("Fallback Success", {"metric": 2}))
-                else: # This is the initial successful call
+                else:  # This is the initial successful call
                     return (p_config, ("OpenAI Success", {"metric": 1}))
             raise Exception("Unexpected call to mock_run_panelist_turn")
 
@@ -74,7 +74,11 @@ class TestReviewTasks(unittest.TestCase):
         fallback_call_args = mock_run_panelist_turn.call_args_list[2]
         fallback_config_arg = fallback_call_args.args[1]
         self.assertEqual(fallback_config_arg.provider, 'openai', "Fallback provider should be openai.")
-        self.assertEqual(fallback_config_arg.persona, 'Skeptic', "Fallback should retain the original persona.")
+        self.assertEqual(
+            fallback_config_arg.persona,
+            claude_config.persona,
+            "Fallback should retain the original persona.",
+        )
 
         # 3. Check that the final results passed to _process_turn_results are correct
         self.assertTrue(mock_process_results.called, "_process_turn_results should have been called.")
@@ -83,12 +87,12 @@ class TestReviewTasks(unittest.TestCase):
         # The results should contain the successful OpenAI turn and the successful fallback turn
         self.assertEqual(len(process_results_args), 2)
         final_personas = [res[0].persona for res in process_results_args]
-        self.assertIn('Optimist', final_personas)
-        self.assertIn('Skeptic', final_personas)
+        self.assertIn('GPT-4o', final_personas)
+        self.assertIn('Claude 3 Haiku', final_personas)
 
         # Check that the content of the skeptic's result is the fallback success message
-        skeptic_result = next(res for res in process_results_args if res[0].persona == 'Skeptic')
-        self.assertEqual(skeptic_result[1][0], "Fallback Success")
+        claude_result = next(res for res in process_results_args if res[0].persona == claude_config.persona)
+        self.assertEqual(claude_result[1][0], "Fallback Success")
 
 
 if __name__ == '__main__':

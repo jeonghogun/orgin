@@ -7,90 +7,95 @@
 # --- Review Prompts ---
 
 review_initial_analysis:
-  description: "The prompt for Round 1 (Initial Analysis) of the review process."
+  description: "Round 1 prompt where each model delivers its own viewpoint without scripted personas."
   default_version: v1
   versions:
     v1:
       template: |
+        Round 1 – Independent Perspective
         Topic: {topic}
         Instruction: {instruction}
 
-        Provide your independent analysis of the topic, **prioritizing the user's specific instruction above.**
-        - Be realistic and logical.
-        - Provide clear reasoning, evidence, pros/cons, and possible implications.
-        - Do not assume what other panelists will say.
-        - Your output must be in the specified JSON format.
-        - The JSON schema you must adhere to is:
+        You are participating as {panelist}. Share your candid assessment exactly as you normally would.
+        - Be realistic and pragmatic about trade-offs, constraints, and upside.
+        - Keep the tone analytical rather than theatrical; you are not role-playing.
+        - Organize your thoughts for a teammate who will read this later.
+        - Respond in the user's language when obvious, otherwise default to English.
+        - The JSON schema you must emit is:
           {{
             "round": 1,
-            "key_takeaway": "A brief summary of the main finding.",
+            "key_takeaway": "A concise headline capturing your stance.",
             "arguments": [
               "Core argument 1 (with reasoning)",
               "Core argument 2 (with reasoning)"
             ],
-            "risks": ["Anticipated risk 1", "Potential risk 2"],
-            "opportunities": ["Discovered opportunity 1", "Potential opportunity 2"]
+            "risks": ["Material risk 1", "Material risk 2"],
+            "opportunities": ["Opportunity 1", "Opportunity 2"]
           }}
 
 review_rebuttal:
-  description: "The prompt for Round 2 (Rebuttal) of the review process."
+  description: "Round 2 prompt where panelists react to each other by citing concrete quotes."
   default_version: v1
   versions:
     v1:
       template: |
-        Rebuttal Round.
-        Here are the summaries of the initial arguments:
-        {rebuttal_context}
+        Round 2 – Response & Reflection ({panelist})
+        Snapshot of your prior position:
+        {self_snapshot}
 
-        Review these arguments carefully.
-        - If there are differences, analyze them and clarify or improve weak points.
-        - If they are mostly aligned, reinforce the shared perspective by pointing out missing factors, hidden risks, or practical details.
-        - **When you state a disagreement or make an addition, you must provide a brief reasoning for it.**
-        - If you have nothing new to add, set `"no_new_arguments"` to `true` and keep the other lists empty.
-        - Your output must be in the specified JSON format.
-        - The JSON schema you must adhere to is:
+        What the other panelists said:
+        {others_digest}
+
+        Build on the live discussion realistically.
+        - Reference other panelists by name and quote short phrases when agreeing or pushing back.
+        - Focus on clarifying disagreements or surfacing missing execution details.
+        - Add practical follow-up ideas when you see a gap.
+        - If nothing meaningful changed for you, set `"no_new_arguments"` to `true` and leave the lists empty.
+        - Output must respect this JSON schema:
           {{
             "round": 2,
             "no_new_arguments": false,
             "agreements": [
-              "Summary of a round 1 argument you fully agree with"
+              "One short sentence quoting or paraphrasing another panelist you agree with"
             ],
             "disagreements": [
               {{
-                "point": "The argument you want to challenge or refine",
-                "reasoning": "The logical flaw or why it's not realistic"
+                "point": "Quote or paraphrase the argument you are challenging",
+                "reasoning": "Succinct explanation of your concern"
               }}
             ],
             "additions": [
               {{
-                "point": "A new consideration missed in round 1",
-                "reasoning": "Why this is important"
+                "point": "New insight or operational detail to add",
+                "reasoning": "Why it matters now"
               }}
             ]
           }}
 
 review_synthesis:
-  description: "The prompt for Round 3 (Synthesis) of the review process."
+  description: "Round 3 prompt where each panelist converges on a realistic plan while acknowledging others."
   default_version: v1
   versions:
     v1:
       template: |
-        Synthesis Round.
-        Based on all previous arguments from round 1 and 2, synthesize them into your final, comprehensive position.
-        Provide actionable recommendations based on your conclusion. Prepare a clear stance for the final alignment round.
+        Round 3 – Joint Synthesis ({panelist})
+        Conversation highlights so far:
+        {conversation_digest}
 
-        {synthesis_context}
-
-        Your output must be in the specified JSON format.
-        - The JSON schema you must adhere to is:
+        Produce a grounded summary that moves the group toward an implementable plan.
+        - Weave in the strongest points from others when forming your executive summary.
+        - Call out the trade-offs you still worry about and how to monitor them.
+        - Deliver concrete next steps that a project lead could execute immediately.
+        - If you truly have nothing to add, set `"no_new_arguments"` to `true`.
+        - Emit JSON using this schema:
           {{
             "round": 3,
             "no_new_arguments": false,
-            "executive_summary": "A high-level summary of my final position, synthesizing all discussions.",
-            "conclusion": "The detailed, comprehensive conclusion supporting the summary.",
+            "executive_summary": "Synthesis referencing the most persuasive quotes.",
+            "conclusion": "Narrative explaining how the team should proceed.",
             "recommendations": [
-              "Specific, actionable recommendation 1, based on the conclusion.",
-              "Specific, actionable recommendation 2, based on the conclusion."
+              "Actionable recommendation 1",
+              "Actionable recommendation 2"
             ]
           }}
 

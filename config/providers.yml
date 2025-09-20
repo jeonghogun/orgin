@@ -2,17 +2,17 @@
 # This can be overridden at runtime via API call.
 panelists:
   - provider: "openai"
-    persona: "AGI Optimist"
+    persona: "GPT-4o"
     model: "gpt-4o-mini"
     timeout_s: 45
     max_retries: 2
   - provider: "claude"
-    persona: "AGI Skeptic"
+    persona: "Claude 3 Haiku"
     model: "claude-3-haiku-20240307"
     timeout_s: 45
     max_retries: 2
   - provider: "gemini"
-    persona: "AGI Neutralist"
+    persona: "Gemini 1.5 Flash"
     model: "gemini-1.5-flash"
     timeout_s: 45
     max_retries: 2

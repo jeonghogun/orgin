@@ -228,355 +228,214 @@ class ReviewService:
         round_timestamp += 1
 
         panel_scripts = {
-            "AGI Optimist": {
-                "tagline": "희망적인 시각",
+            "GPT-4o": {
                 "round1": {
-                    "summary": (
-                        f"{topic} 은/는 과감히 추진할 경우 시장 선점을 노릴 수 있는 기회입니다. "
-                        "핵심은 실험을 빠르게 반복하면서 학습 곡선을 가파르게 만드는 데 있습니다."
+                    "round": 1,
+                    "key_takeaway": (
+                        f"{topic}은/는 빠른 실험으로 시장 반응을 학습할 기회입니다. 단, 품질 안전망을 같이 준비해야 합니다."
                     ),
-                    "bullets": [
-                        "학습과 배포 주기를 짧게 가져가면 사용자의 반응을 즉시 반영할 수 있습니다.",
-                        "초기에는 품질 지표보다 유저 유입과 활용 시나리오 발굴을 우선순위로 설정하세요.",
+                    "arguments": [
+                        "초기 4주 동안 제한된 고객군과 베타 테스트를 운영하면 실사용 데이터를 확보할 수 있습니다.",
+                        "수집된 데이터로 ROI 가설과 운영 지표를 설정하면 의사결정 속도를 높일 수 있습니다.",
                     ],
                     "risks": [
-                        "조직이 실험 속도를 따라가지 못하면 기대 성과가 지연될 수 있습니다.",
-                        "과감한 투자로 인해 예산 소진이 빨라질 수 있으므로 성과 지표를 미리 합의해야 합니다.",
+                        "품질 기준이 모호하면 베타 단계에서 부정적 피드백이 확대될 수 있습니다.",
+                        "조직의 우선순위가 분산되면 실험 속도가 둔화될 위험이 있습니다.",
                     ],
                     "opportunities": [
-                        "빠른 실험 문화는 팀 전반의 혁신 역량을 끌어올립니다.",
-                        f"{topic} 관련 외부 파트너십을 조기에 확보할 수 있습니다.",
+                        "시장 반응을 조기에 확인해 경쟁사 대비 학습 곡선을 앞당길 수 있습니다.",
+                        "크로스펑셔널 팀이 협업하면서 실험 문화가 강화됩니다.",
                     ],
                 },
                 "round2": {
-                    "ack": [
-                        "AGI Skeptic 요약에서 강조한 보안·품질 이슈는 반드시 초기 점검 리스트로 포함해야 합니다.",
-                        "AGI Neutralist 의 단계적 전개 전략은 확장 시 리스크를 줄이는 데 도움됩니다.",
+                    "round": 2,
+                    "no_new_arguments": False,
+                    "agreements": [
+                        "Claude 3 Haiku가 말한 “데이터 거버넌스 확보”는 베타 런칭 전에 반드시 맞춰야 합니다."
                     ],
-                    "disagree": [
-                        "과도한 위험 회피는 혁신 속도를 떨어뜨릴 수 있으니, 핵심 실험은 지연 없이 진행해야 합니다.",
+                    "disagreements": [
+                        {
+                            "point": "Gemini 1.5 Flash의 “장기 합의가 필요하다”는 우려를 너무 오래 끌면 모멘텀을 잃을 수 있습니다.",
+                            "reasoning": "의사결정 창을 30일 이내로 제한하고, 미해결 쟁점은 별도 워킹그룹에서 병행 처리해야 속도를 유지할 수 있습니다.",
+                        }
                     ],
                     "additions": [
-                        "지표 체계를 '실험 성공률'과 '사용자 반응 속도'로 이원화해 균형을 맞추겠습니다.",
-                        f"{topic} 실험 결과를 주 1회 공유하여 빠른 의사결정이 가능하도록 하겠습니다.",
+                        {
+                            "point": "실험 로그를 실시간으로 리뷰할 수 있는 대시보드를 출범 주간에 준비합시다.",
+                            "reasoning": "데이터를 투명하게 공유해야 Skeptic 관점의 검증 요구와 속도 요구를 동시에 충족할 수 있습니다.",
+                        }
                     ],
                 },
                 "round3": {
-                    "summary": (
-                        f"실험 속도를 유지하되 Skeptic 과 Neutralist 가 제안한 통제 장치를 함께 도입하면 "
-                        f"{topic} 의 가치를 빠르게 검증할 수 있습니다."
-                    ),
+                    "round": 3,
+                    "no_new_arguments": False,
+                    "executive_summary": "세 모델 모두 “빠른 실험”과 “통제된 확장”에 공감했습니다. GPT-4o는 실행 속도를, Claude 3 Haiku는 위험 관리 절차를, Gemini 1.5 Flash는 단계적 확장 전략을 강조했습니다.",
                     "conclusion": (
-                        f"파일럿 범위에서 명확한 성공 지표를 정의하고, 실험-피드백 루프를 자동화하십시오. "
-                        "동시에 보안/품질 게이트를 두어 실패 가능성을 관리하면, 성장과 안정성을 모두 확보할 수 있습니다."
+                        f"{topic}을(를) 30일 베타 → 60일 확장 검증으로 나누고, 매 단계마다 품질 게이트와 ROI 검토를 병행하면 현실적인 균형을 만들 수 있습니다."
                     ),
                     "recommendations": [
-                        "2주 단위 실험 사이클과 리뷰 미팅을 고정 일정으로 운영합니다.",
-                        f"{topic} 관련 사용자 행동 로그를 정량적으로 수집·분석하는 대시보드를 구축합니다.",
-                    ],
-                },
-                "round4": {
-                    "final_position": (
-                        f"빠른 실험 문화를 유지하되 Skeptic 과 Neutralist 의 통제 구조를 결합하면 "
-                        f"{topic} 실험을 전사 신뢰 속에서 확장할 수 있습니다."
-                    ),
-                    "consensus_highlights": [
-                        "파일럿→확장 단계별 성공 지표를 선제적으로 정의한다.",
-                        "관찰자에게 모든 학습 로그와 리스크 대응 결과를 주기적으로 공유한다.",
-                    ],
-                    "open_questions": [
-                        "대규모 확장 시 필요한 추가 인력·예산 합의를 얼마나 빠르게 이끌지 논의가 필요합니다.",
-                    ],
-                    "next_steps": [
-                        "30일 이내 실험·리스크·거버넌스 태스크포스를 구성해 책임 소재를 명확히 합니다.",
-                        f"{topic} 관련 핵심 지표 대시보드와 실패 보고 양식을 표준화합니다.",
+                        "베타 시작 전에 공통 대시보드와 품질 체크리스트를 확정한다.",
+                        "주차별 리스크 리뷰 세션에 세 모델이 합의한 담당자를 지정한다.",
+                        "60일째에 투자/중단 결정을 위한 경영 리뷰를 예약한다.",
                     ],
                 },
             },
-            "AGI Skeptic": {
-                "tagline": "신중한 시각",
+            "Claude 3 Haiku": {
                 "round1": {
-                    "summary": (
-                        f"{topic} 는 기대만큼이나 잠재 리스크가 많은 주제입니다. "
-                        "추진 전에 통제할 수 있는 장치가 마련되어야 합니다."
+                    "round": 1,
+                    "key_takeaway": (
+                        f"{topic}은 매력적이지만, 시작 전에 통제 범위와 리스크 대응 계획을 선명하게 해야 합니다."
                     ),
-                    "bullets": [
-                        "데이터 품질과 거버넌스를 먼저 진단해야 이후 문제를 줄일 수 있습니다.",
-                        f"{topic} 에 대한 명확한 ROI 가 없다면 이사회 설득이 어렵습니다.",
+                    "arguments": [
+                        "법적·보안 요건을 명확히 검토하지 않으면 베타 단계에서 바로 제동이 걸릴 수 있습니다.",
+                        "ROI 가설을 선제적으로 준비해야 경영진 설득과 후속 투자 논의가 수월합니다.",
                     ],
                     "risks": [
-                        "규제 이슈가 발생하면 프로젝트 중단 가능성이 있습니다.",
-                        "실험이 장기화될 경우 조직 피로도가 쌓입니다.",
+                        "규제 요구사항 누락으로 출시 일정이 미뤄질 수 있습니다.",
+                        "장기간 실험이 이어지면 조직 피로도가 커질 수 있습니다.",
                     ],
                     "opportunities": [
-                        "사전에 리스크를 통제하면 실패 비용을 크게 줄일 수 있습니다.",
-                        f"{topic} 의 실효성을 조기에 검증하면 향후 투자를 합리화할 수 있습니다.",
+                        "사전 통제를 준비하면 실패 비용을 크게 줄일 수 있습니다.",
+                        "구축한 거버넌스 체계는 다른 프로젝트에도 재사용할 수 있습니다.",
                     ],
                 },
                 "round2": {
-                    "ack": [
-                        "Optimist 의 빠른 실험 제안은 학습 속도를 높이는 좋은 접근입니다.",
-                        "Neutralist 가 강조한 단계적 확장은 통제 가능한 범위를 유지하는 데 도움이 됩니다.",
+                    "round": 2,
+                    "no_new_arguments": False,
+                    "agreements": [
+                        "GPT-4o가 강조한 “실제 사용자 데이터로 학습한다”는 접근은 설득력 있습니다."
                     ],
-                    "disagree": [
-                        "Optimist 가 제시한 대담한 투자 속도는 통제 장치가 준비되기 전에는 위험합니다.",
+                    "disagreements": [
+                        {
+                            "point": "“30일 내 의사결정”만으로는 법무·보안 검토 시간을 확보하기 어렵습니다.",
+                            "reasoning": "중간 게이트와 필수 체크리스트를 통과해야 다음 단계로 넘어가도록 합시다.",
+                        }
                     ],
                     "additions": [
-                        "모든 실험에는 사전 승인된 데이터와 KPI 를 명시한 체크리스트가 필요합니다.",
-                        f"{topic} 검증 단계마다 리스크 평가 리포트를 관찰자에게 제출하겠습니다.",
+                        {
+                            "point": "감사 로그와 데이터 사용 목적을 초기부터 문서화합시다.",
+                            "reasoning": "Gemini 1.5 Flash가 지적한 조직 정렬 문제를 해결하고, 향후 감사 대응에도 도움이 됩니다.",
+                        }
                     ],
                 },
                 "round3": {
-                    "summary": (
-                        f"실험을 진행하되 명확한 게이트와 감사 절차를 병행해야 {topic} 의 성공 가능성을 높일 수 있습니다."
-                    ),
+                    "round": 3,
+                    "no_new_arguments": False,
+                    "executive_summary": "Claude 3 Haiku는 “속도와 통제의 균형”을 강조하며 GPT-4o의 실험 드라이브와 Gemini 1.5 Flash의 단계적 확장 제안을 조화시켰습니다.",
                     "conclusion": (
-                        "초기에는 통제 가능한 소규모 데이터 세트로 검증을 수행하고, 각 단계마다 보안·컴플라이언스 검수를 "
-                        "마쳐야 합니다. 이를 통해 실패 확률을 낮추고, 투자 대비 효과를 명확히 할 수 있습니다."
+                        f"파일럿을 제한된 데이터와 명확한 KPI로 시작하고, 각 단계마다 법무·보안 검토를 완료한 뒤 확장하도록 운영하면 {topic}의 기대 효과와 리스크를 동시에 관리할 수 있습니다."
                     ),
                     "recommendations": [
-                        "라운드마다 위험 평가 템플릿을 작성해 의사결정에 활용하세요.",
-                        f"{topic} 관련 규제 대응 가이드를 사전에 준비해 돌발 상황에 대비하세요.",
-                    ],
-                },
-                "round4": {
-                    "final_position": (
-                        f"{topic} 실험을 승인하려면 통제된 범위와 명확한 종료 조건을 먼저 확정해야 합니다."
-                    ),
-                    "consensus_highlights": [
-                        "모든 실험에 대한 데이터·보안 체크리스트를 운영한다.",
-                        "관찰자 보고 체계를 통해 리스크 로그를 실시간으로 공유한다.",
-                    ],
-                    "open_questions": [
-                        "실험 속도와 감사 주기 사이의 균형을 어떻게 맞출지 추가 합의가 필요합니다.",
-                    ],
-                    "next_steps": [
-                        "실험·리스크 이중 승인 프로세스를 문서화하고 전사 공지합니다.",
-                        "각 라운드 종료 시 투자·중단 기준을 재평가하는 의사결정 회의를 예약합니다.",
+                        "각 단계별 필수 체크리스트와 승인 권한을 문서화해 공유한다.",
+                        "보안·법무 검토 일정과 실험 일정이 충돌하지 않도록 통합 캘린더를 운영한다.",
+                        "리스크 대응 로그를 주 단위로 관찰자에게 보고한다.",
                     ],
                 },
             },
-            "AGI Neutralist": {
-                "tagline": "균형 잡힌 시각",
+            "Gemini 1.5 Flash": {
                 "round1": {
-                    "summary": (
-                        f"{topic} 은/는 성장과 리스크 관리 모두를 요구하는 과제입니다. "
-                        "두 관점을 조합해 단계별 로드맵을 설계해야 합니다."
+                    "round": 1,
+                    "key_takeaway": (
+                        f"{topic}을(를) 현실적으로 추진하려면 단계별 합의와 명확한 커뮤니케이션 구조가 필요합니다."
                     ),
-                    "bullets": [
-                        "작은 파일럿으로 학습한 뒤 범위를 확장하는 것이 적절합니다.",
-                        "조직 간 커뮤니케이션 구조를 정비하면 실행력이 높아집니다.",
+                    "arguments": [
+                        "초기 파일럿 범위를 좁게 설정해 학습과 리스크를 동시에 관리해야 합니다.",
+                        "관계자별 역할과 책임(RACI)을 명확히 하지 않으면 실행이 느려집니다.",
                     ],
                     "risks": [
-                        "내부 합의가 부족하면 추진 동력이 약해질 수 있습니다.",
-                        "과도한 문서화는 민첩성을 떨어뜨릴 수 있습니다.",
+                        "내부 합의 없이 확장하면 프로젝트가 중도에 멈출 수 있습니다.",
+                        "과도한 문서화는 민첩성을 떨어뜨릴 수 있으므로 최소한의 형식만 유지해야 합니다.",
                     ],
                     "opportunities": [
-                        f"{topic} 추진 과정에서 팀 역량을 표준화할 수 있습니다.",
-                        "학습된 인사이트를 다른 프로젝트에도 확장할 수 있습니다.",
+                        "단계별 학습을 구조화하면 조직 전체의 실행력을 높일 수 있습니다.",
+                        "획득한 인사이트를 다른 팀에도 공유해 레버리지를 만들 수 있습니다.",
                     ],
                 },
                 "round2": {
-                    "ack": [
-                        "Optimist 의 실험 가속 전략은 초기 동력을 만들기에 적합합니다.",
-                        "Skeptic 의 체크리스트 제안은 품질 보증에 큰 도움이 됩니다.",
+                    "round": 2,
+                    "no_new_arguments": False,
+                    "agreements": [
+                        "GPT-4o가 제안한 “실험 데이터를 빠르게 공유”한다는 원칙은 협업에 도움이 됩니다.",
+                        "Claude 3 Haiku의 “감사 로그 문서화” 요구는 장기적으로 조직 신뢰를 높입니다."
                     ],
-                    "disagree": [
-                        "양 극단의 주장만으로는 실행팀이 혼란스러울 수 있으니, 단계별 역할 정의가 필요합니다.",
+                    "disagreements": [
+                        {
+                            "point": "GPT-4o의 “모든 미합의 쟁점을 30일 안에 해결하자”는 제안은 현실적으로 버겁습니다.",
+                            "reasoning": "핵심 의사결정은 30일 안에 두되, 복잡한 항목은 병렬 워킹그룹으로 넘기는 완충 장치가 필요합니다.",
+                        }
                     ],
                     "additions": [
-                        f"{topic} 추진을 위한 거버넌스 구조와 커뮤니케이션 채널을 명확히 하겠습니다.",
-                        "라운드 종료마다 관찰자에게 핵심 결정 사항을 요약 보고해 투명성을 확보하겠습니다.",
+                        {
+                            "point": "라운드마다 관찰자에게 요약 브리핑을 제공합시다.",
+                            "reasoning": "공유된 맥락이 있어야 결정 지연을 줄이고 팀 몰입감을 유지할 수 있습니다.",
+                        }
                     ],
                 },
                 "round3": {
-                    "summary": (
-                        f"세 패널의 인사이트를 조합하면 {topic} 을/를 단계적으로 확장하면서도 통제를 유지할 수 있습니다."
-                    ),
+                    "round": 3,
+                    "no_new_arguments": False,
+                    "executive_summary": "Gemini 1.5 Flash는 두 모델의 논리를 종합해 “실험 속도를 유지하되 투명한 합의 구조로 리스크를 관리하자”는 결론을 제시합니다.",
                     "conclusion": (
-                        "1) 파일럿-평가-확장 구조를 명확히 정의하고, 2) 실험·리스크·거버넌스를 분리된 태스크포스로 운영하며, "
-                        "3) 관찰자에게 모든 의사결정 로그를 공유하면 균형 잡힌 실행이 가능합니다."
+                        f"{topic} 추진은 베타 단계, 확장 검증, 전사 확산의 세 구간으로 나누고 각 구간마다 명확한 합의 지점과 커뮤니케이션 리듬을 정의할 때 성공 확률이 높습니다."
                     ),
                     "recommendations": [
-                        "파일럿 단계, 확장 단계에 대한 RACI 차트를 작성하세요.",
-                        "리스크 대응과 실험 설계를 담당하는 역할을 구분하여 충돌을 줄이세요.",
-                    ],
-                },
-                "round4": {
-                    "final_position": (
-                        f"세부 역할과 단계별 게이트를 명확히 하면 {topic} 실행에서 속도와 안전성을 동시에 달성할 수 있습니다."
-                    ),
-                    "consensus_highlights": [
-                        "실험·리스크·거버넌스 역할 분담표를 유지한다.",
-                        "관찰자와의 정기 공유로 조직 학습을 가속한다.",
-                    ],
-                    "open_questions": [
-                        "확장 단계에서 필요한 외부 파트너십 범위를 어디까지로 볼지 추가 논의가 필요합니다.",
-                    ],
-                    "next_steps": [
-                        "라운드 종료 직후 역할 분담표와 커뮤니케이션 채널을 확정해 배포합니다.",
-                        "분기별 전략 리뷰 세션을 열어 지표·리스크를 공동 점검합니다.",
+                        "RACI 매트릭스를 업데이트해 각 단계 책임자를 명확히 한다.",
+                        "주요 결정 사항과 데이터 인사이트를 주차별 노트로 남겨 향후 리뷰에 활용한다.",
+                        "확장 단계 전에 추가 리소스와 예산 확보 계획을 검토한다.",
                     ],
                 },
             },
         }
 
-        # Round 1: independent analyses
-        for persona, script in panel_scripts.items():
-            content_lines = [
-                f"### 라운드 1 — {persona} ({script['tagline']})",
-                "",
-                "**독립 분석**",
-                "",
-                script["round1"]["summary"],
-                "",
-                "**핵심 포인트**",
-            ]
-            content_lines.extend([f"- {point}" for point in script["round1"]["bullets"]])
-            content_lines.extend(["", "**우려 요소**"])
-            content_lines.extend([f"- {risk}" for risk in script["round1"]["risks"]])
-            content_lines.extend(["", "**기회 요소**"])
-            content_lines.extend([f"- {opportunity}" for opportunity in script["round1"]["opportunities"]])
-            content_lines.extend(["", f"_요약 지침: {instruction}_"])
+        round_status = {
+            1: "initial_turn_complete",
+            2: "rebuttal_turn_complete",
+            3: "synthesis_turn_complete",
+        }
 
-            self._save_message_and_stream(
-                review_id,
-                review_room_id,
-                "\n".join(content_lines),
-                timestamp=round_timestamp,
-            )
+        for round_num in (1, 2, 3):
+            for persona, script in panel_scripts.items():
+                payload = {
+                    "persona": persona,
+                    "round": round_num,
+                    "payload": script[f"round{round_num}"],
+                }
+                message_content = json.dumps(payload, ensure_ascii=False, indent=2)
+                self._save_message_and_stream(
+                    review_id,
+                    review_room_id,
+                    message_content,
+                    timestamp=round_timestamp,
+                )
+                round_timestamp += 1
+
+            try:
+                self.storage.update_review(review_id, {"current_round": round_num})
+            except Exception as update_error:
+                logger.warning(
+                    "Failed to update current_round after round %s in mock review.",
+                    round_num,
+                    extra={"review_id": review_id, "error": str(update_error)},
+                )
+
+            status_label = round_status[round_num]
+            self._log_status_event(review_id, status_label, timestamp=round_timestamp)
             round_timestamp += 1
-
-        try:
-            self.storage.update_review(review_id, {"current_round": 1})
-        except Exception as update_error:
-            logger.warning(
-                "Failed to update current_round after round 1 in mock review.",
-                extra={"review_id": review_id, "error": str(update_error)},
-            )
-
-        self._log_status_event(review_id, "initial_turn_complete", timestamp=round_timestamp)
-        round_timestamp += 1
-
-        # Round 2: rebuttals based on summaries
-        for persona, script in panel_scripts.items():
-            content_lines = [
-                f"### 라운드 2 — {persona} ({script['tagline']})",
-                "",
-                "**다른 패널 요약 확인**",
-            ]
-            content_lines.extend([f"- {ack}" for ack in script["round2"]["ack"]])
-            content_lines.extend(["", "**조정하거나 보완할 부분**"])
-            content_lines.extend([f"- {dis}" for dis in script["round2"]["disagree"]])
-            content_lines.extend(["", "**추가 제안**"])
-            content_lines.extend([f"- {addition}" for addition in script["round2"]["additions"]])
-            content_lines.extend(["", f"_요약 지침: {instruction}_"])
-
-            self._save_message_and_stream(
-                review_id,
-                review_room_id,
-                "\n".join(content_lines),
-                timestamp=round_timestamp,
-            )
-            round_timestamp += 1
-
-        try:
-            self.storage.update_review(review_id, {"current_round": 2})
-        except Exception as update_error:
-            logger.warning(
-                "Failed to update current_round after round 2 in mock review.",
-                extra={"review_id": review_id, "error": str(update_error)},
-            )
-
-        self._log_status_event(review_id, "rebuttal_turn_complete", timestamp=round_timestamp)
-        round_timestamp += 1
-
-        # Round 3: final synthesis per panelist
-        for persona, script in panel_scripts.items():
-            content_lines = [
-                f"### 라운드 3 — {persona} ({script['tagline']})",
-                "",
-                "**최종 결론**",
-                "",
-                script["round3"]["summary"],
-                "",
-                script["round3"]["conclusion"],
-                "",
-                "**실행 권장 사항**",
-            ]
-            content_lines.extend([f"- {rec}" for rec in script["round3"]["recommendations"]])
-            content_lines.extend(["", f"_요약 지침: {instruction}_"])
-
-            self._save_message_and_stream(
-                review_id,
-                review_room_id,
-                "\n".join(content_lines),
-                timestamp=round_timestamp,
-            )
-            round_timestamp += 1
-
-        try:
-            self.storage.update_review(review_id, {"current_round": 3})
-        except Exception as update_error:
-            logger.warning(
-                "Failed to update current_round after round 3 in mock review.",
-                extra={"review_id": review_id, "error": str(update_error)},
-            )
-
-        self._log_status_event(review_id, "synthesis_turn_complete", timestamp=round_timestamp)
-        round_timestamp += 1
-
-        # Round 4: final alignment per panelist
-        for persona, script in panel_scripts.items():
-            content_lines = [
-                f"### 라운드 4 — {persona} ({script['tagline']})",
-                "",
-                "**최종 정렬**",
-                "",
-                script["round4"]["final_position"],
-                "",
-                "**강조된 합의**",
-            ]
-            content_lines.extend([f"- {point}" for point in script["round4"]["consensus_highlights"]])
-            content_lines.extend(["", "**남은 질문**"])
-            content_lines.extend([f"- {question}" for question in script["round4"]["open_questions"]])
-            content_lines.extend(["", "**다음 단계 제안**"])
-            content_lines.extend([f"- {step}" for step in script["round4"]["next_steps"]])
-            content_lines.extend(["", f"_요약 지침: {instruction}_"])
-
-            self._save_message_and_stream(
-                review_id,
-                review_room_id,
-                "\n".join(content_lines),
-                timestamp=round_timestamp,
-            )
-            round_timestamp += 1
-
-        try:
-            self.storage.update_review(review_id, {"current_round": 4})
-        except Exception as update_error:
-            logger.warning(
-                "Failed to update current_round after round 4 in mock review.",
-                extra={"review_id": review_id, "error": str(update_error)},
-            )
-
-        self._log_status_event(review_id, "round4_turn_complete", timestamp=round_timestamp)
-        round_timestamp += 1
 
         final_report = {
             "executive_summary": (
-                f"세 명의 패널은 {topic} 을/를 빠르게 실험하면서도 통제 장치를 갖추는 전략이 가장 현실적이라고 합의했습니다."
+                f"GPT-4o, Claude 3 Haiku, Gemini 1.5 Flash는 {topic}을 빠르게 실험하되 명확한 거버넌스와 단계적 확장을 병행하자는 방향으로 정렬했습니다."
             ),
             "strongest_consensus": [
-                "소규모 파일럿을 통해 학습하고, 성공 지표를 조기에 정의한다.",
-                "보안·규제 점검 체크리스트를 마련해 리스크를 지속적으로 관리한다.",
+                "베타 → 확장 검증 순으로 단계별 게이트를 운영한다.",
+                "데이터 거버넌스와 품질 체크리스트를 초기부터 준비해 투명하게 공유한다.",
             ],
             "remaining_disagreements": [
-                "실험 속도에 대한 허용치와 투자 강도는 추가 합의가 필요합니다.",
+                "확장 의사결정 타이밍과 투자 강도는 추가 합의가 필요합니다.",
             ],
             "recommendations": [
-                "2주 단위 실험/리뷰 리듬을 세팅하고, 결과를 전사에 공유합니다.",
-                f"{topic} 관련 핵심 지표와 리스크 로그를 실시간으로 추적하는 대시보드를 구축합니다.",
+                "실험 로그와 감사 기록을 통합 대시보드로 공유하고 책임자를 지정한다.",
+                f"{topic} 관련 경영 리뷰를 60일째에 열어 투자/중단을 재평가한다.",
             ],
         }
 

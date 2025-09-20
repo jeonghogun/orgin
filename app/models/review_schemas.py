@@ -51,27 +51,6 @@ class LLMReviewSynthesis(BaseModel):
     conclusion: str = Field(..., description="The detailed, comprehensive conclusion supporting the summary.")
     recommendations: List[str] = Field(..., description="A list of specific, actionable recommendations.")
 
-class LLMReviewResolution(BaseModel):
-    """
-    Expected JSON structure for Round 4 (Final Alignment).
-    """
-
-    round: int
-    no_new_arguments: bool = Field(
-        default=False,
-        description="Set to true if there are no further arguments beyond round 3.",
-    )
-    final_position: str = Field(..., description="The panelist's final recommendation or stance.")
-    consensus_highlights: List[str] = Field(
-        ..., description="A list of points that represent strong agreement across panelists."
-    )
-    open_questions: List[str] = Field(
-        ..., description="Outstanding risks or questions that remain unresolved."
-    )
-    next_steps: List[str] = Field(
-        ..., description="Concrete next actions proposed by the panelist."
-    )
-
 class LLMFinalReport(BaseModel):
     """
     Expected JSON structure for the final consolidated report.

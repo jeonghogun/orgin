@@ -2,13 +2,13 @@ import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom';
 import RoomHeader from '../components/RoomHeader';
 import ChatInput from '../components/ChatInput';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import apiClient, { resolveApiUrl } from '../lib/apiClient';
+import { useQuery } from '@tanstack/react-query';
+import apiClient from '../lib/apiClient';
 import { useAppContext } from '../context/AppContext';
 import useRealtimeChannel from '../hooks/useRealtimeChannel';
 import toast from 'react-hot-toast';
 import ReviewTimeline from '../components/review/ReviewTimeline';
-import DebateTranscript from '../components/review/DebateTranscript';
+import DiscussionStoryboard from '../components/review/DiscussionStoryboard';
 
 const Review = ({ reviewId, isSplitView = false, createRoomMutation }) => {
   const { sidebarOpen } = useAppContext();
@@ -17,13 +17,6 @@ const Review = ({ reviewId, isSplitView = false, createRoomMutation }) => {
   const [reviewStatus, setReviewStatus] = useState('loading');
   const [statusEvents, setStatusEvents] = useState([]);
   const statusKeyRef = useRef(new Set());
-  const queryClient = useQueryClient();
-  const [isRequestingRound, setIsRequestingRound] = useState(false);
-  const MAX_DEBATE_ROUNDS = 4;
-  const continuationFlagRef = useRef(
-    String(import.meta.env.VITE_ENABLE_REVIEW_CONTINUATION || '').toLowerCase() === 'true'
-  );
-  const [reviewContinuationEnabled, setReviewContinuationEnabled] = useState(continuationFlagRef.current);
 
   const { data: review, isLoading } = useQuery({
     queryKey: ['review', reviewId],
@@ -81,9 +74,40 @@ const Review = ({ reviewId, isSplitView = false, createRoomMutation }) => {
 
   const normalizeMessage = useCallback((message) => {
     if (!message?.message_id) return null;
-    const persona = extractPersona(message);
-    const round = extractRound(message);
     const rawContent = message.content || '';
+    let structuredPayload = null;
+    let structuredPersona;
+    let structuredRound;
+
+    try {
+      const parsed = JSON.parse(rawContent);
+      if (parsed && typeof parsed === 'object') {
+        if (parsed.persona) {
+          structuredPersona = parsed.persona;
+        }
+        if (typeof parsed.round === 'number') {
+          structuredRound = parsed.round;
+        }
+        if (parsed.payload && typeof parsed.payload === 'object') {
+          structuredPayload = parsed.payload;
+          if (!structuredPersona && typeof parsed.payload.persona === 'string') {
+            structuredPersona = parsed.payload.persona;
+          }
+          if (
+            structuredRound === undefined &&
+            typeof parsed.payload.round === 'number'
+          ) {
+            structuredRound = parsed.payload.round;
+          }
+        }
+      }
+    } catch (error) {
+      structuredPayload = null;
+    }
+
+    const persona = structuredPersona || extractPersona(message);
+    const round =
+      typeof structuredRound === 'number' ? structuredRound : extractRound(message);
     const MAX_CONTENT_LENGTH = 8000;
     const isTrimmed = rawContent.length > MAX_CONTENT_LENGTH;
     const trimmedContent = isTrimmed ? `${rawContent.slice(0, MAX_CONTENT_LENGTH)}…` : rawContent;
@@ -94,6 +118,8 @@ const Review = ({ reviewId, isSplitView = false, createRoomMutation }) => {
       persona,
       round,
       isTrimmed,
+      structuredPayload,
+      rawContent,
     };
   }, [extractPersona, extractRound]);
 
@@ -112,45 +138,6 @@ const Review = ({ reviewId, isSplitView = false, createRoomMutation }) => {
     statusKeyRef.current = new Set();
     setStatusEvents([]);
     setLiveMessages([]);
-    setIsRequestingRound(false);
-  }, [reviewId]);
-
-  useEffect(() => {
-    if (!continuationFlagRef.current || !reviewId) {
-      return;
-    }
-
-    const controller = new AbortController();
-
-    const verifyRouteSupport = async () => {
-      try {
-        const response = await fetch(resolveApiUrl(`/api/reviews/${reviewId}/continue`), {
-          method: 'OPTIONS',
-          signal: controller.signal,
-        });
-
-        if (controller.signal.aborted) {
-          return;
-        }
-
-        if (response.status === 404) {
-          setReviewContinuationEnabled(false);
-        } else if (response.ok || response.status === 405) {
-          setReviewContinuationEnabled(true);
-        }
-      } catch (error) {
-        if (controller.signal.aborted || error?.name === 'AbortError') {
-          return;
-        }
-        // Leave the existing flag unchanged on network or unexpected errors.
-      }
-    };
-
-    void verifyRouteSupport();
-
-    return () => {
-      controller.abort();
-    };
   }, [reviewId]);
 
   const recordStatusEvent = useCallback((status, ts) => {
@@ -194,8 +181,36 @@ const Review = ({ reviewId, isSplitView = false, createRoomMutation }) => {
 
   const personaEvents = useMemo(() => {
     const grouped = {};
+    const buildPreview = (message) => {
+      const payload = message.structuredPayload;
+      if (payload && typeof payload === 'object') {
+        if (typeof payload.key_takeaway === 'string' && payload.key_takeaway) {
+          return payload.key_takeaway;
+        }
+        if (
+          typeof payload.executive_summary === 'string' &&
+          payload.executive_summary
+        ) {
+          return payload.executive_summary;
+        }
+        if (Array.isArray(payload.agreements) && payload.agreements.length > 0) {
+          return `동의: ${payload.agreements[0]}`;
+        }
+        if (Array.isArray(payload.additions) && payload.additions.length > 0) {
+          const addition = payload.additions[0];
+          if (typeof addition === 'string') {
+            return `추가: ${addition}`;
+          }
+          if (addition?.point) {
+            return `추가: ${addition.point}`;
+          }
+        }
+      }
+      return (message.content || '').replace(/\s+/g, ' ').slice(0, 140);
+    };
+
     combinedMessages.forEach((message) => {
-      if (!message?.content) return;
+      if (!message) return;
       const persona = message.persona || extractPersona(message);
       if (!grouped[persona]) {
         grouped[persona] = [];
@@ -204,7 +219,7 @@ const Review = ({ reviewId, isSplitView = false, createRoomMutation }) => {
         id: message.message_id,
         timestamp: message.timestamp,
         round: message.round ?? extractRound(message),
-        preview: message.content.replace(/\s+/g, ' ').slice(0, 140),
+        preview: buildPreview(message),
       });
     });
     return grouped;
@@ -309,29 +324,6 @@ const Review = ({ reviewId, isSplitView = false, createRoomMutation }) => {
     );
   }
 
-  const roundsCompleted = review?.current_round || 0;
-  const debateConcluded = roundsCompleted >= MAX_DEBATE_ROUNDS || ['completed', 'failed'].includes(reviewStatus);
-
-  const handleRequestAnotherRound = useCallback(async () => {
-    if (!reviewContinuationEnabled) {
-      toast.error('추가 라운드 요청 기능은 현재 비활성화되어 있습니다.');
-      return;
-    }
-    if (!reviewId || debateConcluded) return;
-    setIsRequestingRound(true);
-    try {
-      await apiClient.post(`/api/reviews/${reviewId}/continue`);
-      toast.success('추가 라운드를 요청했습니다.');
-      await queryClient.invalidateQueries({ queryKey: ['review', reviewId] });
-    } catch (error) {
-      console.error('Failed to request additional debate round:', error);
-      const detail = error.response?.data?.detail || '추가 라운드 요청에 실패했습니다.';
-      toast.error(detail);
-    } finally {
-      setIsRequestingRound(false);
-    }
-  }, [debateConcluded, queryClient, reviewContinuationEnabled, reviewId]);
-
   return (
     <div className="flex flex-col h-full bg-bg relative overflow-hidden">
       <div className="flex-shrink-0 z-10">
@@ -411,16 +403,7 @@ const Review = ({ reviewId, isSplitView = false, createRoomMutation }) => {
         <ReviewTimeline statusEvents={statusEvents} personaEvents={personaEvents} />
 
         <div className="mt-6">
-          <DebateTranscript
-            messages={combinedMessages}
-            onRequestRound={handleRequestAnotherRound}
-            canRequestRound={reviewContinuationEnabled && !debateConcluded && Boolean(reviewId)}
-            isRequestingRound={isRequestingRound}
-            totalRoundsCompleted={roundsCompleted}
-            maxRounds={MAX_DEBATE_ROUNDS}
-            isDebateConcluded={debateConcluded}
-            requestRoundUnavailableReason="추가 라운드 요청 기능은 현재 준비 중입니다."
-          />
+          <DiscussionStoryboard messages={combinedMessages} />
         </div>
       </div>
 

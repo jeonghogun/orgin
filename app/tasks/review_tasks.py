@@ -19,7 +19,6 @@ from app.models.review_schemas import (
     LLMReviewInitialAnalysis,
     LLMReviewRebuttal,
     LLMReviewSynthesis,
-    LLMReviewResolution,
     LLMFinalReport,
 )
 from app.services.redis_pubsub import redis_pubsub_manager
@@ -62,14 +61,26 @@ def run_panelist_turn(
 
 def _save_panelist_message(review_room_id: str, content: str, persona: str, round_num: int) -> Message:
     """Saves a panelist's output as a message in the review room."""
+    try:
+        parsed_payload = json.loads(content)
+    except json.JSONDecodeError:
+        wrapped_content = content
+    else:
+        wrapped_content = json.dumps(
+            {
+                "persona": persona,
+                "round": round_num,
+                "payload": parsed_payload,
+            },
+            ensure_ascii=False,
+        )
     message = Message(
         message_id=generate_id(),
         room_id=review_room_id,
         role="assistant",
-        content=content,
+        content=wrapped_content,
         user_id="assistant",
         timestamp=get_current_timestamp(),
-        metadata={"persona": persona, "round": round_num}
     )
     storage_service.save_message(message)
     return message
@@ -184,18 +195,18 @@ def _fallback_round_payload(
             "round": round_num,
             "no_new_arguments": False,
             "agreements": [
-                "Quick experimentation needs strong guardrails."
+                "I agree that quick experimentation needs paired guardrails."
             ],
             "disagreements": [
                 {
-                    "point": "Investing heavily up front is risky.",
-                    "reasoning": "We should stage investments behind clear milestones.",
+                    "point": "Rushing headcount expansion would strain the team.",
+                    "reasoning": "Stage investment behind clear milestones so momentum is earned.",
                 }
             ],
             "additions": [
                 {
-                    "point": "Define ownership for the rollout team.",
-                    "reasoning": "Without a single owner execution will drift.",
+                    "point": "Define ownership for the rollout team immediately.",
+                    "reasoning": "Without a single accountable lead execution will drift.",
                 }
             ],
         }
@@ -210,24 +221,105 @@ def _fallback_round_payload(
                 "Share weekly updates on risks and mitigations.",
             ],
         }
-    if validation_model is LLMReviewResolution:
-        return {
-            "round": round_num,
-            "no_new_arguments": False,
-            "final_position": "Move forward with Alternative 1 and adopt once pilot metrics are met.",
-            "consensus_highlights": [
-                "Transparency and staged rollout build trust.",
-                "Dedicated owners keep execution on track.",
-            ],
-            "open_questions": [
-                "How will we fund the long-term adoption phase?"
-            ],
-            "next_steps": [
-                "Kick off the pilot within 30 days with adoption checkpoints.",
-                "Hold a governance review to confirm the recommendation.",
-            ],
-        }
     return {}
+
+
+def _clip_list(items: Optional[List[str]], limit: int = 2) -> List[str]:
+    if not items:
+        return []
+    return [item for item in items if item][:limit]
+
+
+def _squash_text(text: str) -> str:
+    if not text:
+        return ""
+    return " ".join(text.split()).strip()
+
+
+def _quote_text(text: str, max_len: int = 160) -> str:
+    squashed = _squash_text(text)
+    if not squashed:
+        return ""
+    if len(squashed) > max_len:
+        squashed = squashed[: max_len - 1].rstrip() + "…"
+    return f"“{squashed}”"
+
+
+def _round1_self_snapshot(output: Dict[str, Any]) -> str:
+    snapshot = {
+        "round": output.get("round", 1),
+        "key_takeaway": output.get("key_takeaway", ""),
+        "arguments": _clip_list(output.get("arguments", []), 2),
+        "risks": _clip_list(output.get("risks", []), 2),
+        "opportunities": _clip_list(output.get("opportunities", []), 2),
+    }
+    return json.dumps(snapshot, ensure_ascii=False, indent=2)
+
+
+def _round1_competitor_digest(
+    target_persona: str, turn_1_outputs: Dict[str, Dict[str, Any]]
+) -> str:
+    sections: List[str] = []
+    for persona, output in turn_1_outputs.items():
+        if persona == target_persona:
+            continue
+        key = _quote_text(output.get("key_takeaway", "")) or "요약 없음"
+        arguments = _clip_list(output.get("arguments", []), 1)
+        risks = _clip_list(output.get("risks", []), 1)
+        lines = [f"- {persona}: {key}"]
+        if arguments:
+            lines.append(f"  • 핵심 근거: {_quote_text(arguments[0], 140)}")
+        if risks:
+            lines.append(f"  • 경고: {_quote_text(risks[0], 140)}")
+        sections.append("\n".join(lines))
+    if not sections:
+        return "- 다른 패널의 발언이 아직 없습니다."
+    return "\n".join(sections)
+
+
+def _summarize_round2_output(output: Dict[str, Any]) -> str:
+    if output.get("no_new_arguments"):
+        return "no new arguments"
+    parts: List[str] = []
+    for agree in _clip_list(output.get("agreements", []), 1):
+        parts.append(f"agreed with {_quote_text(agree, 120)}")
+    for disagreement in _clip_list(output.get("disagreements", []), 1):
+        point = disagreement.get("point")
+        reasoning = disagreement.get("reasoning")
+        segment = f"challenged {_quote_text(point, 120)}"
+        if reasoning:
+            segment += f" because {_squash_text(reasoning)}"
+        parts.append(segment)
+    for addition in _clip_list(output.get("additions", []), 1):
+        point = addition.get("point")
+        reasoning = addition.get("reasoning")
+        segment = f"added {_quote_text(point, 120)}"
+        if reasoning:
+            segment += f" ({_squash_text(reasoning)})"
+        parts.append(segment)
+    return "; ".join(parts)
+
+
+def _conversation_digest(
+    turn_1_outputs: Dict[str, Dict[str, Any]],
+    turn_2_outputs: Dict[str, Dict[str, Any]],
+) -> str:
+    blocks: List[str] = []
+    for speaker, round1 in turn_1_outputs.items():
+        key_line = _quote_text(round1.get("key_takeaway", "")) or "요약 없음"
+        arguments = _clip_list(round1.get("arguments", []), 1)
+        block_lines = [f"- {speaker} R1: {key_line}"]
+        if arguments:
+            block_lines.append(f"  • 근거: {_quote_text(arguments[0], 140)}")
+        r2 = turn_2_outputs.get(speaker)
+        if r2:
+            summary = _summarize_round2_output(r2)
+            if summary:
+                block_lines.append(f"  • R2: {summary}")
+        blocks.append("\n".join(block_lines))
+    if not blocks:
+        return "- 아직 토론 맥락이 없습니다."
+    return "\n".join(blocks)
 
 
 def _build_fallback_final_report(topic: str, instruction: str) -> Dict[str, Any]:
@@ -373,13 +465,24 @@ def run_initial_panel_turn(self: BaseTask, review_id: str, review_room_id: str, 
                 exc_info=True,
             )
 
-        prompt = prompt_service.get_prompt(
-            "review_initial_analysis",
-            topic=topic,
-            instruction=instruction
-        )
-
-        initial_results = [run_panelist_turn(self.llm_service, p_config, prompt, trace_id) for p_config in panel_configs]
+        prompts_by_persona: Dict[str, str] = {}
+        initial_results = []
+        for p_config in panel_configs:
+            prompt = prompt_service.get_prompt(
+                "review_initial_analysis",
+                topic=topic,
+                instruction=instruction,
+                panelist=p_config.persona,
+            )
+            prompts_by_persona[p_config.persona] = prompt
+            initial_results.append(
+                run_panelist_turn(
+                    self.llm_service,
+                    p_config,
+                    prompt,
+                    f"{trace_id}-r1-{p_config.provider}",
+                )
+            )
 
         # Implement fallback logic as per README
         final_results = []
@@ -398,7 +501,13 @@ def run_initial_panel_turn(self: BaseTask, review_id: str, review_room_id: str, 
                     max_retries=0
                 )
 
-                fb_p_config, fb_result = run_panelist_turn(self.llm_service, fallback_config, prompt, f"{trace_id}-fallback")
+                fb_prompt = prompts_by_persona.get(p_config.persona, "")
+                fb_p_config, fb_result = run_panelist_turn(
+                    self.llm_service,
+                    fallback_config,
+                    fb_prompt,
+                    f"{trace_id}-r1-fallback",
+                )
                 final_results.append((fb_p_config, fb_result))
             else:
                 final_results.append((p_config, result))
@@ -454,23 +563,7 @@ def run_rebuttal_turn(
 ):
     try:
         panel_configs = [ProviderPanelistConfig(**p) for p in successful_panelists]
-        round_1_summaries = []
-        for persona, output in turn_1_outputs.items():
-            arguments_str = "\n- ".join(output.get('arguments', []))
-            risks_str = "\n- ".join(output.get('risks', []))
-            opportunities_str = "\n- ".join(output.get('opportunities', []))
-            
-            summary = f"""Panelist: {persona}
-Key Takeaway: {output.get('key_takeaway', 'N/A')}
-Arguments:
-- {arguments_str}
-Risks:
-- {risks_str}
-Opportunities:
-- {opportunities_str}"""
-            round_1_summaries.append(summary)
-
-        # Build custom prompts for each panelist to align with README logic
+        # Build custom prompts for each panelist so the second round references real quotes.
         all_results = []
         prompts_by_persona: Dict[str, str] = {}
         for p_config in panel_configs:
@@ -479,25 +572,14 @@ Opportunities:
             if not own_turn_output:
                 continue
 
-            # Get summaries of competitors
-            competitor_summaries = [
-                summary for persona, summary in zip(turn_1_outputs.keys(), round_1_summaries)
-                if persona != p_config.persona
-            ]
-
-            # Construct the context as described in the README
-            competitor_separator = "\n\n---\n\n"
-            competitor_section = competitor_separator.join(competitor_summaries)
-            rebuttal_context = f"""Your Round 1 analysis (full text):
-{json.dumps(own_turn_output, indent=2)}
-
----
-Summaries of competing Round 1 analyses:
-{competitor_section}"""
+            self_snapshot = _round1_self_snapshot(own_turn_output)
+            competitors_digest = _round1_competitor_digest(p_config.persona, turn_1_outputs)
 
             prompt = prompt_service.get_prompt(
                 "review_rebuttal",
-                rebuttal_context=rebuttal_context
+                panelist=p_config.persona,
+                self_snapshot=self_snapshot,
+                others_digest=competitors_digest,
             )
 
             prompts_by_persona[p_config.persona] = prompt
@@ -603,22 +685,6 @@ def run_synthesis_turn(
 ):
     try:
         panel_configs = [ProviderPanelistConfig(**p) for p in successful_panelists]
-        r1_context = "\n".join([f"Key takeaway from {p}: {o.get('key_takeaway', 'N/A')}" for p, o in turn_1_outputs.items()])
-
-        r2_context_parts = []
-        for persona, output in turn_2_outputs.items():
-            agreements = "\n".join(f"- {a}" for a in output.get("agreements", []))
-            disagreements = "\n".join(f"- Point: {d['point']}, Reasoning: {d['reasoning']}" for d in output.get("disagreements", []))
-            additions = "\n".join(f"- Point: {a['point']}, Reasoning: {a['reasoning']}" for a in output.get("additions", []))
-            r2_context_parts.append(f"""Panelist: {persona}
-Agreements:
-{agreements}
-Disagreements:
-{disagreements}
-Additions:
-{additions}""")
-        r2_context = "\n\n---\n\n".join(r2_context_parts)
-
         all_results = []
         prompts_by_persona: Dict[str, str] = {}
         for p_config in panel_configs:
@@ -628,32 +694,12 @@ Additions:
             if not own_r1 or not own_r2:
                 continue
 
-            # Summarize competitors' Round 2 outputs
-            competitor_r2_context_parts = []
-            for p, output in turn_2_outputs.items():
-                if p == persona:
-                    continue
-                agreements = "\n".join(f"- {a}" for a in output.get("agreements", []))
-                disagreements = "\n".join(f"- Point: {d['point']}, Reasoning: {d['reasoning']}" for d in output.get("disagreements", []))
-                additions = "\n".join(f"- Point: {a['point']}, Reasoning: {a['reasoning']}" for a in output.get("additions", []))
-                competitor_r2_context_parts.append(f"""Summary of {p}'s Round 2 Arguments:
-Agreements: {agreements}
-Disagreements: {disagreements}
-Additions: {additions}""")
-
-            competitor_r2_context = "\n\n---\n\n".join(competitor_r2_context_parts)
-
-            synthesis_context = f"""Your own Round 1 and 2 arguments (full text):
-Round 1: {json.dumps(own_r1, indent=2)}
-Round 2: {json.dumps(own_r2, indent=2)}
-
----
-Summaries of competing Round 2 analyses:
-{competitor_r2_context}"""
+            conversation_digest = _conversation_digest(turn_1_outputs, turn_2_outputs)
 
             prompt = prompt_service.get_prompt(
                 "review_synthesis",
-                synthesis_context=synthesis_context
+                panelist=persona,
+                conversation_digest=conversation_digest,
             )
             prompts_by_persona[persona] = prompt
             all_results.append(run_panelist_turn(self.llm_service, p_config, prompt, f"{trace_id}-r3-{p_config.provider}"))
@@ -714,23 +760,13 @@ Summaries of competing Round 2 analyses:
 
         if _all_panelists_declined(turn_outputs):
             _record_status_update(review_id, "no_new_arguments_stop", round_num=3)
-            executed_rounds = _collect_completed_rounds(panel_history)
-            generate_consolidated_report.delay(
-                review_id=review_id,
-                panel_history=panel_history,
-                all_metrics=all_metrics,
-                executed_rounds=executed_rounds,
-                trace_id=trace_id,
-            )
-            return
 
-        run_resolution_turn.delay(
+        executed_rounds = _collect_completed_rounds(panel_history)
+        generate_consolidated_report.delay(
             review_id=review_id,
-            review_room_id=review_room_id,
             panel_history=panel_history,
-            round_3_outputs=turn_outputs,
             all_metrics=all_metrics,
-            successful_panelists=[p.model_dump() for p in successful_panelists],
+            executed_rounds=executed_rounds,
             trace_id=trace_id,
         )
     except BudgetExceededError as e:
@@ -743,157 +779,6 @@ Summaries of competing Round 2 analyses:
         storage_service.update_review(review_id, {"status": "failed", "final_report": {"error": "An unexpected error occurred."}})
         raise
 
-
-@celery_app.task(bind=True, base=BaseTask, autoretry_for=(Exception,), retry_kwargs={'max_retries': 3}, retry_backoff=True)
-def run_resolution_turn(
-    self: BaseTask,
-    review_id: str,
-    review_room_id: str,
-    panel_history: Dict[str, Dict[str, Any]],
-    round_3_outputs: Dict[str, Any],
-    all_metrics: List[List[Dict[str, Any]]],
-    successful_panelists: List[Dict[str, Any]],
-    trace_id: str,
-):
-    try:
-        panel_configs = [ProviderPanelistConfig(**p) for p in successful_panelists]
-
-        all_results = []
-        prompts_by_persona: Dict[str, str] = {}
-        for p_config in panel_configs:
-            persona = p_config.persona
-            own_round3 = round_3_outputs.get(persona)
-            if not own_round3:
-                continue
-
-            earlier_rounds = []
-            persona_rounds = panel_history.get(persona, {})
-            for round_key in sorted(persona_rounds.keys(), key=lambda r: int(r)):
-                if round_key == "3":
-                    continue
-                try:
-                    round_label = int(round_key)
-                except (ValueError, TypeError):
-                    round_label = round_key
-                earlier_rounds.append(
-                    f"Round {round_label}:\n{json.dumps(persona_rounds[round_key], indent=2)}"
-                )
-            earlier_section = "\n\n---\n\n".join(earlier_rounds) if earlier_rounds else "No earlier round context available."
-
-            competitors = []
-            for other_persona, output in round_3_outputs.items():
-                if other_persona == persona:
-                    continue
-                recommendations = "\n".join(f"- {rec}" for rec in output.get("recommendations", []))
-                competitors.append(
-                    f"Panelist: {other_persona}\nExecutive Summary: {output.get('executive_summary', 'N/A')}\nRecommendations:\n{recommendations or '- (none)'}\nFlagged No New Arguments: {output.get('no_new_arguments', False)}"
-                )
-            competitor_section = "\n\n---\n\n".join(competitors) if competitors else "No competing syntheses were provided."
-
-            resolution_context = f"""Your Round 3 synthesis (full JSON):
-{json.dumps(own_round3, indent=2)}
-
----
-Earlier rounds from your perspective:
-{earlier_section}
-
----
-Round 3 syntheses from other panelists:
-{competitor_section}
-"""
-
-            prompt = prompt_service.get_prompt(
-                "review_resolution",
-                resolution_context=resolution_context,
-            )
-
-            prompts_by_persona[persona] = prompt
-            all_results.append(
-                run_panelist_turn(
-                    self.llm_service,
-                    p_config,
-                    prompt,
-                    f"{trace_id}-r4-{p_config.provider}",
-                )
-            )
-
-        initial_results = all_results
-
-        final_results = []
-        openai_config = next((p for p in panel_configs if p.provider == 'openai'), None)
-
-        for p_config, result in initial_results:
-            if isinstance(result, BaseException) and p_config.provider != 'openai' and openai_config:
-                logger.warning(
-                    f"Panelist {p_config.persona} ({p_config.provider}) failed in round 4. Retrying with fallback provider OpenAI."
-                )
-
-                fallback_config = ProviderPanelistConfig(
-                    provider='openai',
-                    persona=p_config.persona,
-                    model=openai_config.model,
-                    system_prompt=p_config.system_prompt or openai_config.system_prompt,
-                    timeout_s=openai_config.timeout_s,
-                    max_retries=0
-                )
-
-                prompt_text = prompts_by_persona.get(p_config.persona)
-                if not prompt_text:
-                    logger.warning(
-                        "Missing stored resolution prompt for %s during fallback; using empty prompt.",
-                        p_config.persona,
-                    )
-                fb_p_config, fb_result = run_panelist_turn(
-                    self.llm_service,
-                    fallback_config,
-                    prompt_text or "",
-                    f"{trace_id}-r4-fallback",
-                )
-                final_results.append((fb_p_config, fb_result))
-            else:
-                final_results.append((p_config, result))
-
-        turn_outputs, round_metrics, _ = _process_turn_results(
-            review_id,
-            review_room_id,
-            4,
-            final_results,
-            all_metrics,
-            validation_model=LLMReviewResolution,
-        )
-
-        panel_history = _merge_round_outputs(panel_history, 4, turn_outputs)
-
-        try:
-            storage_service.update_review(review_id, {"current_round": 4})
-        except Exception as exc:
-            logger.warning(
-                "Failed to persist round 4 metadata for review %s: %s",
-                review_id,
-                exc,
-                exc_info=True,
-            )
-
-        all_metrics.append(round_metrics)
-        _record_status_update(review_id, "round4_turn_complete", round_num=4)
-
-        executed_rounds = _collect_completed_rounds(panel_history)
-        generate_consolidated_report.delay(
-            review_id=review_id,
-            panel_history=panel_history,
-            all_metrics=all_metrics,
-            executed_rounds=executed_rounds,
-            trace_id=trace_id,
-        )
-    except BudgetExceededError as e:
-        logger.error(f"Failed round 4 turn for review {review_id}: {e}")
-        storage_service.update_review(review_id, {"status": "failed", "final_report": {"error": str(e)}})
-        self.update_state(state=states.FAILURE, meta={'exc_type': 'BudgetExceededError', 'exc_message': str(e)})
-        raise Ignore()
-    except Exception as e:
-        logger.error(f"Unhandled error in round 4 for review {review_id}: {e}", exc_info=True)
-        storage_service.update_review(review_id, {"status": "failed", "final_report": {"error": "An unexpected error occurred."}})
-        raise
 
 @celery_app.task(bind=True, base=BaseTask, autoretry_for=(Exception,), retry_kwargs={'max_retries': 3}, retry_backoff=True)
 def generate_consolidated_report(
@@ -917,7 +802,7 @@ def generate_consolidated_report(
             panelist_reports.append({"persona": persona, "rounds": normalized_rounds})
 
         rounds_completed = ", ".join(f"Round {round_num}" for round_num in executed_rounds) or "None"
-        if executed_rounds and executed_rounds[-1] < 4:
+        if executed_rounds and executed_rounds[-1] < 3:
             rounds_completed = f"{rounds_completed} (stopped early)"
 
         user_prompt = prompt_service.get_prompt(
