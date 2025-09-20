@@ -10,7 +10,7 @@ import toast from 'react-hot-toast';
 import ReviewTimeline from '../components/review/ReviewTimeline';
 import DiscussionStoryboard from '../components/review/DiscussionStoryboard';
 
-const Review = ({ reviewId, isSplitView = false, createRoomMutation }) => {
+const Review = ({ reviewId, roomId, isSplitView = false, createRoomMutation }) => {
   const { sidebarOpen } = useAppContext();
   const navigate = useNavigate();
   const [liveMessages, setLiveMessages] = useState([]);
@@ -18,26 +18,52 @@ const Review = ({ reviewId, isSplitView = false, createRoomMutation }) => {
   const [statusEvents, setStatusEvents] = useState([]);
   const statusKeyRef = useRef(new Set());
 
-  const { data: review, isLoading } = useQuery({
-    queryKey: ['review', reviewId],
+  const { data: roomReviews = [], isLoading: isRoomReviewsLoading } = useQuery({
+    queryKey: ['roomReviews', roomId],
     queryFn: async () => {
-      const response = await apiClient.get(`/api/reviews/${reviewId}`);
+      if (!roomId) return [];
+      const response = await apiClient.get(`/api/rooms/${roomId}/reviews`);
+      return response.data || [];
+    },
+    enabled: !reviewId && !!roomId,
+    staleTime: 30 * 1000,
+  });
+
+  const effectiveReviewId = useMemo(() => {
+    if (reviewId) {
+      return reviewId;
+    }
+    if (Array.isArray(roomReviews) && roomReviews.length > 0) {
+      return roomReviews[0].review_id;
+    }
+    return null;
+  }, [reviewId, roomReviews]);
+
+  const { data: review, isLoading: isReviewLoading } = useQuery({
+    queryKey: ['review', effectiveReviewId],
+    queryFn: async () => {
+      if (!effectiveReviewId) return null;
+      const response = await apiClient.get(`/api/reviews/${effectiveReviewId}`);
       setReviewStatus(response.data.status);
       return response.data;
     },
-    enabled: !!reviewId,
+    enabled: !!effectiveReviewId,
   });
 
   const { data: historicalMessages = [] } = useQuery({
-    queryKey: ['messages', review?.room_id],
+    queryKey: ['messages', review?.room_id || roomId],
     queryFn: async () => {
-      if (!review?.room_id) return [];
-      const response = await apiClient.get(`/api/rooms/${review.room_id}/messages`);
+      const targetRoomId = review?.room_id || roomId;
+      if (!targetRoomId) return [];
+      const response = await apiClient.get(`/api/rooms/${targetRoomId}/messages`);
       return response.data || [];
     },
-    enabled: !!review?.room_id,
+    enabled: !!(review?.room_id || roomId),
     staleTime: 1000 * 60,
   });
+
+  const reviewRoomId = review?.room_id || roomId;
+  const isMetaLoading = isReviewLoading || (!effectiveReviewId && isRoomReviewsLoading);
 
   const extractPersona = useCallback((message) => {
     if (!message) return '패널';
@@ -141,7 +167,8 @@ const Review = ({ reviewId, isSplitView = false, createRoomMutation }) => {
     statusKeyRef.current = new Set();
     setStatusEvents([]);
     setLiveMessages([]);
-  }, [reviewId]);
+    setReviewStatus('loading');
+  }, [effectiveReviewId]);
 
   const recordStatusEvent = useCallback((status, ts) => {
     if (!status) return;
@@ -219,15 +246,15 @@ const Review = ({ reviewId, isSplitView = false, createRoomMutation }) => {
       return;
     }
     const tasks = parsedFinalReport.recommendations.map((item, idx) => ({
-      id: `${reviewId || review?.review_id || 'review'}-task-${idx + 1}`,
+      id: `${effectiveReviewId || review?.review_id || 'review'}-task-${idx + 1}`,
       title: `${review?.topic || '리뷰'} - 추천 ${idx + 1}`,
       description: item,
-      reviewId: reviewId,
+      reviewId: effectiveReviewId,
       source: 'Origin Review',
     }));
     const payload = {
       generated_at: new Date().toISOString(),
-      review_id: reviewId,
+      review_id: effectiveReviewId,
       topic: review?.topic,
       tasks,
     };
@@ -235,11 +262,11 @@ const Review = ({ reviewId, isSplitView = false, createRoomMutation }) => {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `review-${reviewId || review?.room_id}-tasks.json`;
+    link.download = `review-${effectiveReviewId || review?.room_id}-tasks.json`;
     link.click();
     URL.revokeObjectURL(url);
     toast.success('추천 작업 템플릿을 다운로드했습니다.');
-  }, [parsedFinalReport, reviewId, review]);
+  }, [effectiveReviewId, parsedFinalReport, review]);
 
   const eventHandlers = useMemo(() => ({
     live_event: (envelope) => {
@@ -267,7 +294,7 @@ const Review = ({ reviewId, isSplitView = false, createRoomMutation }) => {
     }
   }), [appendLiveMessage, recordStatusEvent]);
 
-  const sseUrl = reviewId ? `/api/reviews/${reviewId}/events` : null;
+  const sseUrl = effectiveReviewId ? `/api/reviews/${effectiveReviewId}/events` : null;
   useRealtimeChannel({
     url: sseUrl,
     events: eventHandlers,
@@ -304,10 +331,29 @@ const Review = ({ reviewId, isSplitView = false, createRoomMutation }) => {
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [navigate]);
 
-  if (isLoading) {
+  if (isMetaLoading) {
     return (
       <div className="flex items-center justify-center h-full">
         <div className="text-text">Loading review data...</div>
+      </div>
+    );
+  }
+
+  if (!effectiveReviewId) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <div className="text-center text-text">
+          <p className="text-body">이 룸과 연결된 검토 정보를 찾을 수 없습니다.</p>
+          <p className="text-meta text-muted mt-2">검토가 아직 생성 중이거나 초기화되지 않았을 수 있습니다.</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!review && !isReviewLoading) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <div className="text-text">검토 세부 정보를 불러오지 못했습니다.</div>
       </div>
     );
   }
@@ -401,7 +447,7 @@ const Review = ({ reviewId, isSplitView = false, createRoomMutation }) => {
           left: !isSplitView && sidebarOpen ? '280px' : '0px',
         }}
       >
-        <ChatInput roomId={review?.room_id} createRoomMutation={createRoomMutation} disabled={reviewStatus !== 'completed'} />
+        <ChatInput roomId={reviewRoomId} createRoomMutation={createRoomMutation} disabled={reviewStatus !== 'completed'} />
       </div>
     </div>
   );

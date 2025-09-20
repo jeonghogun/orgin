@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 import ChatView from '../components/conversation/ChatView';
 import MessageList from '../components/MessageList';
+import Review from './Review';
 import useRoomsQuery from '../hooks/useRoomsQuery';
 import { ROOM_TYPES } from '../constants';
 import LoadingSpinner from '../components/common/LoadingSpinner';
@@ -70,6 +71,10 @@ const Main = () => {
           ]}
         />
       );
+    }
+
+    if (currentRoom?.type === ROOM_TYPES.REVIEW) {
+      return <Review key={currentRoom.room_id} roomId={currentRoom.room_id} />;
     }
 
     if (threadId && roomId) {
