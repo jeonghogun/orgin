@@ -84,7 +84,12 @@ export CELERY_RESULT_BACKEND="redis://localhost:6380/0"
 export DB_ENCRYPTION_KEY="test-encryption-key-32-bytes-long"
 export TESTING="true"
 export PYTHONPATH=$PWD
-
-pytest tests/ -v
+if [ "${RUN_HEAVY_TESTS:-0}" = "1" ]; then
+  echo "⚙️  Including heavy E2E and Celery suites (RUN_HEAVY_TESTS=1)"
+  pytest -m "heavy or not heavy" tests/ -v
+else
+  echo "⚙️  Skipping heavy suites by default. Set RUN_HEAVY_TESTS=1 to include them."
+  pytest tests/ -v
+fi
 
 echo "✅ Test run completed!"

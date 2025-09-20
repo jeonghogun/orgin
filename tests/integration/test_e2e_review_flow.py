@@ -12,6 +12,8 @@ from app.tasks.review_tasks import (
     generate_consolidated_report,
 )
 
+pytestmark = pytest.mark.heavy
+
 @pytest.mark.e2e
 @patch("app.services.llm_service.ClaudeProvider.invoke", new_callable=AsyncMock)
 @patch("app.services.llm_service.GeminiProvider.invoke", new_callable=AsyncMock)

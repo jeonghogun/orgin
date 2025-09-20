@@ -27,7 +27,20 @@ const MetricsDashboard = () => {
 
   if (loading) return <LoadingSpinner />;
   if (error) return <ErrorMessage error={error} message="메트릭 대시보드를 불러올 수 없습니다." />;
-  if (!summary) return <EmptyState message="아직 메트릭 데이터가 없습니다." />;
+  if (!summary) {
+    return (
+      <EmptyState
+        heading="아직 수집된 메트릭이 없어요"
+        message="새 검토를 실행하면 처리량과 지표가 여기에 표시됩니다."
+        icon="📉"
+        tips={[
+          '검토를 생성한 뒤 이 화면으로 돌아오면 처리량과 토큰 사용량을 추적할 수 있습니다.',
+          '테스트 데이터를 사용 중이라면 REVIEW 탭에서 빠르게 리뷰를 실행해보세요.',
+        ]}
+        actions={[{ label: '지표 새로고침', onClick: fetchMetricsSummary }]}
+      />
+    );
+  }
 
   const formatDuration = (seconds) => {
     if (seconds < 60) return `${seconds.toFixed(1)}초`;

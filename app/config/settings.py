@@ -5,8 +5,8 @@ import os
 from typing import Optional, Dict, Any
 from urllib.parse import urlparse, urlunparse
 
-from pydantic_settings import BaseSettings
 from pydantic import model_validator, PostgresDsn, ValidationError
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 logger = logging.getLogger(__name__)
@@ -14,8 +14,14 @@ logger = logging.getLogger(__name__)
 DEFAULT_TEST_DB_ENCRYPTION_KEY = "test-encryption-key-32-bytes-long"
 
 
+_ENVIRONMENT = os.getenv("ENVIRONMENT", "development").lower()
+_ENV_FILE = ".env" if _ENVIRONMENT not in {"production", "prod"} else None
+
+
 class Settings(BaseSettings):
     """Application settings with environment variable support"""
+
+    model_config = SettingsConfigDict(env_file=_ENV_FILE, case_sensitive=True)
 
     # --- Database Configuration ---
     # Allow DATABASE_URL to be optional now
@@ -50,6 +56,8 @@ class Settings(BaseSettings):
         return v
 
     # --- General API Configuration ---
+    ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
+
     API_HOST: str = "127.0.0.1"
     API_PORT: int = 8000
     DEBUG: bool = False
@@ -141,8 +149,38 @@ class Settings(BaseSettings):
     CLOUD_STORAGE_SIGNED_URL_TTL: int = 3600  # 1 hour by default
     GCP_PROJECT_ID: Optional[str] = None
 
+    # --- Upload Validation ---
+    UPLOAD_STORAGE_DIR: str = "uploads"
+    UPLOAD_TEMP_DIR: Optional[str] = None
+    UPLOAD_ALLOWED_EXTENSIONS: list[str] = [
+        "txt",
+        "md",
+        "pdf",
+        "png",
+        "jpg",
+        "jpeg",
+        "gif",
+        "webp",
+        "csv",
+        "json",
+        "docx",
+        "pptx",
+    ]
+    UPLOAD_MAX_SIZE_MB: int = 25
+    UPLOAD_CHUNK_SIZE_BYTES: int = 1024 * 1024  # 1 MB
+    UPLOAD_SCAN_COMMAND: Optional[str] = None
+    UPLOAD_SCAN_TIMEOUT_SECONDS: int = 30
+
     # --- Rate Limiting ---
     RATE_LIMIT_PER_MINUTE: int = 60
+
+    # --- Real-time Delivery Guardrails ---
+    REALTIME_MAX_CONNECTIONS_PER_ROOM: int = 64
+    REALTIME_MAX_SSE_QUEUE_SIZE: int = 256
+    REALTIME_SEND_TIMEOUT_SECONDS: float = 3.0
+    REALTIME_SEND_MAX_RETRIES: int = 1
+    REALTIME_SEND_RETRY_BACKOFF_SECONDS: float = 0.5
+    REALTIME_DISCONNECT_ON_SLOW_CONSUMER: bool = True
 
     # --- Metrics and Alerting Configuration ---
     METRICS_ENABLED: bool = True
@@ -164,11 +202,6 @@ class Settings(BaseSettings):
 
     # --- Test Configuration ---
     ALLOW_TEST_DB_ENCRYPTION_KEY: bool = False
-
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
-
 
 TRUTHY_VALUES = {"1", "true", "yes", "on"}
 

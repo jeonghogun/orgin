@@ -6,8 +6,12 @@ import importlib
 import os
 import sys
 
+import pytest
 from celery import chain
 from celery.contrib.testing.worker import start_worker
+
+
+pytestmark = pytest.mark.heavy
 
 
 def _load_isolated_celery_app():

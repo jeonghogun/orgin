@@ -18,6 +18,8 @@ from app.services.export_service import ExportService
 # Test client
 client = TestClient(app)
 
+pytestmark = pytest.mark.heavy
+
 class TestConversationSystemE2E:
     """End-to-end tests for the conversation system"""
     

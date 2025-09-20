@@ -1,7 +1,4 @@
 import logging
-import shutil
-import uuid
-from pathlib import Path
 from typing import List, Optional
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
 
@@ -9,12 +6,13 @@ from app.models.conversation_schemas import Attachment
 from app.services.conversation_service import ConversationService, get_conversation_service
 from app.tasks.attachment_tasks import process_attachment
 from app.services.cloud_storage_service import get_cloud_storage_service
+from app.services.file_validation_service import (
+    FileValidationError,
+    get_file_validation_service,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
-UPLOAD_DIR = Path("uploads")
-UPLOAD_DIR.mkdir(exist_ok=True)
 
 @router.post("/uploads", response_model=List[Attachment], status_code=200)
 async def upload_file(
@@ -32,6 +30,7 @@ async def upload_file(
     if not uploads:
         raise HTTPException(status_code=400, detail="No files provided.")
 
+    validation_service = get_file_validation_service()
     cloud_storage = get_cloud_storage_service()
     created_attachments: List[Attachment] = []
 
@@ -39,13 +38,30 @@ async def upload_file(
         if not upload.filename:
             raise HTTPException(status_code=400, detail="No file name provided.")
 
-        unique_name = f"{uuid.uuid4().hex}_{upload.filename}"
-        file_location = UPLOAD_DIR / unique_name
         try:
-            with file_location.open("wb") as buffer:
-                shutil.copyfileobj(upload.file, buffer)
+            validation_service.ensure_extension_allowed(upload.filename)
+            unique_name = validation_service.generate_unique_name(upload.filename)
+        except FileValidationError as validation_error:
+            raise HTTPException(status_code=validation_error.status_code, detail=str(validation_error)) from validation_error
+
+        temp_path = validation_service.temp_path_for(unique_name)
+        try:
+            validation_service.write_upload_to_temp(upload, temp_path)
+            validation_service.scan_file(temp_path)
+            file_location = validation_service.promote_to_permanent_storage(temp_path, unique_name)
+        except FileValidationError as validation_error:
+            logger.warning("Upload rejected for %s: %s", upload.filename, validation_error)
+            temp_path.unlink(missing_ok=True)
+            raise HTTPException(status_code=validation_error.status_code, detail=str(validation_error)) from validation_error
+        except Exception as unexpected_error:
+            logger.error("Unexpected failure while storing upload %s", upload.filename, exc_info=True)
+            temp_path.unlink(missing_ok=True)
+            raise HTTPException(status_code=500, detail="Failed to persist uploaded file.") from unexpected_error
         finally:
-            upload.file.close()
+            try:
+                upload.file.close()
+            except Exception:
+                logger.debug("Upload file stream already closed for %s", upload.filename)
 
         storage_uri = None
         if cloud_storage.is_configured():

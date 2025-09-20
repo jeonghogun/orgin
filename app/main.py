@@ -194,7 +194,7 @@ app.include_router(uploads.router, prefix="/api")
 app.include_router(exports.router, prefix="/api/convo") # Align export routes with conversation namespace
 
 # Mount uploads directory. Nginx will not serve this, so FastAPI must.
-uploads_dir = "uploads"
+uploads_dir = settings.UPLOAD_STORAGE_DIR
 os.makedirs(uploads_dir, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")
 
