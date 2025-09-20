@@ -5,6 +5,12 @@ import { AppProvider } from './context/AppContext';
 import Main from './pages/Main';
 import ErrorBoundary from './components/common/ErrorBoundary';
 import useKeyboardShortcuts from './hooks/useKeyboardShortcuts';
+import {
+  canReadFromClipboard,
+  canWriteToClipboard,
+  readTextFromClipboard,
+  writeTextToClipboard,
+} from './utils/clipboard';
 
 // This component uses hooks that require Router context (like useNavigate)
 import GlobalSearchModal from './components/search/GlobalSearchModal';
@@ -16,20 +22,38 @@ function AppContent() {
 
   // Copy/Paste functionality remains the same
   const handleCopy = () => {
-    const selectedText = window.getSelection().toString();
-    if (selectedText) {
-      navigator.clipboard.writeText(selectedText).catch(err => console.error('Failed to copy text:', err));
+    if (!canWriteToClipboard()) {
+      console.warn('Clipboard API is not available for copying.');
+      return;
     }
+
+    const selectedText = typeof window !== 'undefined' ? window.getSelection()?.toString() : '';
+    if (!selectedText) {
+      return;
+    }
+
+    writeTextToClipboard(selectedText).catch((err) => {
+      console.warn('Failed to copy text:', err);
+    });
   };
 
   const handlePaste = () => {
-    navigator.clipboard.readText().then(text => {
-      const activeElement = document.activeElement;
-      if (activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA')) {
-        activeElement.value += text;
-        activeElement.dispatchEvent(new Event('input', { bubbles: true }));
-      }
-    }).catch(err => console.error('Failed to paste text:', err));
+    if (!canReadFromClipboard()) {
+      console.warn('Clipboard API is not available for pasting.');
+      return;
+    }
+
+    readTextFromClipboard()
+      .then((text) => {
+        const activeElement = document.activeElement;
+        if (activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA')) {
+          activeElement.value += text;
+          activeElement.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+      })
+      .catch((err) => {
+        console.warn('Failed to paste text:', err);
+      });
   };
 
   // Simplified shortcuts

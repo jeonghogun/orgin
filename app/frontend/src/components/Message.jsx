@@ -5,6 +5,7 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import remarkGfm from 'remark-gfm';
 import DiffViewModal from './conversation/DiffViewModal';
+import { canWriteToClipboard, writeTextToClipboard } from '../utils/clipboard';
 
 const Message = ({ message }) => {
   const [isHovered, setIsHovered] = useState(false);
@@ -16,7 +17,14 @@ const Message = ({ message }) => {
   const isUser = message.role === 'user';
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(message.content);
+    if (!canWriteToClipboard()) {
+      console.warn('Clipboard copy is not supported in this environment.');
+      return;
+    }
+
+    writeTextToClipboard(message.content || '').catch((error) => {
+      console.warn('Failed to copy message content:', error);
+    });
   };
 
   const Avatar = ({ role }) => (
@@ -33,7 +41,15 @@ const Message = ({ message }) => {
         <div className="flex items-center justify-between px-4 py-1 bg-gray-700 text-xs text-gray-300 rounded-t-md">
           <span>{lang}</span>
           <button
-            onClick={() => navigator.clipboard.writeText(String(children))}
+            onClick={() => {
+              if (!canWriteToClipboard()) {
+                console.warn('Clipboard copy is not supported in this environment.');
+                return;
+              }
+              writeTextToClipboard(String(children)).catch((error) => {
+                console.warn('Failed to copy code snippet:', error);
+              });
+            }}
             className="p-1 rounded hover:bg-gray-600"
           >
             Copy

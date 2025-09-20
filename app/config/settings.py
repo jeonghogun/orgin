@@ -202,6 +202,9 @@ class Settings(BaseSettings):
 
     # --- Test Configuration ---
     ALLOW_TEST_DB_ENCRYPTION_KEY: bool = False
+    AUTO_LAUNCH_TEST_SERVICES: bool = True
+    ALLOW_MISSING_TEST_SERVICES: bool = True
+    RUN_HEAVY_TESTS: bool = False
 
 TRUTHY_VALUES = {"1", "true", "yes", "on"}
 

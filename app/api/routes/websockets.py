@@ -147,6 +147,11 @@ async def websocket_room_endpoint(websocket: WebSocket, room_id: str):
         manager.disconnect(websocket, room_id)
 
 
+@router.websocket("/api/ws/rooms/{room_id}")
+async def websocket_room_endpoint_with_api_prefix(websocket: WebSocket, room_id: str):
+    await websocket_room_endpoint(websocket, room_id)
+
+
 @router.websocket("/ws/reviews/{review_id}")
 async def websocket_review_endpoint(websocket: WebSocket, review_id: str):
     storage_service: StorageService = get_storage_service()
@@ -178,3 +183,8 @@ async def websocket_review_endpoint(websocket: WebSocket, review_id: str):
         logger.error(f"Error in WebSocket for review {review_id}: {e}", exc_info=True)
         # Ensure connection is closed on error
         manager.disconnect(websocket, review_id)
+
+
+@router.websocket("/api/ws/reviews/{review_id}")
+async def websocket_review_endpoint_with_api_prefix(websocket: WebSocket, review_id: str):
+    await websocket_review_endpoint(websocket, review_id)

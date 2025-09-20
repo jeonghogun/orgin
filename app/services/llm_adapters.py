@@ -23,13 +23,22 @@ openai_client: Optional[openai.AsyncOpenAI]
 anthropic_client: Optional[AsyncAnthropic]
 
 if settings.OPENAI_API_KEY:
-    openai_client = openai.AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+    try:
+        # Try to create client without any additional parameters
+        openai_client = openai.AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+    except Exception as e:
+        logger.warning(f"Failed to initialize OpenAI client: {e}. Using None.")
+        openai_client = None
 else:
     openai_client = None
     logger.warning("OPENAI_API_KEY not configured; OpenAIAdapter will return mock responses.")
 
 if settings.ANTHROPIC_API_KEY:
-    anthropic_client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+    try:
+        anthropic_client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+    except Exception as e:
+        logger.warning(f"Failed to initialize Anthropic client: {e}. Using None.")
+        anthropic_client = None
 else:
     anthropic_client = None
     logger.info("ANTHROPIC_API_KEY not configured; AnthropicAdapter will operate in placeholder mode.")

@@ -20,7 +20,7 @@ from app.models.schemas import (
 )
 from app.models.enums import RoomType
 from app.utils.helpers import generate_id, get_current_timestamp
-from app.api.dependencies import get_llm_service
+from app.services.llm_service import get_llm_service
 from app.core.errors import InvalidRequestError
 
 # Import tasks to ensure they are registered

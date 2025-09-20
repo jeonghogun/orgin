@@ -1,17 +1,23 @@
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { canWriteToClipboard, writeTextToClipboard } from '../utils/clipboard';
 
 const ContextSummaryCard = ({ content }) => {
   if (!content) {
     return null;
   }
 
-  const handleCopy = () => {
+  const handleCopy = async () => {
+    if (!canWriteToClipboard()) {
+      console.warn('Clipboard copy is not supported in this environment.');
+      return;
+    }
+
     try {
-      navigator.clipboard.writeText(content);
+      await writeTextToClipboard(content);
     } catch (error) {
-      console.error('Failed to copy context summary:', error);
+      console.warn('Failed to copy context summary:', error);
     }
   };
 

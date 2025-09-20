@@ -7,6 +7,7 @@ import remarkGfm from 'remark-gfm';
 import rehypeKatex from 'rehype-katex';
 import 'katex/dist/katex.min.css';
 import { UserCircleIcon, CpuChipIcon, ClockIcon, ClipboardIcon, CheckIcon } from '@heroicons/react/24/solid';
+import { canWriteToClipboard, writeTextToClipboard } from '../../utils/clipboard';
 
 const BlinkingCursor = () => <span className="inline-block w-2 h-5 bg-blue-500 animate-blink" />;
 
@@ -56,10 +57,19 @@ const MessageCard = ({ message, onViewHistory, onRetry }) => {
                 const match = /language-(\w+)/.exec(className || '');
                 const codeText = String(children).replace(/\n$/, '');
 
-                const handleCopy = () => {
-                  navigator.clipboard.writeText(codeText);
-                  setIsCopied(true);
-                  setTimeout(() => setIsCopied(false), 2000);
+                const handleCopy = async () => {
+                  if (!canWriteToClipboard()) {
+                    console.warn('Clipboard copy is not supported in this environment.');
+                    return;
+                  }
+
+                  try {
+                    await writeTextToClipboard(codeText);
+                    setIsCopied(true);
+                    setTimeout(() => setIsCopied(false), 2000);
+                  } catch (error) {
+                    console.warn('Failed to copy code snippet:', error);
+                  }
                 };
 
                 return !inline && match ? (
