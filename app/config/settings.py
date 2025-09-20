@@ -52,7 +52,7 @@ class Settings(BaseSettings):
     # --- General API Configuration ---
     API_HOST: str = "127.0.0.1"
     API_PORT: int = 8000
-    DEBUG: bool = True
+    DEBUG: bool = False
     TESTING: bool = False
     CORS_ALLOWED_ORIGINS: str = "http://localhost:8000,http://127.0.0.1:8000,http://localhost:5173,http://127.0.0.1:5173"
 
@@ -167,6 +167,9 @@ class Settings(BaseSettings):
         case_sensitive = True
 
 
+TRUTHY_VALUES = {"1", "true", "yes", "on"}
+
+
 def _rewrite_url_with_overrides(url: str, host: Optional[str], port: Optional[str]) -> str:
     """Rewrite a URL's host/port components while preserving credentials and paths."""
 
@@ -262,8 +265,31 @@ def get_effective_celery_url() -> Optional[str]:
     return get_effective_redis_url()
 
 
+def _is_truthy(value: Optional[str]) -> bool:
+    return bool(value) and value.lower() in TRUTHY_VALUES
+
+
+def _should_allow_test_fallback() -> bool:
+    """Return True when it's explicitly safe to use the bundled test DB key."""
+
+    if os.getenv("PYTEST_CURRENT_TEST"):
+        return True
+
+    if _is_truthy(os.getenv("TESTING")):
+        return True
+
+    if _is_truthy(os.getenv("ALLOW_TEST_DB_ENCRYPTION_KEY")):
+        return True
+
+    env_name = os.getenv("ENVIRONMENT", "").lower()
+    if env_name in {"local", "development", "dev", "test"}:
+        return True
+
+    return False
+
+
 def _load_settings() -> Settings:
-    """Instantiate :class:`Settings`, providing a helpful fallback for tests."""
+    """Instantiate :class:`Settings`, providing a guarded fallback for tests."""
 
     try:
         return Settings()
@@ -275,16 +301,21 @@ def _load_settings() -> Settings:
         if not missing_encryption_key:
             raise
 
-        fallback_key = os.getenv("DB_ENCRYPTION_KEY")
-        if not fallback_key:
-            fallback_key = DEFAULT_TEST_DB_ENCRYPTION_KEY
-            logger.warning(
-                "DB_ENCRYPTION_KEY not provided; using built-in test key for local/test runs.",
+        if not _should_allow_test_fallback():
+            logger.error(
+                "DB_ENCRYPTION_KEY validation failed. Set DB_ENCRYPTION_KEY or explicitly "
+                "opt-in via ALLOW_TEST_DB_ENCRYPTION_KEY for local development runs.",
+                exc_info=True,
             )
-        else:
-            logger.warning(
-                "DB_ENCRYPTION_KEY loaded directly from environment for validation retry.",
-            )
+            raise RuntimeError(
+                "DB_ENCRYPTION_KEY must be configured. Provide a secure key or set "
+                "ALLOW_TEST_DB_ENCRYPTION_KEY=1 for local/test usage."
+            ) from exc
+
+        fallback_key = os.getenv("DB_ENCRYPTION_KEY") or DEFAULT_TEST_DB_ENCRYPTION_KEY
+        logger.warning(
+            "Using built-in test DB encryption key. Do not use this fallback in production environments.",
+        )
 
         return Settings(DB_ENCRYPTION_KEY=fallback_key)
 

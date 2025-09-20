@@ -120,6 +120,27 @@ OPENAI_API_KEY=your_openai_api_key
 GOOGLE_API_KEY=your_google_api_key
 GOOGLE_CSE_ID=your_custom_search_engine_id
 ENCRYPTION_KEY=$(openssl rand -base64 32)  # 운영 환경에서는 고정 키를 사용하세요
+# 로컬 개발만을 위해 내장된 테스트 DB 키를 사용하려면 (운영 금지)
+# ALLOW_TEST_DB_ENCRYPTION_KEY=1
+```
+
+### 필수 백그라운드 서비스
+
+Origin 백엔드는 다음 서비스를 전제로 동작합니다. 서비스가 실행되지 않으면 리뷰 생성, 큐 작업, 실시간 스트림이 실패합니다.
+
+1. **PostgreSQL** – 모든 메시지/리뷰 데이터를 저장합니다. 로컬에서는 Docker Compose의 `postgres` 또는 `pgbouncer` 서비스로 기동하거나, 자체 설치된 Postgres 15+ 인스턴스를 지정하세요.
+2. **Redis** – 캐시 및 Celery 브로커로 사용됩니다.
+3. **Celery 워커** – `app/celery_app.py`에서 정의된 비동기 작업을 처리합니다.
+
+빠른 로컬 실행 예시:
+
+```bash
+# Postgres와 Redis만 우선 기동
+docker compose up -d postgres redis
+
+# 별도 터미널에서 Celery 워커 실행
+export PYTHONPATH=$PWD
+celery -A app.celery_app.celery_app worker --loglevel=info
 ```
 
 ### 3. 애플리케이션 실행
@@ -177,7 +198,8 @@ http://127.0.0.1:8000/redoc # ReDoc
 | `AUTH_OPTIONAL` | 인증 생략 여부 (개발용) | False |
 | `API_HOST` | API 서버 호스트 | 127.0.0.1 |
 | `API_PORT` | API 서버 포트 | 8000 |
-| `DEBUG` | 디버그 모드 | True |
+| `DEBUG` | 디버그 모드 (로컬 개발 시에만 True 권장) | False |
+| `ALLOW_TEST_DB_ENCRYPTION_KEY` | 내장 테스트 DB 암호화 키 사용 허용 (로컬 전용) | False |
 
 ### 저장소 옵션
 - **파일 시스템**: 기본 저장 방식 (개발용)
@@ -206,23 +228,18 @@ http://127.0.0.1:8000/redoc # ReDoc
 
 ## 🧪 테스트
 
-### 전체 테스트 실행
+### 단위 테스트 (기본)
 ```bash
-# PYTHONPATH 설정이 필수적입니다.
 export PYTHONPATH=$PWD
-pytest tests/
+pytest
 ```
 
-### 단위 테스트
-```bash
-export PYTHONPATH=$PWD
-pytest tests/unit/
-```
+### 통합 테스트 (PostgreSQL & Redis 필요)
+기본적으로 통합 테스트는 누락된 인프라 때문에 실패하지 않도록 수집 단계에서 스킵됩니다. 의도적으로 실행하려면 서비스가 기동된 상태에서 `RUN_INTEGRATION_TESTS=1`을 설정하세요.
 
-### 통합 테스트
 ```bash
 export PYTHONPATH=$PWD
-pytest tests/integration/
+RUN_INTEGRATION_TESTS=1 pytest tests/integration/
 ```
 
 ## 📊 성능 최적화

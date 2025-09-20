@@ -23,6 +23,10 @@ from fastapi.testclient import TestClient
 # 프로젝트 루트를 Python 경로에 추가
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+# 보안 키 검증이 모듈 임포트 시 실패하지 않도록 테스트 키를 선주입합니다.
+os.environ.setdefault('ALLOW_TEST_DB_ENCRYPTION_KEY', '1')
+os.environ.setdefault('DB_ENCRYPTION_KEY', 'test-encryption-key-32-bytes-long')
+
 # TestContainerManager removed - using simple test environment
 from app.config.settings import Settings
 from app.core.secrets import SecretProvider
@@ -137,6 +141,7 @@ def isolated_test_env(test_environment):
         'POSTGRES_USER': 'test_user',
         'POSTGRES_PASSWORD': 'test_password',
         'POSTGRES_DB': 'test_origin_db',
+        'DB_ENCRYPTION_KEY': 'test-encryption-key-32-bytes-long',
         'PYTEST_CURRENT_TEST': 'true',
         'TEST_USER_ID': test_user_id,
         'AUTH_OPTIONAL': 'false'
