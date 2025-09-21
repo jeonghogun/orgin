@@ -2,7 +2,7 @@ import { useEffect, useRef, useCallback, useState, useMemo } from 'react';
 import { SSE } from 'sse.js';
 import { resolveApiUrl } from '../lib/apiClient';
 
-const MAX_RECONNECT_ATTEMPTS = 1;
+const MAX_RECONNECT_ATTEMPTS = 3;
 const INITIAL_RECONNECT_DELAY = 2000;
 
 /**
@@ -17,29 +17,39 @@ const useEventSource = (url, eventListeners, options = {}) => {
   const reconnectTimeoutRef = useRef(null);
   const reconnectAttemptsRef = useRef(0);
   const [status, setStatus] = useState('idle');
+  const [lastError, setLastError] = useState(null);
   const resolvedUrl = useMemo(() => (url ? resolveApiUrl(url) : null), [url]);
 
-  const closeConnection = useCallback(() => {
+  const closeConnection = useCallback((nextStatus = 'disconnected') => {
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
       eventSourceRef.current = null;
     }
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
     }
-    setStatus((prev) => (prev === 'idle' ? prev : 'disconnected'));
+    setStatus((prev) => {
+      if (prev === nextStatus) {
+        return prev;
+      }
+      if (prev === 'idle' && nextStatus === 'disconnected') {
+        return prev;
+      }
+      return nextStatus;
+    });
   }, []);
 
   const connect = useCallback(() => {
     if (!resolvedUrl) {
-      closeConnection();
-      setStatus('idle');
+      closeConnection('idle');
+      setLastError(null);
       return;
     }
 
-    closeConnection();
-
+    closeConnection('idle');
     setStatus('connecting');
+    setLastError(null);
 
     const shouldUsePolyfill = Boolean(
       options && (options.method && options.method !== 'GET' || options.payload || options.headers)
@@ -55,6 +65,7 @@ const useEventSource = (url, eventListeners, options = {}) => {
       console.log('SSE connection opened.');
       reconnectAttemptsRef.current = 0; // Reset attempts on successful connection
       setStatus('connected');
+      setLastError(null);
       if (eventListeners.open) {
         eventListeners.open();
       }
@@ -76,7 +87,8 @@ const useEventSource = (url, eventListeners, options = {}) => {
         eventListeners.done(e);
       }
       console.log('SSE stream "done" event received. Closing connection.');
-      closeConnection();
+      setLastError(null);
+      closeConnection('completed');
     });
 
     // Specific handler for application-level errors sent via the 'error' event
@@ -85,16 +97,17 @@ const useEventSource = (url, eventListeners, options = {}) => {
       if (eventListeners.error) {
         let errorData;
         try {
-            errorData = JSON.parse(e.data);
+          errorData = JSON.parse(e.data);
         } catch (jsonError) {
-            errorData = { error: 'Received an unparsable error event from server.' };
+          errorData = { error: 'Received an unparsable error event from server.' };
         }
-        eventListeners.error(new Error(errorData.error || 'An unknown error occurred in the stream.'));
+        const emittedError = new Error(errorData.error || 'An unknown error occurred in the stream.');
+        setLastError(emittedError);
+        eventListeners.error(emittedError);
       }
       console.error('SSE stream "error" event received. Closing connection.');
       // Don't reconnect on application-level errors
-      setStatus('failed');
-      closeConnection();
+      closeConnection('failed');
     });
 
     // --- Connection Error Handler ---
@@ -102,12 +115,10 @@ const useEventSource = (url, eventListeners, options = {}) => {
     // This handles network-level errors (e.g., server down)
     es.onerror = (e) => {
       console.error('SSE connection error:', e);
-      es.close(); // Ensure the errored connection is closed
+      closeConnection('disconnected');
 
-      // Don't reconnect if the error was a custom one we already handled
-      if (!eventSourceRef.current) {
-          return;
-      }
+      const transientError = new Error('실시간 연결이 일시적으로 끊어졌습니다.');
+      setLastError(transientError);
 
       if (reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS) {
         reconnectAttemptsRef.current++;
@@ -117,11 +128,12 @@ const useEventSource = (url, eventListeners, options = {}) => {
         reconnectTimeoutRef.current = setTimeout(connect, delay);
       } else {
         console.error('Max reconnection attempts reached.');
+        const finalError = new Error('Connection failed after multiple retries.');
+        setLastError(finalError);
         if (eventListeners.error) {
-          eventListeners.error(new Error('Connection failed after multiple retries.'));
+          eventListeners.error(finalError);
         }
-        setStatus('failed');
-        closeConnection();
+        closeConnection('failed');
       }
     };
 
@@ -134,12 +146,17 @@ const useEventSource = (url, eventListeners, options = {}) => {
   useEffect(() => {
     connect();
     return () => {
-      closeConnection();
+      closeConnection('idle');
     };
   }, [connect, closeConnection]);
 
-  // No return value needed, the hook manages the connection internally.
-  return { status };
+  const reconnect = useCallback(() => {
+    reconnectAttemptsRef.current = 0;
+    setLastError(null);
+    connect();
+  }, [connect]);
+
+  return { status, reconnect, error: lastError };
 };
 
 export default useEventSource;

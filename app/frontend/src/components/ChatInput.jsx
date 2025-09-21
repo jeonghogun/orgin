@@ -159,16 +159,26 @@ const ChatInput = ({ roomId, roomData, disabled = false }) => {
   const isLocalCreationMode = mode !== 'default';
   const showCancelButton = isRoomCreationActiveForRoom || isReviewRoomCreationActive || isLocalCreationMode;
 
-  const removePendingPromptMessage = useCallback(() => {
-    if (isRoomCreationActiveForRoom && roomCreationRequest?.promptMessageId) {
-      queryClient.setQueryData(['messages', roomCreationRequest.parentId], (old = []) => {
-        if (!Array.isArray(old)) {
+  const removePendingPromptMessage = useCallback(
+    (overrideParentId, overrideMessageId) => {
+      const targetParentId = overrideParentId ?? roomCreationRequest?.parentId;
+      const targetMessageId = overrideMessageId ?? roomCreationRequest?.promptMessageId;
+
+      if (!targetParentId || !targetMessageId) {
+        return;
+      }
+
+      queryClient.setQueryData(['messages', targetParentId], (old = []) => {
+        if (!Array.isArray(old) || old.length === 0) {
           return old;
         }
-        return old.filter((msg) => msg.message_id !== roomCreationRequest.promptMessageId);
+
+        const next = old.filter((msg) => msg.message_id !== targetMessageId);
+        return next.length === old.length ? old : next;
       });
-    }
-  }, [isRoomCreationActiveForRoom, queryClient, roomCreationRequest]);
+    },
+    [queryClient, roomCreationRequest]
+  );
 
   const handleCancelCreation = useCallback(() => {
     removePendingPromptMessage();
@@ -193,8 +203,10 @@ const ChatInput = ({ roomId, roomData, disabled = false }) => {
       const { data } = await apiClient.post('/api/rooms', { name, type, parent_id: parentId });
       return data;
     },
-    onSuccess: (newRoom) => {
+    onSuccess: (newRoom, variables) => {
       queryClient.invalidateQueries({ queryKey: ['rooms'] });
+      removePendingPromptMessage(variables?.parentId, variables?.promptMessageId);
+      clearRoomCreation();
       navigate(`/rooms/${newRoom.room_id}`);
     },
     onError: (error) => {
@@ -207,7 +219,8 @@ const ChatInput = ({ roomId, roomData, disabled = false }) => {
       const { data } = await apiClient.post(`/api/rooms/${parentId}/create-review-room`, { topic, history });
       return data;
     },
-    onSuccess: (data, { parentId }) => {
+    onSuccess: (data, variables) => {
+      const { parentId, promptMessageId } = variables || {};
       if (data.status === 'created') {
         queryClient.setQueryData(['rooms'], (oldRooms = []) => {
           if (!Array.isArray(oldRooms)) return oldRooms;
@@ -216,6 +229,7 @@ const ChatInput = ({ roomId, roomData, disabled = false }) => {
           return [...oldRooms, data.room];
         });
         navigate(`/rooms/${data.room.room_id}`);
+        removePendingPromptMessage(parentId, promptMessageId);
         clearRoomCreation();
         clearReviewRoomCreation();
       } else if (data.status === 'needs_more_context') {
@@ -280,7 +294,7 @@ const ChatInput = ({ roomId, roomData, disabled = false }) => {
     const trimmed = inputValue.trim();
     if (!trimmed || !roomId || streamMutation.isPending || disabled) return;
 
-    const submitInteractiveReview = (parentId, promptText) => {
+    const submitInteractiveReview = (parentId, promptText, promptMessageId) => {
       const isActive = reviewRoomCreation?.active && reviewRoomCreation.parentId === parentId;
       const baseHistory = isActive ? [...(reviewRoomCreation.history || [])] : [];
       const assistantEntry = promptText ? { role: 'assistant', content: promptText } : null;
@@ -313,6 +327,7 @@ const ChatInput = ({ roomId, roomData, disabled = false }) => {
         parentId,
         topic: trimmed,
         history: historyPayload,
+        promptMessageId,
       });
 
       resetState();
@@ -325,11 +340,15 @@ const ChatInput = ({ roomId, roomData, disabled = false }) => {
           name: trimmed,
           type: ROOM_TYPES.SUB,
           parentId: roomCreationRequest.parentId,
+          promptMessageId: roomCreationRequest.promptMessageId,
         });
-        clearRoomCreation();
         resetState();
       } else if (roomCreationRequest.type === ROOM_TYPES.REVIEW) {
-        submitInteractiveReview(roomCreationRequest.parentId, roomCreationRequest.promptText);
+        submitInteractiveReview(
+          roomCreationRequest.parentId,
+          roomCreationRequest.promptText,
+          roomCreationRequest.promptMessageId,
+        );
       }
       return;
     }

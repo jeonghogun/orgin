@@ -27,6 +27,7 @@ const Review = ({ reviewId, roomId, isSplitView = false, createRoomMutation }) =
   const [selectedReviewId, setSelectedReviewId] = useState(reviewId || null);
   const statusKeyRef = useRef(new Set());
   const { data: allRooms = [] } = useRoomsQuery();
+  const [sseError, setSseError] = useState(null);
 
   const currentRoomInfo = useMemo(
     () => allRooms.find((room) => room.room_id === roomId),
@@ -375,14 +376,31 @@ const Review = ({ reviewId, roomId, isSplitView = false, createRoomMutation }) =
   }), [appendLiveMessage, recordStatusEvent]);
 
   const sseUrl = effectiveReviewId ? `/api/reviews/${effectiveReviewId}/events` : null;
-  useRealtimeChannel({
+  const { status: connectionStatus, reconnect: reconnectStream } = useRealtimeChannel({
     url: sseUrl,
     events: eventHandlers,
     onError: (error) => {
       console.error('SSE Error:', error);
-      toast.error('Connection to live review updates failed. Please refresh the page.');
+      setSseError(error?.message || '실시간 검토 업데이트 연결이 끊어졌습니다.');
+      toast.error('실시간 검토 업데이트 연결이 끊어졌습니다. 다시 연결을 시도해주세요.');
     },
   });
+
+  const shouldShowReconnectNotice = useMemo(
+    () => Boolean(sseError) || ['failed', 'disconnected', 'reconnecting'].includes(connectionStatus),
+    [connectionStatus, sseError]
+  );
+
+  const handleReconnectClick = useCallback(() => {
+    setSseError(null);
+    reconnectStream?.();
+  }, [reconnectStream]);
+
+  useEffect(() => {
+    if (connectionStatus === 'connected' || connectionStatus === 'completed' || connectionStatus === 'idle') {
+      setSseError(null);
+    }
+  }, [connectionStatus]);
 
 
   useEffect(() => {
@@ -447,6 +465,26 @@ const Review = ({ reviewId, roomId, isSplitView = false, createRoomMutation }) =
           showBackButton={!isSplitView}
         />
       </div>
+
+      {shouldShowReconnectNotice && (
+        <div className="px-4 pt-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">
+            <span className="flex-1 min-w-[220px]">
+              {connectionStatus === 'reconnecting'
+                ? '실시간 업데이트에 다시 연결 중입니다...'
+                : sseError || '실시간 업데이트 연결이 끊어졌습니다.'}
+            </span>
+            <button
+              type="button"
+              onClick={handleReconnectClick}
+              disabled={connectionStatus === 'reconnecting'}
+              className="rounded-md border border-danger/40 px-3 py-1 text-xs font-semibold text-danger hover:bg-danger/10 focus-ring disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              다시 연결
+            </button>
+          </div>
+        </div>
+      )}
 
       {reviewOptions.length > 0 && (
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 bg-panel/40 px-4 py-3">
