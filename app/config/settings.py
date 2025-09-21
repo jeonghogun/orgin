@@ -61,6 +61,7 @@ class Settings(BaseSettings):
     API_HOST: str = "127.0.0.1"
     API_PORT: int = 8000
     DEBUG: bool = False
+    EXPOSE_DEBUG_ENDPOINTS: bool = False
     TESTING: bool = False
     CORS_ALLOWED_ORIGINS: str = "http://localhost:8000,http://127.0.0.1:8000,http://localhost:5173,http://127.0.0.1:5173"
 

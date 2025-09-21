@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo, useCallback } from 'react';
+import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import PropTypes from 'prop-types';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import apiClient, { resolveApiUrl } from '../../lib/apiClient';
@@ -17,12 +17,16 @@ const ROOM_TYPE_LABELS = {
   [ROOM_TYPES.REVIEW]: '검토 룸',
 };
 
+const AUTO_RETRY_LIMIT = 1;
+const AUTO_RETRY_DELAY_MS = 1200;
+
 const ChatView = ({ threadId, currentRoom }) => {
   const [attachments, setAttachments] = useState([]);
   const [viewingMessageHistory, setViewingMessageHistory] = useState(null);
   const [exportJob, setExportJob] = useState(null);
   const [activeStreamUrl, setActiveStreamUrl] = useState(null);
   const [activeMessageId, setActiveMessageId] = useState(null);
+  const autoRetryTimeoutRef = useRef(null);
 
   const messages = useMessages(threadId);
   const { model, temperature, maxTokens } = useGenerationSettings();
@@ -143,16 +147,40 @@ const ChatView = ({ threadId, currentRoom }) => {
 
   const handleStreamError = useCallback((error) => {
     console.error('Streaming error received:', error);
+
+    const targetMessage = messages.find((message) => message.id === activeMessageId);
+    const nextAttemptCount = (targetMessage?.meta?.retryAttempts ?? 0) + 1;
+
     if (activeMessageId) {
       markMessageError(threadId, activeMessageId, error.message || streamErrorFallback, streamErrorFallback);
     }
-    toast.error(error.message || streamErrorFallback);
+
+    const displayMessage = error.message || streamErrorFallback;
+    toast.error(displayMessage);
+
+    if (autoRetryTimeoutRef.current) {
+      clearTimeout(autoRetryTimeoutRef.current);
+      autoRetryTimeoutRef.current = null;
+    }
+
+    const isManualRetry = Boolean(targetMessage?.meta?.retryOf);
+
+    if (targetMessage?.meta?.retryPayload && !isManualRetry && nextAttemptCount <= AUTO_RETRY_LIMIT) {
+      const toastId = `auto-retry-${activeMessageId}`;
+      toast.loading('끊어진 응답을 다시 요청하는 중입니다...', { id: toastId });
+      autoRetryTimeoutRef.current = setTimeout(() => {
+        handleRetry(targetMessage);
+        toast.success('응답을 다시 요청했어요.', { id: toastId });
+        autoRetryTimeoutRef.current = null;
+      }, AUTO_RETRY_DELAY_MS);
+    }
+
     setActiveMessageId(null);
     setActiveStreamUrl(null);
     if (threadId) {
       queryClient.invalidateQueries({ queryKey: ['messages', threadId] });
     }
-  }, [activeMessageId, markMessageError, queryClient, streamErrorFallback, threadId]);
+  }, [activeMessageId, handleRetry, markMessageError, messages, queryClient, streamErrorFallback, threadId]);
 
   const streamEventHandlers = useMemo(() => ({
     delta: (envelope) => {
@@ -195,6 +223,14 @@ const ChatView = ({ threadId, currentRoom }) => {
   }), [activeMessageId, appendStreamChunk, markMessageError, queryClient, setMessageStatus, streamErrorFallback, threadId]);
 
   useRealtimeChannel({ url: activeStreamUrl, events: streamEventHandlers, onError: handleStreamError });
+
+  useEffect(() => {
+    return () => {
+      if (autoRetryTimeoutRef.current) {
+        clearTimeout(autoRetryTimeoutRef.current);
+      }
+    };
+  }, []);
 
   // --- Other Actions ---
 

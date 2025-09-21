@@ -100,8 +100,14 @@ const useConversationStore = create(
         if (!threadMessages) return;
         const message = threadMessages.find((m) => m.id === messageId);
         if (message) {
+          const previousMeta = message.meta || {};
+          const previousAttempts = typeof previousMeta.retryAttempts === 'number' ? previousMeta.retryAttempts : 0;
           message.status = 'error';
-          message.meta = { ...(message.meta || {}), error: errorMessage };
+          message.meta = {
+            ...previousMeta,
+            error: errorMessage,
+            retryAttempts: previousAttempts + 1,
+          };
           if (typeof fallbackContent === 'string') {
             message.content = fallbackContent;
           }

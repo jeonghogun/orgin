@@ -823,8 +823,47 @@ def clean_authenticated_client(isolated_test_env, test_user_id: str):
     current_app.conf.task_always_eager = True
     current_app.conf.result_backend = None
     current_app.conf.broker_url = None
-    
+
     return client
+
+
+@pytest.fixture(scope="function")
+def celery_review_client(clean_authenticated_client, monkeypatch):
+    """Provide an authenticated client that executes the Celery review chain eagerly."""
+
+    from app.main import app
+    from app.api.dependencies import get_review_service as dep_get_review_service
+    from app.services.review_service import ReviewService
+    from app.api import dependencies as deps_module
+    from app.celery_app import celery_app
+    from app.tasks import review_tasks
+
+    previous_always_eager = celery_app.conf.task_always_eager
+    previous_store_eager = celery_app.conf.task_store_eager_result
+    previous_result_backend = celery_app.conf.result_backend
+    previous_broker_url = celery_app.conf.broker_url
+
+    celery_app.conf.task_always_eager = True
+    celery_app.conf.task_store_eager_result = False
+    celery_app.conf.result_backend = None
+    celery_app.conf.broker_url = None
+
+    monkeypatch.setattr(review_tasks.redis_pubsub_manager, "publish_sync", lambda *args, **kwargs: None)
+    if hasattr(review_tasks.realtime_service, "publish"):
+        monkeypatch.setattr(review_tasks.realtime_service, "publish", lambda *args, **kwargs: None)
+
+    storage_service = deps_module.get_storage_service()
+    real_review_service = ReviewService(storage_service)
+    app.dependency_overrides[dep_get_review_service] = lambda: real_review_service
+
+    try:
+        yield clean_authenticated_client
+    finally:
+        app.dependency_overrides.pop(dep_get_review_service, None)
+        celery_app.conf.task_always_eager = previous_always_eager
+        celery_app.conf.task_store_eager_result = previous_store_eager
+        celery_app.conf.result_backend = previous_result_backend
+        celery_app.conf.broker_url = previous_broker_url
 
 # 테스트 실행 전후 정리
 @pytest.fixture(autouse=True, scope="function")

@@ -4,14 +4,32 @@ set -euo pipefail
 
 echo "🧪 Setting up test environment..."
 
+missing_tools=()
 if ! command -v docker-compose >/dev/null 2>&1; then
-  echo "❌ docker-compose is required to run the test environment" >&2
-  exit 1
+  missing_tools+=("docker-compose")
 fi
 
 if ! command -v psql >/dev/null 2>&1; then
-  echo "❌ psql (PostgreSQL client) is required" >&2
-  exit 1
+  missing_tools+=("psql")
+fi
+
+if [ ${#missing_tools[@]} -gt 0 ]; then
+  echo "⚠️  Missing dependencies: ${missing_tools[*]}" >&2
+  echo "⚠️  Running lightweight unit test subset without containerised services."
+
+  echo "🧱 Ensuring local virtual environment..."
+  if [ ! -d ".venv" ]; then
+    python3 -m venv .venv
+  fi
+  # shellcheck disable=SC1091
+  source .venv/bin/activate
+  python -m pip install --upgrade pip
+  python -m pip install -r requirements-dev.txt
+
+  export LIGHTWEIGHT_TEST_RUN=1
+  export PYTHONPATH=$PWD
+  pytest -m "not heavy" tests/unit -v
+  exit 0
 fi
 
 cleanup() {

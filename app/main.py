@@ -259,7 +259,10 @@ from app.api.dependencies import require_role
 # Debug endpoint
 @app.get("/api/debug/env", dependencies=[Depends(require_role("admin"))])
 async def debug_env() -> Dict[str, Any]:
-    """Debug environment variables (Admin only)"""
+    """Return safe debug metadata when explicitly enabled."""
+    if not settings.EXPOSE_DEBUG_ENDPOINTS:
+        raise HTTPException(status_code=404, detail="Not found")
+
     return {
         "openai_api_key_set": bool(settings.OPENAI_API_KEY),
         "openai_api_key_length": (
