@@ -1,3 +1,6 @@
+import re
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 class TestRoomsAPI:
@@ -48,6 +51,39 @@ class TestRoomsAPI:
         assert data["room_id"] == room_id
         assert len(data["messages"]) > 0
         assert data["messages"][0]["content"] == "Export this message"
+
+    def test_file_upload_creates_message(self, authenticated_client: TestClient):
+        """Uploading a file should create a persisted chat message with a download link."""
+        room_id = "room_main_1"
+        file_content = b"hello from origin"
+
+        response = authenticated_client.post(
+            f"/api/rooms/{room_id}/upload",
+            files={"file": ("notes.txt", file_content, "text/plain")},
+        )
+        assert response.status_code == 200
+
+        payload = response.json()
+        assert payload["room_id"] == room_id
+        assert payload["role"] == "user"
+        assert "notes.txt" in payload["content"]
+        assert "/uploads/" in payload["content"]
+
+        # Uploaded messages should be retrievable via the messages endpoint
+        messages_res = authenticated_client.get(f"/api/rooms/{room_id}/messages")
+        assert messages_res.status_code == 200
+        messages = messages_res.json()
+        assert any(msg["message_id"] == payload["message_id"] for msg in messages)
+
+        # Confirm that the referenced file exists on disk and clean it up after the test
+        match = re.search(r"\(/uploads/([^\)]+)\)", payload["content"])
+        assert match, "Expected upload URL in message content"
+        uploaded_relative = match.group(1)
+        uploaded_path = Path(uploaded_relative)
+        if not uploaded_path.is_absolute():
+            uploaded_path = Path.cwd() / uploaded_path
+        assert uploaded_path.exists()
+        uploaded_path.unlink(missing_ok=True)
 
     def test_health_check(self, authenticated_client: TestClient):
         """Test health check endpoint."""

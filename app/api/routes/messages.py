@@ -5,6 +5,7 @@ import json
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Request, Depends, File, UploadFile
 from sse_starlette.sse import EventSourceResponse
@@ -46,6 +47,11 @@ from app.utils.helpers import (
 from app.models.schemas import Message
 from app.config.settings import settings
 from app.services.realtime_service import get_realtime_service, RealtimeService
+from app.services.file_validation_service import (
+    FileValidationError,
+    get_file_validation_service,
+)
+from app.services.cloud_storage_service import get_cloud_storage_service
 from app.services.message_pipeline import (
     MessagePipeline,
     build_fact_query_response,
@@ -490,14 +496,121 @@ async def get_message_versions_api(
     return [MessageVersion(**row) for row in versions_data]
 
 
+def _format_file_size(num_bytes: int) -> str:
+    """Return a human-readable string for a file size."""
+
+    size = float(num_bytes)
+    for unit in ["B", "KB", "MB", "GB", "TB"]:
+        if size < 1024 or unit == "TB":
+            if unit == "B":
+                return f"{int(size)} {unit}"
+            return f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} TB"
+
+
 @router.post("/{room_id}/upload", response_model=Message)
 async def upload_file(
     room_id: str,
     file: UploadFile = File(...),
-    current_user: dict = Depends(require_auth)
+    current_user: dict = Depends(require_auth),
+    storage_service: StorageService = Depends(get_storage_service),
+    realtime_service: RealtimeService = Depends(get_realtime_service),
 ):
-    """
-    Upload a file to a room (placeholder implementation).
-    """
-    # TODO: Implement file upload functionality
-    raise HTTPException(status_code=501, detail="File upload not yet implemented")
+    """Handle file uploads within a room and broadcast the resulting message."""
+
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    room = storage_service.get_room(room_id)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+    if not settings.AUTH_OPTIONAL and room.owner_id != user_id:
+        raise HTTPException(status_code=403, detail="You do not have access to this room")
+
+    if not file or not file.filename:
+        raise HTTPException(status_code=400, detail="A file must be provided")
+
+    validation_service = get_file_validation_service()
+    cloud_storage = get_cloud_storage_service()
+
+    try:
+        validation_service.ensure_extension_allowed(file.filename)
+        unique_name = validation_service.generate_unique_name(file.filename)
+    except FileValidationError as validation_error:
+        raise HTTPException(status_code=validation_error.status_code, detail=str(validation_error)) from validation_error
+
+    temp_path = validation_service.temp_path_for(unique_name)
+    final_path = None
+
+    try:
+        validation_service.write_upload_to_temp(file, temp_path)
+        validation_service.scan_file(temp_path)
+        final_path = validation_service.promote_to_permanent_storage(temp_path, unique_name)
+    except FileValidationError as validation_error:
+        temp_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=validation_error.status_code, detail=str(validation_error)) from validation_error
+    except Exception as unexpected_error:  # pragma: no cover - defensive logging
+        logger.error("Failed to persist uploaded file %s: %s", file.filename, unexpected_error, exc_info=True)
+        temp_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail="Failed to persist uploaded file") from unexpected_error
+    finally:
+        try:
+            file.file.close()
+        except Exception:
+            logger.debug("Upload file stream already closed for %s", file.filename)
+
+    storage_uri = None
+    if cloud_storage.is_configured():
+        storage_uri = cloud_storage.upload_file(final_path, f"attachments/{unique_name}")
+        if storage_uri:
+            logger.info("Stored uploaded file %s in cloud storage as %s", file.filename, storage_uri)
+
+    signed_url = None
+    if storage_uri:
+        signed_url = cloud_storage.generate_signed_url(storage_uri)
+
+    local_url = None
+    if final_path:
+        quoted_name = quote(final_path.name)
+        local_url = f"/uploads/{quoted_name}"
+    download_path = signed_url or local_url or ""
+    if not download_path:
+        raise HTTPException(status_code=500, detail="Failed to determine download location for uploaded file")
+    mime_type = file.content_type or "application/octet-stream"
+    file_size = final_path.stat().st_size if final_path else 0
+    formatted_size = _format_file_size(file_size)
+
+    original_name = file.filename or "uploaded-file"
+    display_name = original_name.replace("[", "\\[").replace("]", "\\]").replace("(", "\\(").replace(")", "\\)")
+
+    content_lines = [
+        f"**파일 업로드:** [{display_name}]({download_path})",
+        f"- 크기: {formatted_size}",
+        f"- 형식: {mime_type}",
+    ]
+    content = "\n".join(content_lines)
+
+    message = Message(
+        message_id=generate_id(),
+        room_id=room_id,
+        user_id=user_id,
+        content=content,
+        timestamp=get_current_timestamp(),
+        role="user",
+    )
+
+    try:
+        storage_service.save_message(message)
+    except Exception as exc:
+        logger.error("Failed to save upload message for room %s: %s", room_id, exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to persist uploaded message") from exc
+
+    stored_message = storage_service.get_message(message.message_id)
+    if not stored_message:
+        raise HTTPException(status_code=500, detail="Uploaded message not found")
+
+    await realtime_service.publish(room_id, "new_message", stored_message.model_dump())
+
+    return stored_message

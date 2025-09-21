@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback, memo } from 'react';
+import React, { useState, useCallback, memo } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import apiClient from '../lib/apiClient';
 import { Link, useNavigate, useParams } from 'react-router-dom';
@@ -8,36 +8,9 @@ import { useAppContext } from '../context/AppContext';
 import RenameRoomModal from './modals/RenameRoomModal';
 import DeleteConfirmationModal from './modals/DeleteConfirmationModal';
 import useRoomsQuery from '../hooks/useRoomsQuery';
+import useRoomHierarchy from '../hooks/useRoomHierarchy';
 
-const buildRoomHierarchy = (rooms) => {
-  if (!Array.isArray(rooms) || rooms.length === 0) {
-    return [];
-  }
-  try {
-    const roomMap = new Map();
-    const validRooms = rooms.filter(room => room && room.room_id);
-    
-    validRooms.forEach(room => {
-      room.children = [];
-      roomMap.set(room.room_id, room);
-    });
-
-    const hierarchy = [];
-    validRooms.forEach(room => {
-      if (room.parent_id && roomMap.has(room.parent_id)) {
-        roomMap.get(room.parent_id)?.children.push(room);
-      } else {
-        hierarchy.push(room);
-      }
-    });
-    return hierarchy;
-  } catch (error) {
-    console.error('buildRoomHierarchy error:', error);
-    return [];
-  }
-};
-
-const RoomItem = memo(({ room, level, parentRoom = null, onRenameClick, onDeleteClick, onCreateSubRoom, onCreateReviewRoom }) => {
+const RoomItem = memo(({ room, level, onRenameClick, onDeleteClick, onCreateSubRoom, onCreateReviewRoom }) => {
   const { handleRoomSelect } = useAppContext();
   const { roomId: activeRoomId } = useParams();
   const [isMenuOpen, setMenuOpen] = useState(false);
@@ -161,7 +134,6 @@ const RoomItem = memo(({ room, level, parentRoom = null, onRenameClick, onDelete
               key={child.room_id}
               room={child}
               level={level + 1}
-              parentRoom={room}
               onRenameClick={onRenameClick}
               onDeleteClick={onDeleteClick}
               onCreateSubRoom={onCreateSubRoom}
@@ -175,7 +147,7 @@ const RoomItem = memo(({ room, level, parentRoom = null, onRenameClick, onDelete
 });
 
 const Sidebar = memo(() => {
-  const { sidebarOpen, setSidebarOpen, showError, handleRoomSelect } = useAppContext();
+  const { sidebarOpen, setSidebarOpen, showError } = useAppContext();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
@@ -183,6 +155,7 @@ const Sidebar = memo(() => {
   const [deletingRoom, setDeletingRoom] = useState(null);
 
   const { data: rooms = [], error, isLoading } = useRoomsQuery();
+  const hierarchicalRooms = useRoomHierarchy(rooms);
 
 
   const renameMutation = useMutation({
@@ -213,9 +186,6 @@ const Sidebar = memo(() => {
     },
   });
 
-
-  const hierarchicalRooms = useMemo(() => buildRoomHierarchy(rooms), [rooms]);
-
   const handleCreateSubRoom = useCallback((parentId) => {
     const promptText = "어떤 세부룸을 만들까요?";
     const promptMessageId = `ai_prompt_${Date.now()}`;
@@ -230,7 +200,7 @@ const Sidebar = memo(() => {
         timestamp: Math.floor(Date.now() / 1000),
       }
     ]);
-  }, [startRoomCreation, queryClient]);
+  }, [queryClient]);
 
   const handleCreateReviewRoom = useCallback((parentId) => {
     const promptText = "어떤 주제로 검토룸을 열까요?";
@@ -246,7 +216,7 @@ const Sidebar = memo(() => {
         timestamp: Math.floor(Date.now() / 1000),
       }
     ]);
-  }, [startRoomCreation, queryClient]);
+  }, [queryClient]);
 
   const handleRenameClick = useCallback((room) => setRenamingRoom(room), []);
   const handleDeleteClick = useCallback((room) => setDeletingRoom(room), []);

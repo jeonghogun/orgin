@@ -1,43 +1,14 @@
 import React, { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 
 import apiClient from '../lib/apiClient';
+import useRoomsQuery from '../hooks/useRoomsQuery';
+import useRoomHierarchy from '../hooks/useRoomHierarchy';
 
 import LoadingSpinner from './common/LoadingSpinner';
 import ErrorMessage from './common/ErrorMessage';
 import EmptyState from './common/EmptyState';
-
-const fetchRooms = async () => {
-  const { data } = await apiClient.get('/api/rooms');
-  return data;
-};
-
-const buildRoomHierarchy = (rooms) => {
-  if (!rooms) return [];
-  const roomMap = new Map();
-  rooms.forEach(room => {
-    room.children = [];
-    roomMap.set(room.room_id, room);
-  });
-
-  const hierarchy = [];
-  rooms.forEach(room => {
-    if (room.parent_id) {
-      const parent = roomMap.get(room.parent_id);
-      if (parent) {
-        parent.children.push(room);
-      } else {
-        // In case parent is not in the list, treat it as a root
-        hierarchy.push(room);
-      }
-    } else {
-      hierarchy.push(room);
-    }
-  });
-
-  return hierarchy;
-};
 
 const updateRoomName = async ({ roomId, name }) => {
   const { data } = await apiClient.patch(`/api/rooms/${roomId}`, { name });
@@ -123,10 +94,8 @@ const RoomList = ({ onRoomSelect }) => {
   const [editingRoomId, setEditingRoomId] = useState(null);
   const [editingName, setEditingName] = useState('');
 
-  const { data: rooms, error, isLoading } = useQuery({
-    queryKey: ['rooms'],
-    queryFn: fetchRooms,
-  });
+  const { data: rooms = [], error, isLoading } = useRoomsQuery();
+  const hierarchicalRooms = useRoomHierarchy(rooms);
 
   const mutation = useMutation({
     mutationFn: updateRoomName,
@@ -157,8 +126,6 @@ const RoomList = ({ onRoomSelect }) => {
     if (error) {
       return <ErrorMessage error={error} message="룸 목록을 불러올 수 없습니다." />;
     }
-
-    const hierarchicalRooms = buildRoomHierarchy(rooms);
 
     if (hierarchicalRooms.length === 0) {
       return (

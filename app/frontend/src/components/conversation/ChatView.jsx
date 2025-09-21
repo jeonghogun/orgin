@@ -9,8 +9,15 @@ import ChatTimeline from './ChatTimeline';
 import Composer from './Composer';
 import DiffViewModal from './DiffViewModal';
 import toast from 'react-hot-toast';
+import { ROOM_TYPES } from '../../constants';
 
-const ChatView = ({ threadId }) => {
+const ROOM_TYPE_LABELS = {
+  [ROOM_TYPES.MAIN]: '메인 룸',
+  [ROOM_TYPES.SUB]: '세부 룸',
+  [ROOM_TYPES.REVIEW]: '검토 룸',
+};
+
+const ChatView = ({ threadId, currentRoom }) => {
   const [attachments, setAttachments] = useState([]);
   const [viewingMessageHistory, setViewingMessageHistory] = useState(null);
   const [exportJob, setExportJob] = useState(null);
@@ -249,9 +256,22 @@ const ChatView = ({ threadId }) => {
 
   const headerActions = [{ label: 'Export as ZIP', onClick: () => createExportJobMutation.mutate('zip'), variant: 'secondary' }];
 
+  const headerTitle = currentRoom?.name || '대화 스레드';
+  const headerSubtitle = useMemo(() => {
+    const parts = [];
+    if (currentRoom?.type) {
+      const typeLabel = ROOM_TYPE_LABELS[currentRoom.type] || '대화 스레드';
+      parts.push(typeLabel);
+    }
+    if (threadId) {
+      parts.push(`Thread ID: ${threadId}`);
+    }
+    return parts.length > 0 ? parts.join(' · ') : undefined;
+  }, [currentRoom, threadId]);
+
   return (
     <div className="flex flex-col h-full bg-white dark:bg-gray-800">
-      <RoomHeader title={`Thread`} subtitle={threadId} actions={headerActions} />
+      <RoomHeader title={headerTitle} subtitle={headerSubtitle} actions={headerActions} />
 
       {exportJob && (
         <div className="p-2 text-center bg-blue-100 dark:bg-blue-900 text-sm text-blue-800 dark:text-blue-200">
@@ -298,6 +318,12 @@ const ChatView = ({ threadId }) => {
 
 ChatView.propTypes = {
   threadId: PropTypes.string,
+  currentRoom: PropTypes.shape({
+    room_id: PropTypes.string,
+    name: PropTypes.string,
+    type: PropTypes.string,
+    parent_id: PropTypes.string,
+  }),
 };
 
 export default ChatView;
