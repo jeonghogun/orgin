@@ -75,15 +75,11 @@ async def test_websocket_auth_failure_wrong_owner(authenticated_client: TestClie
         mock_verify_token.return_value = {"uid": "other-user"}
         token = "mocked-token-for-other-user"
 
-        # Since the _NoOpReviewService allows all connections, we need to test
-        # that the websocket connection is established but then verify the user
-        # is not the owner through other means
-        with authenticated_client.websocket_connect(f"/ws/reviews/{review_id}", subprotocols=["graphql-ws", token]) as websocket:
-            # The connection should be established but the user should not have access
-            # to the review data since they don't own it
-            websocket.close()
-        
-        # For now, we'll just verify the connection was established
-        # In a real implementation, we would check that the user cannot access
-        # the review data or that the websocket disconnects after authentication
-        assert True  # Connection was established
+        with pytest.raises(WebSocketDisconnect) as excinfo:
+            with authenticated_client.websocket_connect(
+                f"/ws/reviews/{review_id}",
+                subprotocols=["graphql-ws", token],
+            ):
+                pass
+
+        assert excinfo.value.code == 1008

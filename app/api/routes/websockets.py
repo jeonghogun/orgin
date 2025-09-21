@@ -56,10 +56,31 @@ async def websocket_review_endpoint(websocket: WebSocket, review_id: str):
     try:
         user_id = await require_auth_ws(websocket)
         review = storage_service.get_review_meta(review_id)
-        # Skip ownership check if AUTH_OPTIONAL is enabled
-        if not settings.AUTH_OPTIONAL and not review:
+
+        if not review:
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             logger.warning(f"Auth failed for WS to review {review_id}: Review not found.")
+            return
+
+        review_room = storage_service.get_room(review.room_id)
+        if not review_room:
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            logger.warning(
+                "Auth failed for WS to review %s: Review room %s not found.",
+                review_id,
+                review.room_id,
+            )
+            return
+
+        # Skip ownership check only if AUTH_OPTIONAL is enabled
+        if not settings.AUTH_OPTIONAL and review_room.owner_id != user_id:
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            logger.warning(
+                "Auth failed for WS to review %s: User %s does not own room %s.",
+                review_id,
+                user_id,
+                review.room_id,
+            )
             return
 
         # Use the review_id as the channel id for review websockets

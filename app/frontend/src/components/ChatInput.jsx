@@ -4,7 +4,15 @@ import { useNavigate } from 'react-router-dom';
 import { SSE } from 'sse.js';
 import apiClient, { resolveApiUrl } from '../lib/apiClient';
 import { useAppContext } from '../context/AppContext';
-import { useRoomCreationRequest, clearRoomCreation, useReviewRoomCreation, clearReviewRoomCreation } from '../store/useConversationStore';
+import {
+  useRoomCreationRequest,
+  clearRoomCreation,
+  useReviewRoomCreation,
+  clearReviewRoomCreation,
+  startRoomCreation as activateRoomCreationPrompt,
+  startReviewRoomCreation,
+  addReviewRoomHistory,
+} from '../store/useConversationStore';
 import { parseRealtimeEvent, withFallbackMeta } from '../utils/realtime';
 
 // Use fetch for true streaming response
@@ -208,6 +216,8 @@ const ChatInput = ({ roomId, roomData, disabled = false }) => {
           return [...oldRooms, data.room];
         });
         navigate(`/rooms/${data.room.room_id}`);
+        clearRoomCreation();
+        clearReviewRoomCreation();
       } else if (data.status === 'needs_more_context') {
         const persistedMessage = data.prompt_message;
         const fallbackMessage = {
@@ -228,6 +238,15 @@ const ChatInput = ({ roomId, roomData, disabled = false }) => {
           }
           return [...old, messageToInsert];
         });
+        if (data.question && reviewRoomCreation?.active && reviewRoomCreation.parentId === parentId) {
+          addReviewRoomHistory({ role: 'assistant', content: data.question });
+        }
+        activateRoomCreationPrompt(
+          parentId,
+          ROOM_TYPES.REVIEW,
+          data.question || messageToInsert.content,
+          messageToInsert.message_id,
+        );
       }
     },
     onError: (error) => {
@@ -258,43 +277,70 @@ const ChatInput = ({ roomId, roomData, disabled = false }) => {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (!inputValue.trim() || !roomId || streamMutation.isPending || disabled) return;
+    const trimmed = inputValue.trim();
+    if (!trimmed || !roomId || streamMutation.isPending || disabled) return;
+
+    const submitInteractiveReview = (parentId, promptText) => {
+      const isActive = reviewRoomCreation?.active && reviewRoomCreation.parentId === parentId;
+      const baseHistory = isActive ? [...(reviewRoomCreation.history || [])] : [];
+      const assistantEntry = promptText ? { role: 'assistant', content: promptText } : null;
+
+      let shouldAppendAssistant = Boolean(assistantEntry);
+      if (shouldAppendAssistant && baseHistory.length > 0) {
+        const lastEntry = baseHistory[baseHistory.length - 1];
+        if (lastEntry?.role === 'assistant' && lastEntry?.content === assistantEntry.content) {
+          shouldAppendAssistant = false;
+        }
+      }
+
+      const userEntry = { role: 'user', content: trimmed };
+      const historyPayload = [...baseHistory];
+      if (assistantEntry && shouldAppendAssistant) {
+        historyPayload.push(assistantEntry);
+      }
+      historyPayload.push(userEntry);
+
+      if (isActive) {
+        if (assistantEntry && shouldAppendAssistant) {
+          addReviewRoomHistory(assistantEntry);
+        }
+        addReviewRoomHistory(userEntry);
+      } else {
+        startReviewRoomCreation(parentId, trimmed, historyPayload);
+      }
+
+      interactiveReviewRoomMutation.mutate({
+        parentId,
+        topic: trimmed,
+        history: historyPayload,
+      });
+
+      resetState();
+    };
 
     // Global room-creation flow triggered from the sidebar
     if (roomCreationRequest?.active && roomCreationRequest.parentId === roomId) {
-      const trimmed = inputValue.trim();
-      if (!trimmed) return;
-
       if (roomCreationRequest.type === ROOM_TYPES.SUB) {
         createRoomMutation.mutate({
           name: trimmed,
           type: ROOM_TYPES.SUB,
           parentId: roomCreationRequest.parentId,
         });
+        clearRoomCreation();
+        resetState();
       } else if (roomCreationRequest.type === ROOM_TYPES.REVIEW) {
-        interactiveReviewRoomMutation.mutate({
-          parentId: roomCreationRequest.parentId,
-          topic: trimmed,
-          history: [
-            { role: 'assistant', content: roomCreationRequest.promptText },
-            { role: 'user', content: trimmed },
-          ],
-        });
+        submitInteractiveReview(roomCreationRequest.parentId, roomCreationRequest.promptText);
       }
-
-      clearRoomCreation();
-      resetState();
       return;
     }
 
     switch (mode) {
       case 'creating_sub_room':
-        createRoomMutation.mutate({ name: inputValue.trim(), type: 'sub', parentId: roomId });
+        createRoomMutation.mutate({ name: trimmed, type: 'sub', parentId: roomId });
         resetState();
         break;
       case 'creating_review':
-        interactiveReviewRoomMutation.mutate({ parentId: roomId, topic: inputValue.trim(), history: [] });
-        resetState();
+        submitInteractiveReview(roomId, null);
         break;
       default:
         // Optimistic updates for streaming chat

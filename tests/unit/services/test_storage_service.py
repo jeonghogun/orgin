@@ -136,6 +136,29 @@ class TestStorageServiceWithDB:
         assert "WHERE review_id" in called_query
         assert called_params == (review_id,)
 
+    def test_get_reviews_by_room_with_children(self, storage_service, mock_db_service):
+        """Ensure reviews for child review rooms are returned."""
+        mock_db_service.execute_query.return_value = [{
+            "review_id": "rev-1",
+            "room_id": "room-child",
+            "topic": "Topic",
+            "instruction": "Instruction",
+            "status": "completed",
+            "total_rounds": 4,
+            "current_round": 4,
+            "created_at": 111,
+            "completed_at": 222,
+        }]
+
+        results = storage_service.get_reviews_by_room("parent-room")
+
+        assert len(results) == 1
+        assert results[0].review_id == "rev-1"
+
+        called_query, called_params = mock_db_service.execute_query.call_args.args
+        assert "LEFT JOIN rooms" in called_query
+        assert called_params == ("parent-room", "parent-room")
+
     def test_log_review_event(self, storage_service, mock_db_service):
         """Test logging a review event."""
         event_data = {

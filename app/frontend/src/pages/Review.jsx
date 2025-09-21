@@ -9,6 +9,14 @@ import useRealtimeChannel from '../hooks/useRealtimeChannel';
 import toast from 'react-hot-toast';
 import ReviewTimeline from '../components/review/ReviewTimeline';
 import DiscussionStoryboard from '../components/review/DiscussionStoryboard';
+import useRoomsQuery from '../hooks/useRoomsQuery';
+
+const REVIEW_STATUS_LABELS = {
+  pending: '대기중',
+  in_progress: '진행 중',
+  completed: '완료',
+  failed: '실패',
+};
 
 const Review = ({ reviewId, roomId, isSplitView = false, createRoomMutation }) => {
   const { sidebarOpen } = useAppContext();
@@ -16,28 +24,56 @@ const Review = ({ reviewId, roomId, isSplitView = false, createRoomMutation }) =
   const [liveMessages, setLiveMessages] = useState([]);
   const [reviewStatus, setReviewStatus] = useState('loading');
   const [statusEvents, setStatusEvents] = useState([]);
+  const [selectedReviewId, setSelectedReviewId] = useState(reviewId || null);
   const statusKeyRef = useRef(new Set());
+  const { data: allRooms = [] } = useRoomsQuery();
+
+  const currentRoomInfo = useMemo(
+    () => allRooms.find((room) => room.room_id === roomId),
+    [allRooms, roomId]
+  );
+  const parentRoomId = currentRoomInfo?.parent_id || null;
+  const parentRoomName = useMemo(() => {
+    if (!parentRoomId) return null;
+    const parentRoom = allRooms.find((room) => room.room_id === parentRoomId);
+    return parentRoom?.name || null;
+  }, [allRooms, parentRoomId]);
+  const reviewListRoomId = parentRoomId || roomId;
 
   const { data: roomReviews = [], isLoading: isRoomReviewsLoading } = useQuery({
-    queryKey: ['roomReviews', roomId],
+    queryKey: ['roomReviews', reviewListRoomId],
     queryFn: async () => {
-      if (!roomId) return [];
-      const response = await apiClient.get(`/api/rooms/${roomId}/reviews`);
+      if (!reviewListRoomId) return [];
+      const response = await apiClient.get(`/api/rooms/${reviewListRoomId}/reviews`);
       return response.data || [];
     },
-    enabled: !reviewId && !!roomId,
+    enabled: !!reviewListRoomId,
     staleTime: 30 * 1000,
   });
 
-  const effectiveReviewId = useMemo(() => {
+  useEffect(() => {
     if (reviewId) {
-      return reviewId;
+      setSelectedReviewId(reviewId);
     }
-    if (Array.isArray(roomReviews) && roomReviews.length > 0) {
+  }, [reviewId]);
+
+  useEffect(() => {
+    if (reviewId) {
+      return;
+    }
+    if (!Array.isArray(roomReviews) || roomReviews.length === 0) {
+      setSelectedReviewId(null);
+      return;
+    }
+    setSelectedReviewId((prev) => {
+      if (prev && roomReviews.some((meta) => meta.review_id === prev)) {
+        return prev;
+      }
       return roomReviews[0].review_id;
-    }
-    return null;
-  }, [reviewId, roomReviews]);
+    });
+  }, [roomReviews, reviewId]);
+
+  const effectiveReviewId = selectedReviewId;
 
   const { data: review, isLoading: isReviewLoading } = useQuery({
     queryKey: ['review', effectiveReviewId],
@@ -49,6 +85,50 @@ const Review = ({ reviewId, roomId, isSplitView = false, createRoomMutation }) =
     },
     enabled: !!effectiveReviewId,
   });
+
+  const currentReviewRoomId = review?.room_id || roomId;
+  const reviewOptions = useMemo(() => {
+    if (!Array.isArray(roomReviews) || roomReviews.length === 0) {
+      return [];
+    }
+    return [...roomReviews]
+      .sort((a, b) => (b.created_at || 0) - (a.created_at || 0))
+      .map((meta) => {
+        const topic = meta.topic || '제목 없음';
+        const truncatedTopic = topic.length > 60 ? `${topic.slice(0, 57)}…` : topic;
+        const statusLabel = REVIEW_STATUS_LABELS[meta.status] || meta.status;
+        const timestamp = meta.created_at
+          ? new Date(meta.created_at * 1000).toLocaleString()
+          : null;
+        const parts = [truncatedTopic];
+        if (statusLabel) {
+          parts.push(statusLabel);
+        }
+        if (timestamp) {
+          parts.push(timestamp);
+        }
+        return {
+          roomId: meta.room_id,
+          reviewId: meta.review_id,
+          label: parts.join(' · '),
+        };
+      });
+  }, [roomReviews]);
+
+  const handleReviewSwitch = useCallback(
+    (event) => {
+      const targetRoomId = event.target.value;
+      if (!targetRoomId || targetRoomId === currentReviewRoomId) {
+        return;
+      }
+      const targetOption = reviewOptions.find((option) => option.roomId === targetRoomId);
+      if (targetOption) {
+        setSelectedReviewId(targetOption.reviewId);
+      }
+      navigate(`/rooms/${targetRoomId}`);
+    },
+    [navigate, reviewOptions, currentReviewRoomId]
+  );
 
   const { data: historicalMessages = [] } = useQuery({
     queryKey: ['messages', review?.room_id || roomId],
@@ -62,7 +142,7 @@ const Review = ({ reviewId, roomId, isSplitView = false, createRoomMutation }) =
     staleTime: 1000 * 60,
   });
 
-  const reviewRoomId = review?.room_id || roomId;
+  const reviewRoomId = currentReviewRoomId;
   const isMetaLoading = isReviewLoading || (!effectiveReviewId && isRoomReviewsLoading);
 
   const extractPersona = useCallback((message) => {
@@ -367,6 +447,37 @@ const Review = ({ reviewId, roomId, isSplitView = false, createRoomMutation }) =
           showBackButton={!isSplitView}
         />
       </div>
+
+      {reviewOptions.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 bg-panel/40 px-4 py-3">
+          <div className="text-xs text-muted">
+            {parentRoomName
+              ? `연결된 세부룸: ${parentRoomName}`
+              : '검토 세션을 선택하여 다른 실행 결과를 확인할 수 있습니다.'}
+          </div>
+          <div className="flex items-center gap-2">
+            <label
+              htmlFor="review-session-select"
+              className="text-[11px] font-semibold uppercase tracking-wide text-muted"
+            >
+              Review Session
+            </label>
+            <select
+              id="review-session-select"
+              value={currentReviewRoomId || ''}
+              onChange={handleReviewSwitch}
+              disabled={reviewOptions.length === 1}
+              className="rounded-md border border-border bg-panel px-3 py-1.5 text-sm text-text shadow-sm transition focus:outline-none focus:ring-2 focus:ring-accent disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {reviewOptions.map((option) => (
+                <option key={option.reviewId} value={option.roomId}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      )}
 
       <div className="flex-1 overflow-y-auto px-4 pb-4 min-h-0">
         {parsedFinalReport && (

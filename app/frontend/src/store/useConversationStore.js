@@ -130,12 +130,12 @@ const useConversationStore = create(
         };
       }),
 
-      startReviewRoomCreation: (parentId, topic) => set((state) => {
+      startReviewRoomCreation: (parentId, topic, history = null) => set((state) => {
         state.reviewRoomCreation = {
           active: true,
           parentId,
           topic,
-          history: [{ role: 'user', content: topic }],
+          history: Array.isArray(history) ? history : [{ role: 'user', content: topic }],
         };
       }),
 
@@ -179,7 +179,8 @@ export const clearRoomCreation = () => useConversationStore.getState().actions.c
 export const setSettings = (settings) => useConversationStore.getState().actions.setSettings(settings);
 export const useRoomCreationRequest = () => useConversationStore((state) => state.roomCreationRequest);
 export const useReviewRoomCreation = () => useConversationStore((state) => state.reviewRoomCreation);
-export const startReviewRoomCreation = (parentId, topic) => useConversationStore.getState().actions.startReviewRoomCreation(parentId, topic);
+export const startReviewRoomCreation = (parentId, topic, history) =>
+  useConversationStore.getState().actions.startReviewRoomCreation(parentId, topic, history);
 export const addReviewRoomHistory = (message) => useConversationStore.getState().actions.addReviewRoomHistory(message);
 export const clearReviewRoomCreation = () => useConversationStore.getState().actions.clearReviewRoomCreation();
 export const useGenerationSettings = () => {
