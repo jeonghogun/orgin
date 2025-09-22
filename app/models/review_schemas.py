@@ -7,7 +7,7 @@ weight digests for subsequent prompts, so the schema keeps a concise
 ``key_takeaway`` in addition to the natural language ``message``.
 """
 
-from typing import List, Literal
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -41,6 +41,35 @@ class LLMReviewTurn(BaseModel):
     no_new_arguments: bool = Field(
         default=False,
         description="True if the panelist has nothing substantive to add this round.",
+    )
+
+
+class LLMReviewResolution(BaseModel):
+    """Structured payload for the final alignment round."""
+
+    round: Literal[4] = Field(..., description="Round number fixed at 4 for final alignment.")
+    panelist: Optional[str] = Field(
+        default=None,
+        description="Panelist delivering the final alignment message.",
+    )
+    final_position: str = Field(
+        ..., description="The panelist's final recommendation or stance."
+    )
+    consensus_highlights: List[str] = Field(
+        default_factory=list,
+        description="Strong consensus items to emphasise.",
+    )
+    open_questions: List[str] = Field(
+        default_factory=list,
+        description="Remaining disagreements or risks.",
+    )
+    next_steps: List[str] = Field(
+        default_factory=list,
+        description="Concrete follow-up actions.",
+    )
+    no_new_arguments: bool = Field(
+        default=False,
+        description="True when the panelist has nothing to add beyond prior rounds.",
     )
 
 class LLMFinalReport(BaseModel):

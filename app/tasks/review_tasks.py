@@ -15,7 +15,7 @@ from pydantic import BaseModel, ValidationError
 from app.celery_app import celery_app
 from app.config.settings import get_effective_redis_url, settings
 from app.models.schemas import Message, WebSocketMessage, ReviewMeta
-from app.models.review_schemas import LLMReviewTurn, LLMFinalReport
+from app.models.review_schemas import LLMReviewTurn, LLMReviewResolution, LLMFinalReport
 from app.services.redis_pubsub import redis_pubsub_manager
 from app.services.llm_strategy import llm_strategy_service, ProviderPanelistConfig
 from app.services.review_templates import build_final_report_message
@@ -408,6 +408,26 @@ def _fallback_round_payload(round_num: int, persona: str) -> Dict[str, Any]:
         )
         return base_payload
 
+    if round_num == 4:
+        base_payload = {
+            "round": 4,
+            "panelist": persona,
+            "final_position": "세 패널이 합의한 단계별 실험 로드맵을 승인합니다.",
+            "consensus_highlights": [
+                "30일 파일럿으로 시작한다.",
+                "라운드 게이트마다 안전망을 점검한다.",
+            ],
+            "open_questions": [
+                "예산 승인 절차를 누가 책임질지 명확히 하자.",
+            ],
+            "next_steps": [
+                "파일럿 킥오프를 위한 실행 리더를 지정한다.",
+                "체크리스트를 기반으로 승인 게이트를 설정한다.",
+            ],
+            "no_new_arguments": False,
+        }
+        return base_payload
+
     return base_payload
 
 
@@ -502,6 +522,51 @@ def _conversation_digest(
     if not blocks:
         return "- 아직 토론 맥락이 없습니다."
     return "\n".join(blocks)
+
+
+def _build_resolution_context(
+    panel_history: Dict[str, Dict[str, Any]], target_persona: Optional[str]
+) -> str:
+    lines: List[str] = []
+
+    if target_persona:
+        own_rounds = panel_history.get(target_persona) or {}
+        round_three = own_rounds.get("3")
+        if isinstance(round_three, dict):
+            own_highlight = _quote_text(
+                round_three.get("key_takeaway")
+                or round_three.get("message", "")
+            )
+            if own_highlight:
+                lines.append(f"Your round 3 takeaway: {own_highlight}")
+
+    overview: List[str] = []
+    for persona, rounds in panel_history.items():
+        round_three = rounds.get("3")
+        if not isinstance(round_three, dict):
+            continue
+        summary = _quote_text(
+            round_three.get("key_takeaway")
+            or round_three.get("message", "")
+        ) or "요약 없음"
+        overview.append(f"- {persona}: {summary}")
+        for ref in _clip_references(round_three.get("references"), 2):
+            stance = STANCE_SUMMARY.get(ref.get("stance"), "참조")
+            quote = _quote_text(ref.get("quote", ""), 120)
+            target = ref.get("panelist") or "다른 패널"
+            round_str = f" R{ref.get('round')}" if ref.get("round") else ""
+            overview.append(f"  • {stance} {target}{round_str} {quote}".strip())
+
+    if overview:
+        if lines:
+            lines.append("")
+        lines.append("Round 3 syntheses overview:")
+        lines.extend(overview)
+
+    if not lines:
+        return "Round 3 syntheses overview:\n- 아직 합의 정리가 없습니다."
+
+    return "\n".join(lines)
 
 
 def _build_fallback_final_report(topic: str, instruction: str) -> Dict[str, Any]:
@@ -948,12 +1013,22 @@ def run_synthesis_turn(
         if _all_panelists_declined(turn_outputs):
             _record_status_update(review_id, "no_new_arguments_stop", round_num=3)
 
-        executed_rounds = _collect_completed_rounds(panel_history)
-        generate_consolidated_report.delay(
+            executed_rounds = _collect_completed_rounds(panel_history)
+            generate_consolidated_report.delay(
+                review_id=review_id,
+                panel_history=panel_history,
+                all_metrics=all_metrics,
+                executed_rounds=executed_rounds,
+                trace_id=trace_id,
+            )
+            return
+
+        run_resolution_turn.delay(
             review_id=review_id,
+            review_room_id=review_room_id,
             panel_history=panel_history,
             all_metrics=all_metrics,
-            executed_rounds=executed_rounds,
+            successful_panelists=[p.model_dump() for p in successful_panelists],
             trace_id=trace_id,
         )
     except BudgetExceededError as e:
@@ -963,6 +1038,112 @@ def run_synthesis_turn(
         raise Ignore()
     except Exception as e:
         logger.error(f"Unhandled error in synthesis turn for review {review_id}: {e}", exc_info=True)
+        storage_service.update_review(review_id, {"status": "failed", "final_report": {"error": "An unexpected error occurred."}})
+        raise
+
+
+@celery_app.task(bind=True, base=BaseTask, autoretry_for=(Exception,), retry_kwargs={'max_retries': 3}, retry_backoff=True)
+def run_resolution_turn(
+    self: BaseTask,
+    review_id: str,
+    review_room_id: str,
+    panel_history: Dict[str, Dict[str, Any]],
+    all_metrics: List[List[Dict[str, Any]]],
+    successful_panelists: List[Dict[str, Any]],
+    trace_id: str,
+):
+    try:
+        panel_configs = [ProviderPanelistConfig(**p) for p in successful_panelists]
+        all_results: List[Tuple[ProviderPanelistConfig, Union[Tuple[Any, Dict[str, Any]], BaseException]]] = []
+        prompts_by_persona: Dict[str, str] = {}
+
+        for p_config in panel_configs:
+            resolution_context = _build_resolution_context(panel_history, p_config.persona)
+            prompt = prompt_service.get_prompt(
+                "review_resolution",
+                panelist=p_config.persona,
+                resolution_context=resolution_context,
+                persona_trait=_persona_style(p_config.persona),
+            )
+            prompts_by_persona[p_config.persona] = prompt
+            all_results.append(
+                run_panelist_turn(
+                    self.llm_service,
+                    p_config,
+                    prompt,
+                    f"{trace_id}-r4-{p_config.provider}",
+                )
+            )
+
+        final_results: List[Tuple[ProviderPanelistConfig, Union[Tuple[Any, Dict[str, Any]], BaseException]]] = []
+        openai_config = next((p for p in panel_configs if p.provider == 'openai'), None)
+
+        for p_config, result in all_results:
+            if isinstance(result, BaseException) and p_config.provider != 'openai' and openai_config:
+                logger.warning(
+                    f"Panelist {p_config.persona} ({p_config.provider}) failed in round 4. Retrying with fallback provider OpenAI."
+                )
+                fallback_config = ProviderPanelistConfig(
+                    provider='openai',
+                    persona=p_config.persona,
+                    model=openai_config.model,
+                    system_prompt=p_config.system_prompt or openai_config.system_prompt,
+                    timeout_s=openai_config.timeout_s,
+                    max_retries=0,
+                )
+                prompt_text = prompts_by_persona.get(p_config.persona, "")
+                fb_p_config, fb_result = run_panelist_turn(
+                    self.llm_service,
+                    fallback_config,
+                    prompt_text,
+                    f"{trace_id}-r4-fallback",
+                )
+                final_results.append((fb_p_config, fb_result))
+            else:
+                final_results.append((p_config, result))
+
+        turn_outputs, round_metrics, successful_panelists = _process_turn_results(
+            review_id,
+            review_room_id,
+            4,
+            final_results,
+            all_metrics,
+            validation_model=LLMReviewResolution,
+        )
+
+        panel_history = _merge_round_outputs(panel_history, 4, turn_outputs)
+
+        try:
+            storage_service.update_review(review_id, {"current_round": 4})
+        except Exception as exc:
+            logger.warning(
+                "Failed to persist round 4 metadata for review %s: %s",
+                review_id,
+                exc,
+                exc_info=True,
+            )
+
+        all_metrics.append(round_metrics)
+        _record_status_update(review_id, "resolution_turn_complete", round_num=4)
+
+        if _all_panelists_declined(turn_outputs):
+            _record_status_update(review_id, "no_new_arguments_stop", round_num=4)
+
+        executed_rounds = _collect_completed_rounds(panel_history)
+        generate_consolidated_report.delay(
+            review_id=review_id,
+            panel_history=panel_history,
+            all_metrics=all_metrics,
+            executed_rounds=executed_rounds,
+            trace_id=trace_id,
+        )
+    except BudgetExceededError as e:
+        logger.error(f"Failed resolution turn for review {review_id}: {e}")
+        storage_service.update_review(review_id, {"status": "failed", "final_report": {"error": str(e)}})
+        self.update_state(state=states.FAILURE, meta={'exc_type': 'BudgetExceededError', 'exc_message': str(e)})
+        raise Ignore()
+    except Exception as e:
+        logger.error(f"Unhandled error in resolution turn for review {review_id}: {e}", exc_info=True)
         storage_service.update_review(review_id, {"status": "failed", "final_report": {"error": "An unexpected error occurred."}})
         raise
 

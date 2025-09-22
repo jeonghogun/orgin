@@ -6,6 +6,7 @@ from app.tasks.review_tasks import (
     run_initial_panel_turn,
     run_rebuttal_turn,
     run_synthesis_turn,
+    run_resolution_turn,
     generate_consolidated_report,
 )
 from app.services.llm_strategy import ProviderPanelistConfig
@@ -135,7 +136,7 @@ def test_full_review_prompt_logic(
     }
     mock_llm_instance.invoke_sync.return_value = (json.dumps(round_3_output), {"total_tokens": 30})
 
-    with patch("app.tasks.review_tasks.generate_consolidated_report.delay") as mock_report_delay:
+    with patch("app.tasks.review_tasks.run_resolution_turn.delay") as mock_resolution_delay:
         run_synthesis_turn(
             review_id="test_review_1",
             review_room_id="test_room_1",
@@ -152,11 +153,43 @@ def test_full_review_prompt_logic(
     assert "Round 3 – Joint Synthesis (GPT-4o)" in prompt_r3
     assert "세 패널이 함께" in prompt_r3
 
+    resolution_kwargs = mock_resolution_delay.call_args.kwargs
+    panel_history_for_r4 = resolution_kwargs["panel_history"]
+    all_metrics_for_r4 = resolution_kwargs["all_metrics"]
+    successful_panelists_for_r4 = resolution_kwargs["successful_panelists"]
+
+    # --- ROUND 4: Resolution Turn ---
+    mock_llm_instance.invoke_sync.reset_mock()
+    round_4_output = {
+        "round": 4,
+        "panelist": "GPT-4o",
+        "final_position": "세 패널이 합의한 단계별 실행 로드맵을 승인합니다.",
+        "consensus_highlights": ["30일 파일럿 후 단계별 확장"],
+        "open_questions": ["예산 승인 절차를 더 명확히 하자"],
+        "next_steps": ["실행 리더를 지정하고 체크리스트를 공유"],
+        "no_new_arguments": False,
+    }
+    mock_llm_instance.invoke_sync.return_value = (json.dumps(round_4_output), {"total_tokens": 35})
+
+    with patch("app.tasks.review_tasks.generate_consolidated_report.delay") as mock_report_delay:
+        run_resolution_turn(
+            review_id="test_review_1",
+            review_room_id="test_room_1",
+            panel_history=panel_history_for_r4,
+            all_metrics=all_metrics_for_r4,
+            successful_panelists=successful_panelists_for_r4,
+            trace_id="test-trace-id",
+        )
+
+    assert mock_llm_instance.invoke_sync.call_count == 2
+    prompt_r4 = mock_llm_instance.invoke_sync.call_args.kwargs["user_prompt"]
+    assert "Final Alignment Round" in prompt_r4
+
     report_kwargs = mock_report_delay.call_args.kwargs
     panel_history_for_final = report_kwargs["panel_history"]
     all_metrics_for_final = report_kwargs["all_metrics"]
     executed_rounds_for_final = report_kwargs["executed_rounds"]
-    assert executed_rounds_for_final[-1] == 3
+    assert executed_rounds_for_final[-1] == 4
 
     # --- FINAL REPORT ---
     mock_llm_instance.invoke_sync.reset_mock()

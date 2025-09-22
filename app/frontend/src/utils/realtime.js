@@ -1,5 +1,16 @@
 export const parseRealtimeEvent = (event) => {
-  if (!event || typeof event.data !== 'string' || event.data.trim() === '') {
+  if (!event || typeof event.data !== 'string') {
+    return null;
+  }
+
+  const trimmed = event.data.trim();
+  if (
+    trimmed === '' ||
+    trimmed.toLowerCase() === 'keep-alive' ||
+    trimmed.toLowerCase() === 'heartbeat' ||
+    trimmed === '[heartbeat]' ||
+    trimmed.startsWith(':')
+  ) {
     return null;
   }
 

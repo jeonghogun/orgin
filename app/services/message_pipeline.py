@@ -34,6 +34,7 @@ from app.services.review_service import ReviewService
 from app.services.storage_service import StorageService
 from app.services.user_fact_service import UserFactService
 from app.services.fact_types import FactType
+from app.config.settings import settings
 from app.utils.helpers import (
     create_success_response,
     generate_id,
@@ -778,6 +779,151 @@ class MessagePipeline:
             trace_id=trace_id,
         )
 
+    async def _prepare_memory_context(
+        self,
+        *,
+        room_id: str,
+        user_id: str,
+        content: str,
+    ) -> List[Dict[str, Any]]:
+        limit = getattr(settings, "HYBRID_RETURN_TOPN", 5)
+        hierarchical_task = asyncio.create_task(
+            maybe_await(
+                self.memory_service.build_hierarchical_context_blocks(
+                    room_id=room_id,
+                    user_id=user_id,
+                    query=content,
+                    limit=limit,
+                )
+            )
+        )
+        fallback_task = asyncio.create_task(
+            maybe_await(self.memory_service.get_context(room_id, user_id))
+        )
+
+        hierarchical_context, fallback_context = await asyncio.gather(
+            hierarchical_task,
+            fallback_task,
+            return_exceptions=True,
+        )
+
+        if isinstance(hierarchical_context, Exception):
+            logger.warning(
+                "Failed to build hierarchical context blocks (room=%s, user=%s): %s",
+                room_id,
+                user_id,
+                hierarchical_context,
+                exc_info=True,
+            )
+            hierarchical_context = []
+
+        if isinstance(fallback_context, Exception):
+            logger.debug(
+                "Fallback memory context lookup failed (room=%s, user=%s): %s",
+                room_id,
+                user_id,
+                fallback_context,
+                exc_info=True,
+            )
+            fallback_context = []
+
+        if hierarchical_context:
+            return hierarchical_context
+        if fallback_context:
+            return fallback_context
+        return []
+
+    async def _stream_rag_response(
+        self,
+        *,
+        room_id: str,
+        user_id: str,
+        content: str,
+        message_id: str,
+        memory_context: List[Dict[str, Any]],
+    ) -> str:
+        await self.realtime_service.publish(
+            room_id,
+            "meta",
+            {"status": "started"},
+            meta={"message_id": message_id, "delivery": "sync_pipeline"},
+        )
+
+        aggregated_chunks: List[str] = []
+        chunk_index = 0
+
+        try:
+            stream = self.rag_service.generate_rag_response_stream(
+                room_id=room_id,
+                user_id=user_id,
+                user_message=content,
+                memory_context=memory_context,
+                message_id=message_id,
+            )
+
+            async for chunk in stream:
+                if isinstance(chunk, dict):
+                    delta = chunk.get("delta")
+                    meta_payload = chunk.get("meta")
+                else:
+                    delta = str(chunk)
+                    meta_payload = None
+
+                if meta_payload:
+                    await self.realtime_service.publish(
+                        room_id,
+                        "meta",
+                        meta_payload,
+                        meta={"message_id": message_id, "delivery": "sync_pipeline", **meta_payload},
+                    )
+
+                if delta:
+                    chunk_index += 1
+                    aggregated_chunks.append(delta)
+                    await self.realtime_service.publish(
+                        room_id,
+                        "delta",
+                        {"delta": delta},
+                        meta={
+                            "message_id": message_id,
+                            "chunk_index": chunk_index,
+                            "delivery": "sync_pipeline",
+                        },
+                    )
+        except Exception as stream_error:
+            logger.error(
+                "Error during streaming response for room %s (user=%s): %s",
+                room_id,
+                user_id,
+                stream_error,
+                exc_info=True,
+            )
+            await self.realtime_service.publish(
+                room_id,
+                "done",
+                {
+                    "message_id": message_id,
+                    "status": "failed",
+                    "error": "응답 생성 중 오류가 발생했습니다.",
+                },
+                meta={"message_id": message_id, "delivery": "sync_pipeline", "status": "failed"},
+            )
+            return "죄송합니다. 응답을 생성하는 중 오류가 발생했습니다."
+
+        final_text = "".join(aggregated_chunks)
+        await self.realtime_service.publish(
+            room_id,
+            "done",
+            {"message_id": message_id, "status": "completed", "chunk_count": chunk_index},
+            meta={
+                "message_id": message_id,
+                "delivery": "sync_pipeline",
+                "status": "completed",
+                "chunk_count": chunk_index,
+            },
+        )
+        return final_text or ""
+
     async def _generate_rag_response(
         self,
         *,
@@ -786,22 +932,19 @@ class MessagePipeline:
         content: str,
         message_id: str,
     ) -> str:
-        memory_context = await maybe_await(
-            self.memory_service.build_hierarchical_context_blocks(
-                room_id=room_id,
-                user_id=user_id,
-                query=content,
-            )
+        memory_context = await self._prepare_memory_context(
+            room_id=room_id,
+            user_id=user_id,
+            content=content,
         )
-        return await maybe_await(
-            self.rag_service.generate_rag_response(
-                room_id,
-                user_id,
-                content,
-                memory_context,
-                message_id,
-            )
+        response = await self._stream_rag_response(
+            room_id=room_id,
+            user_id=user_id,
+            content=content,
+            message_id=message_id,
+            memory_context=memory_context,
         )
+        return response
 
     async def _create_review_and_start(
         self,

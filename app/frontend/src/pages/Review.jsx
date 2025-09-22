@@ -7,8 +7,7 @@ import apiClient from '../lib/apiClient';
 import { useAppContext } from '../context/AppContext';
 import useRealtimeChannel from '../hooks/useRealtimeChannel';
 import toast from 'react-hot-toast';
-import ReviewTimeline from '../components/review/ReviewTimeline';
-import DiscussionStoryboard from '../components/review/DiscussionStoryboard';
+import TriadDiscussionFeed from '../components/review/TriadDiscussionFeed';
 import useRoomsQuery from '../hooks/useRoomsQuery';
 
 const REVIEW_STATUS_LABELS = {
@@ -290,36 +289,38 @@ const Review = ({ reviewId, roomId, isSplitView = false, createRoomMutation }) =
     return Array.from(map.values()).sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
   }, [historicalMessages, liveMessages, normalizeMessage]);
 
-  const personaEvents = useMemo(() => {
-    const grouped = {};
-    const buildPreview = (message) => {
-      const payload = message.structuredPayload;
-      if (payload && typeof payload === 'object') {
-        if (typeof payload.key_takeaway === 'string' && payload.key_takeaway) {
-          return payload.key_takeaway;
-        }
-        if (typeof payload.message === 'string' && payload.message) {
-          return payload.message.replace(/\s+/g, ' ').slice(0, 140);
-        }
-      }
-      return (message.content || '').replace(/\s+/g, ' ').slice(0, 140);
-    };
-
+  const participantNames = useMemo(() => {
+    const seen = new Set();
     combinedMessages.forEach((message) => {
       if (!message) return;
       const persona = message.persona || extractPersona(message);
-      if (!grouped[persona]) {
-        grouped[persona] = [];
+      if (persona && !seen.has(persona)) {
+        seen.add(persona);
       }
-      grouped[persona].push({
-        id: message.message_id,
-        timestamp: message.timestamp,
-        round: message.round ?? extractRound(message),
-        preview: buildPreview(message),
-      });
     });
-    return grouped;
-  }, [combinedMessages, extractPersona, extractRound]);
+    return Array.from(seen);
+  }, [combinedMessages, extractPersona]);
+
+  const statusHistory = useMemo(() => {
+    return statusEvents
+      .slice(-5)
+      .reverse()
+      .map((event) => {
+        const readable = event.timestamp
+          ? new Date(event.timestamp * 1000).toLocaleString('ko-KR', {
+              month: 'short',
+              day: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit',
+            })
+          : null;
+        return {
+          ...event,
+          label: REVIEW_STATUS_LABELS[event.status] || event.status,
+          readable,
+        };
+      });
+  }, [statusEvents]);
 
   const handleExportRecommendations = useCallback(() => {
     if (!parsedFinalReport?.recommendations?.length) {
@@ -517,58 +518,103 @@ const Review = ({ reviewId, roomId, isSplitView = false, createRoomMutation }) =
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto px-4 pb-4 min-h-0">
-        {parsedFinalReport && (
-          <div className="mb-6">
-            <h2 className="text-h1 text-text mb-4">관찰자 최종 보고서</h2>
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="md:col-span-2 bg-panel border border-border rounded-card p-4">
-                <h3 className="text-h2 text-text mb-2">종합 요약</h3>
-                <p className="text-body text-muted whitespace-pre-wrap leading-relaxed">
+      <div className="flex-1 overflow-y-auto px-4 pb-6 min-h-0">
+        <div className="mx-auto flex w-full max-w-5xl flex-col gap-6">
+          <section className="rounded-card border border-border bg-panel p-6">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="space-y-1">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted">검토 주제</p>
+                <h1 className="text-h1 text-text">{review?.topic || '세션 정보를 불러오는 중입니다.'}</h1>
+                {review?.instruction && (
+                  <p className="text-sm text-muted">{review.instruction}</p>
+                )}
+              </div>
+              <div className="flex flex-col items-end gap-3 text-right">
+                <span className="inline-flex items-center gap-2 rounded-full border border-border px-3 py-1 text-xs font-semibold text-muted">
+                  상태: {REVIEW_STATUS_LABELS[reviewStatus] || reviewStatus}
+                </span>
+                {participantNames.length > 0 && (
+                  <div className="flex flex-wrap justify-end gap-2">
+                    {participantNames.map((name) => (
+                      <span
+                        key={name}
+                        className="rounded-full bg-border/40 px-3 py-1 text-[11px] font-medium text-muted"
+                      >
+                        {name}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+            {statusHistory.length > 0 && (
+              <div className="mt-4 border-t border-border/60 pt-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted">진행 기록</p>
+                <ul className="mt-2 flex flex-wrap gap-3 text-xs text-muted">
+                  {statusHistory.map((event, idx) => (
+                    <li key={`status-${event.status}-${event.timestamp}-${idx}`} className="flex items-center gap-2">
+                      <span className="font-semibold text-text">{event.label}</span>
+                      {event.readable && <span>{event.readable}</span>}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </section>
+
+          <TriadDiscussionFeed messages={combinedMessages} />
+
+          {parsedFinalReport && (
+            <section className="rounded-card border border-border bg-panel p-6 space-y-4">
+              <header className="space-y-1">
+                <h2 className="text-h2 text-text">관찰자 최종 정리</h2>
+                <p className="text-sm text-muted">세 패널의 합의와 실행 계획을 한눈에 볼 수 있습니다.</p>
+              </header>
+              <div className="space-y-3 text-body text-muted">
+                <div className="rounded-md bg-border/10 px-4 py-3 text-text">
                   {parsedFinalReport.summary || '요약 정보가 아직 제공되지 않았습니다.'}
-                </p>
-              </div>
-
-              <div className="bg-panel border border-border rounded-card p-4">
-                <h3 className="text-h3 text-text mb-2">강한 합의</h3>
-                {parsedFinalReport.consensus.length > 0 ? (
-                  <ul className="list-disc list-inside space-y-1 text-body text-muted">
-                    {parsedFinalReport.consensus.map((item, idx) => (
-                      <li key={`consensus-${idx}`}>{item}</li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="text-body text-muted">특별한 합의 사항이 기록되지 않았습니다.</p>
-                )}
-              </div>
-
-              <div className="bg-panel border border-border rounded-card p-4">
-                <h3 className="text-h3 text-text mb-2">남은 쟁점</h3>
-                {parsedFinalReport.disagreements.length > 0 ? (
-                  <ul className="list-disc list-inside space-y-1 text-body text-muted">
-                    {parsedFinalReport.disagreements.map((item, idx) => (
-                      <li key={`disagreement-${idx}`}>{item}</li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="text-body text-muted">추가 논의가 필요한 쟁점이 없습니다.</p>
-                )}
-              </div>
-
-              <div className="md:col-span-2 bg-panel border border-border rounded-card p-4">
-                <h3 className="text-h3 text-text mb-2">우선 실행 제안</h3>
-                {parsedFinalReport.recommendations.length > 0 ? (
-                  <ol className="list-decimal list-inside space-y-1 text-body text-muted">
-                    {parsedFinalReport.recommendations.map((item, idx) => (
-                      <li key={`recommendation-${idx}`}>{item}</li>
-                    ))}
-                  </ol>
-                ) : (
-                  <p className="text-body text-muted">추가 실행 제안이 없습니다.</p>
-                )}
+                </div>
+                <div className="grid gap-4 md:grid-cols-3">
+                  <div className="space-y-2">
+                    <p className="text-sm font-semibold text-text">강한 합의</p>
+                    {parsedFinalReport.consensus.length > 0 ? (
+                      <ul className="list-disc list-inside space-y-1">
+                        {parsedFinalReport.consensus.map((item, idx) => (
+                          <li key={`consensus-${idx}`}>{item}</li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-sm text-muted">기록된 합의가 없습니다.</p>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    <p className="text-sm font-semibold text-text">남은 쟁점</p>
+                    {parsedFinalReport.disagreements.length > 0 ? (
+                      <ul className="list-disc list-inside space-y-1">
+                        {parsedFinalReport.disagreements.map((item, idx) => (
+                          <li key={`disagreement-${idx}`}>{item}</li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-sm text-muted">추가로 논의할 쟁점이 없습니다.</p>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    <p className="text-sm font-semibold text-text">우선 실행 제안</p>
+                    {parsedFinalReport.recommendations.length > 0 ? (
+                      <ul className="list-disc list-inside space-y-1">
+                        {parsedFinalReport.recommendations.map((item, idx) => (
+                          <li key={`recommendation-${idx}`}>{item}</li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-sm text-muted">추가 실행 제안이 없습니다.</p>
+                    )}
+                  </div>
+                </div>
                 {parsedFinalReport.recommendations.length > 0 && (
-                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-border/60 bg-panel-elev px-3 py-2">
-                    <p className="text-xs text-muted">추천 항목을 바로 작업 관리 도구로 옮길 수 있도록 JSON 템플릿을 제공합니다.</p>
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border/60 bg-panel-elev px-3 py-2">
+                    <p className="text-xs text-muted">추천 항목을 그대로 작업 관리 도구로 옮길 수 있도록 JSON 템플릿을 제공합니다.</p>
                     <button
                       type="button"
                       onClick={handleExportRecommendations}
@@ -579,14 +625,8 @@ const Review = ({ reviewId, roomId, isSplitView = false, createRoomMutation }) =
                   </div>
                 )}
               </div>
-            </div>
-          </div>
-        )}
-
-        <ReviewTimeline statusEvents={statusEvents} personaEvents={personaEvents} />
-
-        <div className="mt-6">
-          <DiscussionStoryboard messages={combinedMessages} />
+            </section>
+          )}
         </div>
       </div>
 
