@@ -92,7 +92,16 @@ class UserFactService:
         )
         self.db.execute_update(query, params)
         FACTS_SAVED.labels(fact_type=fact['type']).inc()
-        await self.audit_service.log('fact_saved', {'fact_id': new_fact_id, 'user_id': user_id, 'fact_type': fact['type']})
+        if hasattr(self.audit_service, "log_action"):
+            await self.audit_service.log_action(
+                admin_user_id="system",
+                action="fact_saved",
+                details={
+                    'fact_id': new_fact_id,
+                    'user_id': user_id,
+                    'fact_type': fact['type']
+                }
+            )
         return new_fact_id
 
     async def save_fact(self, user_id: str, fact: Dict[str, Any], normalized_value: str, source_message_id: str, sensitivity: str, room_id: str):
@@ -199,10 +208,14 @@ class UserFactService:
     async def resolve_fact_conflict(self, winning_fact_id: str, losing_fact_id: str):
         self.db.execute_update("UPDATE user_facts SET latest = TRUE, pending_review = FALSE WHERE id = %s", (winning_fact_id,))
         self.db.execute_update("DELETE FROM user_facts WHERE id = %s", (losing_fact_id,))
-        if hasattr(self.audit_service, "log"):
-            await self.audit_service.log(
-                "fact_conflict_resolved",
-                {"winning_fact_id": winning_fact_id, "losing_fact_id": losing_fact_id}
+        if hasattr(self.audit_service, "log_action"):
+            await self.audit_service.log_action(
+                admin_user_id="system",
+                action="fact_conflict_resolved",
+                details={
+                    "winning_fact_id": winning_fact_id,
+                    "losing_fact_id": losing_fact_id
+                }
             )
         logger.info("Resolved fact conflict.", extra={"winner": winning_fact_id, "loser": losing_fact_id})
 

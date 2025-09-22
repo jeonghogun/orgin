@@ -12,7 +12,9 @@ def mock_secret_provider():
 
 @pytest.fixture
 def mock_audit_service():
-    return MagicMock()
+    service = MagicMock()
+    service.log_action = AsyncMock()
+    return service
 
 @pytest.fixture
 def mock_db_service_for_concurrency():
