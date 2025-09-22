@@ -145,8 +145,6 @@ const ChatInput = ({ roomId, roomData, disabled = false }) => {
     mode,
     inputValue,
     placeholder,
-    startSubRoomCreation,
-    startReviewCreation,
     handleInputChange,
     resetState,
   } = useChatInputState();
@@ -428,27 +426,6 @@ const ChatInput = ({ roomId, roomData, disabled = false }) => {
       >
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14m-7-7h14"/></svg>
       </button>
-      
-      {/* + 버튼 - 메인룸과 세부룸에만 표시 */}
-      {roomData && (roomData.type === 'main' || roomData.type === 'sub') && (
-        <button
-          type="button"
-          onClick={() => {
-            if (roomData.type === 'main') {
-              startSubRoomCreation(roomId);
-            } else if (roomData.type === 'sub') {
-              startReviewCreation(roomId);
-            }
-          }}
-          disabled={disabled || uploadMutation.isPending || streamMutation.isPending}
-          className="p-2 text-muted hover:text-text transition-colors duration-150 focus-ring disabled:opacity-50 disabled:cursor-not-allowed"
-          title={roomData.type === 'main' ? "세부룸 추가" : "검토룸 추가"}
-        >
-          <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor">
-            <path d="M8 0C3.6 0 0 3.6 0 8s3.6 8 8 8 8-3.6 8-8-3.6-8-8-8zm4 9H7v5H5V9H0V7h5V2h2v5h5v2z"/>
-          </svg>
-        </button>
-      )}
       
       <input
         type="file"

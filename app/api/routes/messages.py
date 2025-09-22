@@ -121,7 +121,14 @@ async def stream_room_message_events(
                 try:
                     message = await asyncio.wait_for(listener_queue.get(), timeout=15)
                 except asyncio.TimeoutError:
-                    yield {"event": "heartbeat", "data": "keep-alive"}
+                    yield {
+                        "event": "heartbeat",
+                        "data": RealtimeService.format_event(
+                            "heartbeat",
+                            {"status": "keep-alive"},
+                            {"delivery": "sse"},
+                        ),
+                    }
                     continue
 
                 yield {"event": "new_message", "data": message}

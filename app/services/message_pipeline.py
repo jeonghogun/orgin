@@ -43,6 +43,9 @@ from app.utils.helpers import (
 
 logger = logging.getLogger(__name__)
 
+FACT_QUERY_CLASSIFIER_TIMEOUT = 0.8
+
+
 NAME_EXTRACTION_PATTERNS = [
     re.compile(r"(?:내|제|저의)\s*이름(?:은|은요|은지)?\s*([\w가-힣]+)", re.IGNORECASE),
     re.compile(r"(?:나를|저를)\s*([\w가-힣]+)\s*라고\s*불러", re.IGNORECASE),
@@ -180,9 +183,14 @@ async def detect_fact_query(
 ) -> Optional[FactType]:
     """Detect whether the user is asking for a stored fact."""
 
+    keyword_match = detect_fact_query_keywords(content)
+    if keyword_match:
+        return keyword_match
+
     try:
-        fact_type = await maybe_await(
-            intent_classifier.get_fact_query_type(content)
+        fact_type = await asyncio.wait_for(
+            maybe_await(intent_classifier.get_fact_query_type(content)),
+            timeout=FACT_QUERY_CLASSIFIER_TIMEOUT,
         )
         if fact_type and fact_type != FactQueryType.NONE:
             mapping = {
@@ -195,13 +203,17 @@ async def detect_fact_query(
             resolved = mapping.get(fact_type)
             if resolved:
                 return resolved
+    except asyncio.TimeoutError:
+        logger.warning(
+            "Fact query classification timed out; falling back to keyword detection."
+        )
     except Exception as exc:  # pragma: no cover - defensive logging
         logger.warning(
             "LLM fact query detection failed: %s, falling back to keywords",
             exc,
         )
 
-    return detect_fact_query_keywords(content)
+    return None
 
 
 def detect_fact_query_keywords(content: str) -> Optional[FactType]:
