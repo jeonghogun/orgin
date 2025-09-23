@@ -6,12 +6,12 @@ import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import remarkGfm from 'remark-gfm';
 import rehypeKatex from 'rehype-katex';
 import 'katex/dist/katex.min.css';
-import { UserCircleIcon, CpuChipIcon, ClockIcon, ClipboardIcon, CheckIcon } from '@heroicons/react/24/solid';
+import { UserCircleIcon, CpuChipIcon, ClipboardIcon, CheckIcon } from '@heroicons/react/24/solid';
 import { canWriteToClipboard, writeTextToClipboard } from '../../utils/clipboard';
 
 const BlinkingCursor = () => <span className="inline-block w-2 h-5 bg-blue-500 animate-blink" />;
 
-const MessageCard = ({ message, onViewHistory, onRetry }) => {
+const MessageCard = ({ message, onRetry }) => {
   if (!message) {
     return null;
   }
@@ -39,12 +39,7 @@ const MessageCard = ({ message, onViewHistory, onRetry }) => {
             {message.model && <span className="text-xs font-normal text-gray-500 ml-2 bg-gray-200 dark:bg-gray-700 px-2 py-1 rounded-full">{message.model}</span>}
           </span>
           <div className="flex items-center space-x-2">
-            {message.meta?.parentId && (
-                <button onClick={() => onViewHistory(message.id)} className="text-xs text-gray-400 hover:text-gray-600 flex items-center">
-                    <ClockIcon className="h-4 w-4 mr-1" />
-                    Edited
-                </button>
-            )}
+            {/* Edited button removed */}
           </div>
         </div>
         <div className="prose prose-sm dark:prose-invert max-w-none mt-1">
@@ -149,7 +144,6 @@ MessageCard.propTypes = {
     status: PropTypes.string,
     meta: PropTypes.object,
   }),
-  onViewHistory: PropTypes.func,
   onRetry: PropTypes.func,
 };
 

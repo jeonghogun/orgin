@@ -4,12 +4,10 @@ import ReactMarkdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import remarkGfm from 'remark-gfm';
-import DiffViewModal from './conversation/DiffViewModal';
 import { canWriteToClipboard, writeTextToClipboard } from '../utils/clipboard';
 
 const Message = ({ message }) => {
   const [isHovered, setIsHovered] = useState(false);
-  const [showDiff, setShowDiff] = useState(false);
   if (!message) {
     return null;
   }
@@ -94,13 +92,6 @@ const Message = ({ message }) => {
           {isHovered && (
             <div className="absolute -top-3 -right-3 flex gap-1">
               <button
-                onClick={() => setShowDiff(true)}
-                className="p-1 bg-gray-700 rounded-full text-white hover:bg-gray-600 transition-opacity"
-                title="View edit history"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-              </button>
-              <button
                 onClick={handleCopy}
                 className="p-1 bg-gray-700 rounded-full text-white hover:bg-gray-600 transition-opacity"
                 title="Copy message"
@@ -115,7 +106,6 @@ const Message = ({ message }) => {
         </div>
       </div>
       {isUser && <Avatar role="user" />}
-      {showDiff && <DiffViewModal messageId={message.message_id} onClose={() => setShowDiff(false)} />}
     </div>
   );
 };

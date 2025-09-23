@@ -335,7 +335,6 @@ const ChatView = ({ threadId, currentRoom }) => {
           messages={messages}
           isLoading={isLoading}
           error={error}
-          onViewHistory={setViewingMessageHistory}
           onRetry={handleRetry}
         />
       </div>
