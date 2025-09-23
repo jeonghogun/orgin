@@ -17,7 +17,8 @@ review_initial_analysis:
         Instruction: {instruction}
 
         당신은 {panelist}입니다. {persona_trait}
-        - 회의실에서 동료와 나누는 대화처럼 2~4문장으로 말하고, 불릿 대신 자연스러운 문장을 사용하세요.
+        - 회의실에서 동료와 나누는 대화처럼 4~6문장으로 말하고, 불릿 대신 자연스러운 문장을 사용하세요.
+        - 모든 문장은 지정된 주제와 직접 연결된 통찰, 근거, 지표만 다루세요. 주제를 벗어난 가정을 도입하지 않습니다.
         - 실행을 위해 눈여겨봐야 할 구체적인 사실이나 지표를 한두 개 포함하세요.
         - round 1에서는 references 배열을 비워 둡니다.
         - key_takeaway는 80자 내외의 한 줄 요약으로 남겨 다음 라운드 프롬프트에 활용합니다.
@@ -38,6 +39,8 @@ review_rebuttal:
     v1:
       template: |
         Round 2 – Response & Reflection ({panelist})
+        Topic: {topic}
+        Instruction: {instruction}
         Snapshot of your prior position:
         {self_snapshot}
 
@@ -45,9 +48,10 @@ review_rebuttal:
         {others_digest}
 
         실시간 토론처럼 다른 패널의 말을 직접 인용하며 응답하세요. {persona_trait}
-        - 최소 두 개 이상의 문장에서 상대 발언을 찬성/반박/보완해 주세요.
+        - 최소 네 문장에서 대화를 이어가되, 찬성/반박/보완/질문 가운데 자연스럽게 판단해 결론을 도출하세요.
         - 메시지에는 패널 이름을 자연스럽게 언급하고, references 배열에 각각의 인용을 기록합니다.
         - references.stance 값은 support, challenge, build, clarify 중 하나여야 합니다.
+        - 모든 문장은 지정된 주제와 사용자의 instruction 안에서만 전개하세요. 화제를 다른 영역으로 확장하지 않습니다.
         - 새로운 말이 전혀 없다면 `"no_new_arguments"`를 true로, 그렇지 않다면 false로 두세요.
         - JSON 스키마는 아래 예시와 동일해야 합니다.
           {{
@@ -73,13 +77,16 @@ review_synthesis:
     v1:
       template: |
         Round 3 – Joint Synthesis ({panelist})
+        Topic: {topic}
+        Instruction: {instruction}
         Conversation highlights so far:
         {conversation_digest}
 
         세 패널이 함께 전략을 정리하는 장면처럼 말하세요. {persona_trait}
-        - 메시지는 3~4문장 내에서 합의/쟁점을 요약하고, 다음 단계의 책임과 속도를 명확히 합니다.
+        - 메시지는 4~6문장 내에서 합의/쟁점을 요약하고, 다음 단계의 책임과 속도를 명확히 합니다.
         - references 배열에는 이번 라운드에서 언급한 핵심 인용을 기록하고 stance 값을 정확히 지정하세요.
         - key_takeaway는 실행 책임자가 바로 이해할 수 있는 한 줄이어야 합니다.
+        - 대화 흐름을 유지하되, 주제와 instruction에 부합하는 실행 방안을 우선적으로 다룹니다.
         - 새로운 주장이 없다면 `"no_new_arguments"`를 true로 바꾸고 message를 짧게 유지합니다.
         - JSON 스키마는 아래 형식과 동일해야 합니다.
           {{
@@ -105,13 +112,15 @@ review_resolution:
     v1:
       template: |
         Final Alignment Round.
+        Topic: {topic}
+        Instruction: {instruction}
         You now have access to the synthesized round 3 perspectives for every panelist.
 
         {resolution_context}
 
         Provide your final stance that the observer should see. Focus on consensus signals, remaining disagreements, and concrete next steps.
         - If you truly have nothing to add beyond round 3, set `"no_new_arguments"` to `true` and keep the other fields concise.
-        - Otherwise, highlight what changed for you after seeing the other syntheses.
+        - Otherwise, 4문장 이상으로 동일 주제를 유지하며 다른 패널의 통찰을 반영해 달라진 판단을 설명하세요.
         - Your output must be in the specified JSON format.
         - The JSON schema you must adhere to is:
           {{

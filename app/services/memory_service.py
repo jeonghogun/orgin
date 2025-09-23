@@ -978,7 +978,7 @@ class MemoryService:
         )
 
         logger.info(f"Successfully promoted summary from sub-room {sub_room_id} to main-room {main_room_id} for user {user_id}.")
-        return summary
+        return summary.strip()
 
     async def record_review_outcome(
         self,

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { SSE } from 'sse.js';
@@ -46,6 +46,21 @@ const StreamingStatusIndicator = ({ status }) => {
       </div>
     </div>
   );
+};
+
+const formatFileSize = (bytes) => {
+  if (!Number.isFinite(bytes)) return '';
+  if (bytes === 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const size = bytes / 1024 ** index;
+  return `${size.toFixed(size >= 10 || index === 0 ? 0 : 1)} ${units[index]}`;
+};
+
+const isImageFile = (file) => {
+  if (!file) return false;
+  const type = typeof file === 'string' ? file : file.type;
+  return typeof type === 'string' && type.startsWith('image/');
 };
 
 const streamMessageApi = ({ roomId, content, onChunk, onIdReceived, onMeta }) =>
@@ -121,15 +136,6 @@ const streamMessageApi = ({ roomId, content, onChunk, onIdReceived, onMeta }) =>
     source.stream();
   });
 
-const uploadFileApi = async ({ roomId, file }) => {
-  const formData = new FormData();
-  formData.append('file', file);
-  const { data } = await apiClient.post(`/api/rooms/${roomId}/upload`, formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-  });
-  return data;
-};
-
 import { useChatInputState } from '../hooks/useChatInputState';
 import { ROOM_TYPES } from '../constants';
 
@@ -140,6 +146,9 @@ const ChatInput = ({ roomId, roomData, disabled = false }) => {
   const { showError } = useAppContext();
   const [isComposing, setIsComposing] = useState(false);
   const [streamStatus, setStreamStatus] = useState(createInitialStreamStatus());
+  const [pendingAttachments, setPendingAttachments] = useState([]);
+  const attachmentsRef = useRef([]);
+  const [isUploadingAttachments, setIsUploadingAttachments] = useState(false);
 
   const {
     mode,
@@ -156,6 +165,43 @@ const ChatInput = ({ roomId, roomData, disabled = false }) => {
   const isReviewRoomCreationActive = reviewRoomCreation?.active && reviewRoomCreation?.parentId === roomId;
   const isLocalCreationMode = mode !== 'default';
   const showCancelButton = isRoomCreationActiveForRoom || isReviewRoomCreationActive || isLocalCreationMode;
+
+  const resetAttachments = useCallback(() => {
+    setPendingAttachments((prev) => {
+      prev.forEach((attachment) => {
+        if (attachment?.previewUrl) {
+          URL.revokeObjectURL(attachment.previewUrl);
+        }
+      });
+      return [];
+    });
+  }, []);
+
+  const handleRemoveAttachment = useCallback((attachmentId) => {
+    setPendingAttachments((prev) => {
+      const target = prev.find((item) => item.id === attachmentId);
+      if (target?.previewUrl) {
+        URL.revokeObjectURL(target.previewUrl);
+      }
+      return prev.filter((item) => item.id !== attachmentId);
+    });
+  }, []);
+
+  useEffect(() => {
+    attachmentsRef.current = pendingAttachments;
+  }, [pendingAttachments]);
+
+  useEffect(() => () => {
+    attachmentsRef.current.forEach((attachment) => {
+      if (attachment?.previewUrl) {
+        URL.revokeObjectURL(attachment.previewUrl);
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    resetAttachments();
+  }, [roomId, resetAttachments]);
 
   const removePendingPromptMessage = useCallback(
     (overrideParentId, overrideMessageId) => {
@@ -187,6 +233,7 @@ const ChatInput = ({ roomId, roomData, disabled = false }) => {
       clearReviewRoomCreation();
     }
     resetState();
+    resetAttachments();
   }, [
     clearReviewRoomCreation,
     clearRoomCreation,
@@ -194,6 +241,7 @@ const ChatInput = ({ roomId, roomData, disabled = false }) => {
     isRoomCreationActiveForRoom,
     removePendingPromptMessage,
     resetState,
+    resetAttachments,
   ]);
 
   const createRoomMutation = useMutation({
@@ -281,16 +329,19 @@ const ChatInput = ({ roomId, roomData, disabled = false }) => {
     },
   });
 
-  const uploadMutation = useMutation({
-    mutationFn: uploadFileApi,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['messages', roomId] }),
-    onError: (err) => showError(err.response?.data?.detail || '파일 업로드에 실패했습니다.'),
-  });
-
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     const trimmed = inputValue.trim();
-    if (!trimmed || !roomId || streamMutation.isPending || disabled) return;
+    if ((!trimmed && pendingAttachments.length === 0) || !roomId || streamMutation.isPending || disabled || isUploadingAttachments) {
+      return;
+    }
+
+    if (pendingAttachments.length > 0 && (roomCreationRequest?.active || mode !== 'default')) {
+      showError('현재 단계에서는 파일을 전송할 수 없습니다. 일반 메시지 모드에서 다시 시도해주세요.');
+      return;
+    }
+
+    const baseContent = trimmed ? inputValue : '';
 
     const submitInteractiveReview = (parentId, promptText, promptMessageId) => {
       const isActive = reviewRoomCreation?.active && reviewRoomCreation.parentId === parentId;
@@ -360,17 +411,62 @@ const ChatInput = ({ roomId, roomData, disabled = false }) => {
         submitInteractiveReview(roomId, null);
         break;
       default:
+        let attachmentSegments = [];
+        if (pendingAttachments.length > 0) {
+          const attachmentsSnapshot = [...pendingAttachments];
+          setIsUploadingAttachments(true);
+          try {
+            const uploadedContents = [];
+            for (const attachment of attachmentsSnapshot) {
+              const formData = new FormData();
+              formData.append('file', attachment.file);
+              formData.append('attach_only', 'true');
+              const response = await apiClient.post(`/api/rooms/${roomId}/upload`, formData, {
+                headers: { 'Content-Type': 'multipart/form-data' },
+              });
+              if (response?.data?.content) {
+                uploadedContents.push(response.data.content);
+              }
+            }
+            attachmentSegments = uploadedContents;
+            resetAttachments();
+          } catch (error) {
+            console.error('Failed to upload attachment', error);
+            showError(error?.response?.data?.detail || '파일 업로드에 실패했습니다.');
+            setIsUploadingAttachments(false);
+            return;
+          } finally {
+            setIsUploadingAttachments(false);
+          }
+        }
+
+        const composedSegments = [];
+        if (baseContent) {
+          composedSegments.push(baseContent);
+        }
+        if (attachmentSegments.length > 0) {
+          composedSegments.push(attachmentSegments.join('\n\n'));
+        }
+        const finalContent = composedSegments.join('\n\n');
+        const messageTimestamp = Math.floor(Date.now() / 1000);
+
         // Optimistic updates for streaming chat
         const tempUserId = `temp-user-${Date.now()}`;
         const tempAssistantId = `temp-assistant-${Date.now()}`;
-        queryClient.setQueryData(['messages', roomId], (old) => [...(old || []), { message_id: tempUserId, role: 'user', content: inputValue, timestamp: Math.floor(Date.now() / 1000) }]);
-        queryClient.setQueryData(['messages', roomId], (old) => [...(old || []), { message_id: tempAssistantId, role: 'assistant', content: '', timestamp: Math.floor(Date.now() / 1000), isStreaming: true }]);
+        queryClient.setQueryData(['messages', roomId], (old) => [
+          ...(old || []),
+          { message_id: tempUserId, role: 'user', content: finalContent || baseContent, timestamp: messageTimestamp },
+        ]);
+        queryClient.setQueryData(['messages', roomId], (old) => [
+          ...(old || []),
+          { message_id: tempAssistantId, role: 'assistant', content: '', timestamp: messageTimestamp, isStreaming: true },
+        ]);
 
         setStreamStatus({ ...createInitialStreamStatus(), active: true, lastUpdated: Date.now() });
 
         streamMutation.mutate({
           roomId,
-          content: inputValue,
+          content: finalContent || baseContent,
           onChunk: (chunk) => queryClient.setQueryData(['messages', roomId], (old) => old.map((m) => m.message_id === tempAssistantId ? { ...m, content: m.content + chunk } : m)),
           onIdReceived: (finalId) => queryClient.setQueryData(['messages', roomId], (old) => old.map((m) => m.message_id === tempAssistantId ? { ...m, message_id: finalId, isStreaming: false } : m)),
           onMeta: (meta) => {
@@ -404,81 +500,148 @@ const ChatInput = ({ roomId, roomData, disabled = false }) => {
     }
   };
 
-  const handleFileSelect = (e) => {
-    const file = e.target.files[0];
-    if (file && roomId && !disabled) {
-      uploadMutation.mutate({ roomId, file });
+  const handleFileSelect = (event) => {
+    const files = Array.from(event.target.files || []);
+    event.target.value = '';
+
+    if (!files.length || !roomId || disabled || streamMutation.isPending || isUploadingAttachments) {
+      return;
     }
-    e.target.value = '';
+
+    if (roomCreationRequest?.active || mode !== 'default') {
+      showError('파일은 일반 채팅에서만 첨부할 수 있습니다.');
+      return;
+    }
+
+    const nextAttachments = files.map((file) => ({
+      id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      file,
+      name: file.name,
+      size: file.size,
+      type: file.type,
+      previewUrl: isImageFile(file) ? URL.createObjectURL(file) : null,
+    }));
+
+    setPendingAttachments((prev) => [...prev, ...nextAttachments]);
   };
 
   return (
     <div className="space-y-2">
       <StreamingStatusIndicator status={streamStatus} />
-      <div className="flex items-center gap-3">
-      {/* 파일 업로드 버튼 */}
-      <button
-        type="button"
-        onClick={() => fileInputRef.current?.click()}
-        disabled={disabled || uploadMutation.isPending || streamMutation.isPending}
-        className="p-2 text-muted hover:text-text transition-colors duration-150 focus-ring disabled:opacity-50 disabled:cursor-not-allowed"
-        title="파일 업로드"
-      >
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14m-7-7h14"/></svg>
-      </button>
-      
-      <input
-        type="file"
-        ref={fileInputRef}
-        onChange={handleFileSelect}
-        className="hidden"
-        accept="image/*,.pdf,.doc,.docx,.txt"
-      />
-
-      <form onSubmit={handleSubmit} className="flex-1 relative">
-        <textarea
-          key={`textarea-${roomId}-${roomCreationRequest?.active ? 'active' : 'inactive'}`}
-          value={inputValue}
-          onChange={handleInputChange}
-          onKeyDown={(e) => {
-            if (isComposing) {
-              return;
-            }
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              handleSubmit(e);
-            }
-          }}
-          onCompositionStart={() => setIsComposing(true)}
-          onCompositionEnd={() => setIsComposing(false)}
-          placeholder={(() => {
-            if (disabled) return "룸을 선택해주세요";
-            if (isRoomCreationActiveForRoom) return roomCreationRequest?.promptText || '';
-            if (isReviewRoomCreationActive) return "어떤 주제로 검토룸을 열까요?";
-            return "무엇이든 물어보세요...";
-          })()}
-          disabled={disabled || streamMutation.isPending || uploadMutation.isPending}
-          className="w-full px-4 py-3 pr-12 bg-panel-elevated border border-border rounded-lg text-text placeholder-muted focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent disabled:opacity-50 disabled:cursor-not-allowed resize-none"
-          rows={1}
-        />
-        {showCancelButton && (
-          <button
-            type="button"
-            onClick={handleCancelCreation}
-            className="absolute right-12 top-1/2 -translate-y-1/2 rounded-md px-2 py-1 text-xs font-medium text-muted hover:text-text focus-ring"
-          >
-            취소
-          </button>
-        )}
+      <div className="flex items-start gap-3">
         <button
-          type="submit"
-          disabled={!inputValue.trim() || !roomId || streamMutation.isPending || uploadMutation.isPending || disabled}
-          className="absolute right-3 top-1/2 -translate-y-1/2 p-2 bg-accent hover:bg-accent-hover text-white rounded-md transition-colors duration-150 focus-ring disabled:opacity-50 disabled:cursor-not-allowed"
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={disabled || isUploadingAttachments || streamMutation.isPending}
+          className="p-2 text-muted transition-colors duration-150 hover:text-text focus-ring disabled:cursor-not-allowed disabled:opacity-50"
+          title="파일 업로드"
         >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 2L11 13M22 2L15 22L11 13M22 2L2 9L11 13"/></svg>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14m-7-7h14"/></svg>
         </button>
-      </form>
-    </div>
+
+        <input
+          type="file"
+          ref={fileInputRef}
+          onChange={handleFileSelect}
+          className="hidden"
+          multiple
+          accept="image/*,.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.csv,.txt,.md,.zip"
+        />
+
+        <form onSubmit={handleSubmit} className="flex-1 space-y-2">
+          {pendingAttachments.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {pendingAttachments.map((attachment) => (
+                <div
+                  key={attachment.id}
+                  className="relative flex w-full max-w-xs items-start gap-3 rounded-lg border border-border bg-panel p-3 pr-9 text-left sm:max-w-[220px]"
+                >
+                  {attachment.previewUrl ? (
+                    <img
+                      src={attachment.previewUrl}
+                      alt={`${attachment.name} 미리보기`}
+                      className="h-12 w-12 rounded-md object-cover"
+                    />
+                  ) : (
+                    <div className="flex h-12 w-12 items-center justify-center rounded-md bg-panel-muted text-muted">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                    </div>
+                  )}
+                  <div className="min-w-0 space-y-1">
+                    <div className="truncate text-sm font-medium text-text" title={attachment.name}>
+                      {attachment.name}
+                    </div>
+                    <div className="text-xs text-muted">
+                      {formatFileSize(attachment.size)} · {attachment.type || '파일'}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveAttachment(attachment.id)}
+                    className="absolute right-2 top-2 text-muted transition-colors duration-150 hover:text-text focus-ring"
+                  >
+                    <span className="sr-only">첨부 삭제</span>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="relative">
+            <textarea
+              key={`textarea-${roomId}-${roomCreationRequest?.active ? 'active' : 'inactive'}`}
+              value={inputValue}
+              onChange={handleInputChange}
+              onKeyDown={(e) => {
+                if (isComposing) {
+                  return;
+                }
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSubmit(e);
+                }
+              }}
+              onCompositionStart={() => setIsComposing(true)}
+              onCompositionEnd={() => setIsComposing(false)}
+              placeholder={(() => {
+                if (disabled) return "룸을 선택해주세요";
+                if (isRoomCreationActiveForRoom) return roomCreationRequest?.promptText || '';
+                if (isReviewRoomCreationActive) return "어떤 주제로 검토룸을 열까요?";
+                return "무엇이든 물어보세요...";
+              })()}
+              disabled={disabled || streamMutation.isPending || isUploadingAttachments}
+              className="w-full resize-none rounded-lg border border-border bg-panel-elevated px-4 py-3 pr-12 text-text placeholder-muted focus:outline-none focus:ring-2 focus:ring-accent/50 disabled:cursor-not-allowed disabled:opacity-50"
+              rows={1}
+            />
+            {showCancelButton && (
+              <button
+                type="button"
+                onClick={handleCancelCreation}
+                className="absolute right-12 top-1/2 -translate-y-1/2 rounded-md px-2 py-1 text-xs font-medium text-muted hover:text-text focus-ring"
+              >
+                취소
+              </button>
+            )}
+            <button
+              type="submit"
+              disabled={(
+                !inputValue.trim() && pendingAttachments.length === 0
+              ) || !roomId || streamMutation.isPending || disabled || isUploadingAttachments}
+              className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md bg-accent p-2 text-white transition-colors duration-150 hover:bg-accent-hover focus-ring disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {isUploadingAttachments ? (
+                <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10" opacity="0.25" />
+                  <path d="M22 12a10 10 0 0 1-10 10" />
+                </svg>
+              ) : (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 2L11 13M22 2L15 22L11 13M22 2L2 9L11 13"/></svg>
+              )}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 };
