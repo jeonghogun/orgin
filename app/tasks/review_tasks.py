@@ -813,6 +813,9 @@ def run_rebuttal_turn(
 ):
     try:
         panel_configs = [ProviderPanelistConfig(**p) for p in successful_panelists]
+        review_meta = storage_service.get_review_meta(review_id)
+        topic = review_meta.topic if review_meta else ""
+        instruction = review_meta.instruction if review_meta else ""
         # Build custom prompts for each panelist so the second round references real quotes.
         all_results = []
         prompts_by_persona: Dict[str, str] = {}
@@ -830,6 +833,8 @@ def run_rebuttal_turn(
                 panelist=p_config.persona,
                 self_snapshot=self_snapshot,
                 others_digest=competitors_digest,
+                topic=topic,
+                instruction=instruction,
                 persona_trait=_persona_style(p_config.persona),
             )
 
@@ -936,6 +941,9 @@ def run_synthesis_turn(
 ):
     try:
         panel_configs = [ProviderPanelistConfig(**p) for p in successful_panelists]
+        review_meta = storage_service.get_review_meta(review_id)
+        topic = review_meta.topic if review_meta else ""
+        instruction = review_meta.instruction if review_meta else ""
         all_results = []
         prompts_by_persona: Dict[str, str] = {}
         for p_config in panel_configs:
@@ -951,6 +959,8 @@ def run_synthesis_turn(
                 "review_synthesis",
                 panelist=persona,
                 conversation_digest=conversation_digest,
+                topic=topic,
+                instruction=instruction,
                 persona_trait=_persona_style(persona),
             )
             prompts_by_persona[persona] = prompt
@@ -1054,6 +1064,9 @@ def run_resolution_turn(
 ):
     try:
         panel_configs = [ProviderPanelistConfig(**p) for p in successful_panelists]
+        review_meta = storage_service.get_review_meta(review_id)
+        topic = review_meta.topic if review_meta else ""
+        instruction = review_meta.instruction if review_meta else ""
         all_results: List[Tuple[ProviderPanelistConfig, Union[Tuple[Any, Dict[str, Any]], BaseException]]] = []
         prompts_by_persona: Dict[str, str] = {}
 
@@ -1063,6 +1076,8 @@ def run_resolution_turn(
                 "review_resolution",
                 panelist=p_config.persona,
                 resolution_context=resolution_context,
+                topic=topic,
+                instruction=instruction,
                 persona_trait=_persona_style(p_config.persona),
             )
             prompts_by_persona[p_config.persona] = prompt

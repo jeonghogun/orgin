@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 
-from fastapi import APIRouter, HTTPException, Request, Depends, File, UploadFile
+from fastapi import APIRouter, HTTPException, Request, Depends, File, UploadFile, Form
 from sse_starlette.sse import EventSourceResponse
 
 from app.api.dependencies import (
@@ -520,6 +520,7 @@ def _format_file_size(num_bytes: int) -> str:
 async def upload_file(
     room_id: str,
     file: UploadFile = File(...),
+    attach_only: bool = Form(False),
     current_user: dict = Depends(require_auth),
     storage_service: StorageService = Depends(get_storage_service),
     realtime_service: RealtimeService = Depends(get_realtime_service),
@@ -607,6 +608,9 @@ async def upload_file(
         timestamp=get_current_timestamp(),
         role="user",
     )
+
+    if attach_only:
+        return message
 
     try:
         storage_service.save_message(message)
