@@ -7,12 +7,18 @@ import apiClient from '../lib/apiClient';
 import { useAppContext } from '../context/AppContext';
 import useRealtimeChannel from '../hooks/useRealtimeChannel';
 import toast from 'react-hot-toast';
-import TriadDiscussionFeed from '../components/review/TriadDiscussionFeed';
+import ReviewChatThread from '../components/review/ReviewChatThread';
 import useRoomsQuery from '../hooks/useRoomsQuery';
 
 const REVIEW_STATUS_LABELS = {
   pending: '대기중',
   in_progress: '진행 중',
+  processing: '대화 준비 중',
+  conversation_started: '대화 시작',
+  conversation_midway: '중간 정리',
+  conversation_complete: '대화 마무리',
+  fallback_started: '대체 시나리오 시작',
+  fallback_finished: '대체 시나리오 종료',
   completed: '완료',
   failed: '실패',
 };
@@ -163,50 +169,30 @@ const Review = ({ reviewId, roomId, isSplitView = false, createRoomMutation }) =
     return '패널';
   }, []);
 
-  const extractRound = useCallback((message) => {
-    if (!message) return null;
-    if (typeof message.round === 'number') {
-      return message.round;
-    }
-    if (message.metadata?.round) {
-      return message.metadata.round;
-    }
-    const roundMatch = message.content?.match(/라운드\s*(\d+)/i) || message.content?.match(/Round\s*(\d+)/i);
-    if (roundMatch) {
-      return Number.parseInt(roundMatch[1], 10);
-    }
-    return null;
-  }, []);
-
   const normalizeMessage = useCallback((message) => {
     if (!message?.message_id) return null;
     const rawContent = message.content || '';
     let structuredPayload = null;
     let structuredPersona;
-    let structuredRound;
 
     try {
       const parsed = JSON.parse(rawContent);
       if (parsed && typeof parsed === 'object') {
-        if (parsed.persona) {
-          structuredPersona = parsed.persona;
-        }
-        if (typeof parsed.round === 'number') {
-          structuredRound = parsed.round;
-        }
         if (parsed.payload && typeof parsed.payload === 'object') {
           structuredPayload = parsed.payload;
+          if (typeof parsed.persona === 'string') {
+            structuredPersona = parsed.persona;
+          }
           if (!structuredPersona && typeof parsed.payload.persona === 'string') {
             structuredPersona = parsed.payload.persona;
           }
           if (!structuredPersona && typeof parsed.payload.panelist === 'string') {
             structuredPersona = parsed.payload.panelist;
           }
-          if (
-            structuredRound === undefined &&
-            typeof parsed.payload.round === 'number'
-          ) {
-            structuredRound = parsed.payload.round;
+        } else {
+          structuredPayload = parsed;
+          if (typeof parsed.persona === 'string') {
+            structuredPersona = parsed.persona;
           }
         }
       }
@@ -215,8 +201,6 @@ const Review = ({ reviewId, roomId, isSplitView = false, createRoomMutation }) =
     }
 
     const persona = structuredPersona || extractPersona(message);
-    const round =
-      typeof structuredRound === 'number' ? structuredRound : extractRound(message);
     const MAX_CONTENT_LENGTH = 8000;
     const isTrimmed = rawContent.length > MAX_CONTENT_LENGTH;
     const trimmedContent = isTrimmed ? `${rawContent.slice(0, MAX_CONTENT_LENGTH)}…` : rawContent;
@@ -225,12 +209,11 @@ const Review = ({ reviewId, roomId, isSplitView = false, createRoomMutation }) =
       ...message,
       content: trimmedContent,
       persona,
-      round,
       isTrimmed,
       structuredPayload,
       rawContent,
     };
-  }, [extractPersona, extractRound]);
+  }, [extractPersona]);
 
   const appendLiveMessage = useCallback((message) => {
     const normalized = normalizeMessage(message);
@@ -562,7 +545,7 @@ const Review = ({ reviewId, roomId, isSplitView = false, createRoomMutation }) =
             )}
           </section>
 
-          <TriadDiscussionFeed messages={combinedMessages} />
+          <ReviewChatThread messages={combinedMessages} />
 
           {parsedFinalReport && (
             <section className="rounded-card border border-border bg-panel p-6 space-y-4">

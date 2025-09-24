@@ -3,7 +3,7 @@ Service for managing LLM provider strategies from a configuration file.
 """
 import yaml
 import logging
-from typing import List, Optional, Dict, Any
+from typing import Iterable, List, Optional, Dict, Any
 from pydantic import BaseModel, Field, ValidationError
 
 logger = logging.getLogger(__name__)
@@ -54,6 +54,70 @@ class LLMStrategyService:
         if not self._config:
             return []
         return self._config.panelists
+
+    def _build_mock_panelists(self) -> List[ProviderPanelistConfig]:
+        """Return deterministic mock panelists when only the mock provider is available."""
+
+        return [
+            ProviderPanelistConfig(
+                provider="mock",
+                persona="GPT-4o (모의 패널)",
+                model="mock-conversation",
+                system_prompt=(
+                    "분석가의 시선으로 핵심 수치를 짚고 실행 플랜을 제안합니다."
+                ),
+                timeout_s=30,
+                max_retries=0,
+            ),
+            ProviderPanelistConfig(
+                provider="mock",
+                persona="Claude 3 Haiku (모의 패널)",
+                model="mock-conversation",
+                system_prompt=(
+                    "리스크와 거버넌스를 중시하며 균형감을 갖춘 조언을 제공합니다."
+                ),
+                timeout_s=30,
+                max_retries=0,
+            ),
+            ProviderPanelistConfig(
+                provider="mock",
+                persona="Gemini 1.5 Flash (모의 패널)",
+                model="mock-conversation",
+                system_prompt=(
+                    "확장 가능성과 실험을 강조하며 낙관적 관점을 유지합니다."
+                ),
+                timeout_s=30,
+                max_retries=0,
+            ),
+        ]
+
+    def get_panelists_for_providers(
+        self, provider_names: Iterable[str]
+    ) -> List[ProviderPanelistConfig]:
+        """Return panelist configs filtered to the requested providers.
+
+        If no default configuration matches but the deterministic mock provider is
+        available, we synthesise a trio of mock panelists so that the rest of the
+        review pipeline can proceed without falling back to a scripted transcript.
+        """
+
+        provider_list = [name for name in provider_names if name]
+        if not provider_list:
+            return self.get_default_panelists()
+
+        provider_set = {name.strip().lower() for name in provider_list if name}
+        if not provider_set:
+            return []
+
+        base_configs = self.get_default_panelists()
+        matched = [config for config in base_configs if config.provider in provider_set]
+        if matched:
+            return matched
+
+        if "mock" in provider_set:
+            return self._build_mock_panelists()
+
+        return []
 
 # Singleton instance for easy access
 llm_strategy_service = LLMStrategyService()

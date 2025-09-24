@@ -82,11 +82,16 @@ def _save_panelist_message(review_room_id: str, content: str, persona: str, roun
     except json.JSONDecodeError:
         wrapped_content = content
     else:
+        cleaned_payload: Any
+        if isinstance(parsed_payload, dict):
+            cleaned_payload = dict(parsed_payload)
+            cleaned_payload.pop("round", None)
+        else:
+            cleaned_payload = parsed_payload
         wrapped_content = json.dumps(
             {
                 "persona": persona,
-                "round": round_num,
-                "payload": parsed_payload,
+                "payload": cleaned_payload,
             },
             ensure_ascii=False,
         )
@@ -700,9 +705,17 @@ def run_initial_panel_turn(self: BaseTask, review_id: str, review_room_id: str, 
             else:
                 logger.info("Daily org token budget check skipped (Redis unavailable)")
 
-        panel_configs = llm_strategy_service.get_default_panelists()
         if panelists_override:
-            panel_configs = [p for p in panel_configs if p.provider in panelists_override]
+            panel_configs = llm_strategy_service.get_panelists_for_providers(panelists_override)
+        else:
+            panel_configs = llm_strategy_service.get_default_panelists()
+
+        if not panel_configs:
+            logger.error(
+                "No panel configurations available for providers: %s",
+                panelists_override or "default",
+            )
+            raise Ignore()
 
         try:
             storage_service.update_review(review_id, {"status": "in_progress"})

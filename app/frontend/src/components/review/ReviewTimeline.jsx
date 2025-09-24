@@ -4,9 +4,12 @@ const statusLabels = {
   created: '리뷰 요청 생성',
   pending: '대기 중',
   processing: '패널 초기 분석 중',
-  initial_turn_complete: '라운드 1 완료',
-  rebuttal_turn_complete: '라운드 2 완료',
-  synthesis_turn_complete: '라운드 3 완료',
+  initial_turn_complete: '초기 토론 완료',
+  rebuttal_turn_complete: '추가 논의 마무리',
+  synthesis_turn_complete: '요약 정리 완료',
+  conversation_started: '대화 시작',
+  conversation_midway: '대화 중간 체크',
+  conversation_complete: '대화 정리',
   no_new_arguments_stop: '추가 주장 없음으로 조기 종료',
   in_progress: '리뷰 진행 중',
   completed: '리뷰 완료',
@@ -71,7 +74,7 @@ const ReviewTimeline = ({ statusEvents = [], personaEvents = {} }) => {
                       <li key={event.id} className="text-sm text-muted">
                         <div className="absolute -left-2 top-1 h-3 w-3 rounded-full border border-accent bg-panel" aria-hidden />
                         <p className="font-medium text-text">
-                          {event.round ? `라운드 ${event.round}` : '응답'}
+                          {event.round ? `발언 #${event.round}` : '발언'}
                           <span className="ml-2 text-xs text-muted">{formatTimestamp(event.timestamp)}</span>
                         </p>
                         <p className="mt-1 text-xs leading-relaxed text-muted">

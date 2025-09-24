@@ -297,232 +297,153 @@ class ReviewService:
         self._log_status_event(review_id, "processing", timestamp=round_timestamp)
         round_timestamp += 1
 
-        panel_scripts = {
-            "GPT-4o": {
-                "round1": {
-                    "round": 1,
-                    "panelist": "GPT-4o",
-                    "message": (
-                        f"{topic}을(를) 두고만 있지 말고 30일 파일럿을 바로 띄워봅시다. 핵심 고객 200명을 묶어 빠르게 실험하면 시장 반응과 장애 요소를 동시에 확인할 수 있어요."
-                    ),
-                    "key_takeaway": "30일 파일럿으로 시장 반응을 빠르게 수집.",
-                    "references": [],
-                    "no_new_arguments": False,
-                },
-                "round2": {
-                    "round": 2,
-                    "panelist": "GPT-4o",
-                    "message": (
-                        "Claude 3 Haiku가 말한 체크리스트는 전적으로 동의합니다. 다만 Gemini 1.5 Flash가 제안한 사용자 확장은, 파일럿 품질 게이트를 먼저 통과한 뒤에 바로 붙여보죠. 실험 대시보드를 첫 주 안에 열어 투명하게 공유합시다."
-                    ),
-                    "key_takeaway": "통제 절차를 붙인 상태에서 속도를 유지해야 한다.",
-                    "references": [
-                        {
-                            "panelist": "Claude 3 Haiku",
-                            "round": 1,
-                            "quote": "통제 범위를 선명하게",
-                            "stance": "support",
-                        },
-                        {
-                            "panelist": "Gemini 1.5 Flash",
-                            "round": 1,
-                            "quote": "사용자 서브셋을 넓히자",
-                            "stance": "build",
-                        },
-                    ],
-                    "no_new_arguments": False,
-                },
-                "round3": {
-                    "round": 3,
-                    "panelist": "GPT-4o",
-                    "message": (
-                        "이제 모두 같은 그림을 그리네요. Claude 3 Haiku가 라운드 2에서 강조한 체크리스트 통과 기준을 각 단계 게이트로 두고, Gemini 1.5 Flash가 말한 실시간 피드백 스트림을 성공 판정 지표로 삼겠습니다. 이렇게 하면 30일 파일럿 후 60일 확장 검증으로 자연스럽게 넘어갈 수 있어요."
-                    ),
-                    "key_takeaway": "체크리스트와 피드백을 묶은 30일→60일 로드맵.",
-                    "references": [
-                        {
-                            "panelist": "Claude 3 Haiku",
-                            "round": 2,
-                            "quote": "체크리스트 없으면 리스크가 남는다",
-                            "stance": "support",
-                        },
-                        {
-                            "panelist": "Gemini 1.5 Flash",
-                            "round": 2,
-                            "quote": "실험 로그를 스트리밍하자",
-                            "stance": "build",
-                        },
-                    ],
-                    "no_new_arguments": False,
-                },
+        topic_label = (topic or "이 주제").strip()
+        instruction_hint = (instruction or "").strip()
+
+        conversation_script = [
+            {
+                "persona": "GPT-4o (모의 패널)",
+                "message": (
+                    f"{topic_label}에 대해 지금 얻은 정보로 보면, 실행 판단을 미룰 수 있는 여지가 많지 않습니다."
+                    " 우선 고객 행동 데이터를 세 갈래로 나눠 살피고, 일주일 안에 실험 가설을 검증할 수 있는 경량 대시보드를 열겠습니다. "
+                    f"{instruction_hint or '토론 지침'}의 취지를 살려 빠르게 정리하죠."
+                ),
+                "key_takeaway": "고객 데이터를 나눠 빠르게 검증 가능한 실험판을 만든다.",
+                "references": [],
             },
-            "Claude 3 Haiku": {
-                "round1": {
-                    "round": 1,
-                    "panelist": "Claude 3 Haiku",
-                    "message": (
-                        f"{topic}이(가) 흥미롭긴 하지만, 시작 전에 통제 경계를 먼저 그립시다. 데이터 사용 목적과 보안 요건을 명문화하지 않으면 초기에 얻은 신뢰를 잃을 수 있어요."
-                    ),
-                    "key_takeaway": "파일럿 전에 통제 경계와 감사 기준을 잠그자.",
-                    "references": [],
-                    "no_new_arguments": False,
-                },
-                "round2": {
-                    "round": 2,
-                    "panelist": "Claude 3 Haiku",
-                    "message": (
-                        "GPT-4o의 30일 타임라인은 좋지만, 법무·보안 검토 시간을 포함해야 합니다. Gemini 1.5 Flash가 말한 실험 대시보드를 감사 로그로 활용하면 속도와 투명성을 동시에 확보할 수 있겠네요."
-                    ),
-                    "key_takeaway": "속도를 인정하되 법무·보안 체크포인트는 반드시 유지.",
-                    "references": [
-                        {
-                            "panelist": "GPT-4o",
-                            "round": 1,
-                            "quote": "30일 파일럿",
-                            "stance": "build",
-                        },
-                        {
-                            "panelist": "Gemini 1.5 Flash",
-                            "round": 1,
-                            "quote": "실험 대시보드",
-                            "stance": "support",
-                        },
-                    ],
-                    "no_new_arguments": False,
-                },
-                "round3": {
-                    "round": 3,
-                    "panelist": "Claude 3 Haiku",
-                    "message": (
-                        "라운드 2에서 합의한 대시보드가 있으면 감사팀도 안심할 수 있겠습니다. GPT-4o가 제안한 30일→60일 구조에 동의하되, 각 단계 입구에서 법무·보안·데이터 담당자가 체크리스트를 승인하는 절차를 넣읍시다."
-                    ),
-                    "key_takeaway": "30일→60일 전환 시 감사 승인 게이트를 추가.",
-                    "references": [
-                        {
-                            "panelist": "GPT-4o",
-                            "round": 3,
-                            "quote": "30일 파일럿 후 60일 확장",
-                            "stance": "support",
-                        },
-                        {
-                            "panelist": "Gemini 1.5 Flash",
-                            "round": 2,
-                            "quote": "실험 대시보드를 감사 로그로",
-                            "stance": "build",
-                        },
-                    ],
-                    "no_new_arguments": False,
-                },
+            {
+                "persona": "Claude 3 Haiku (모의 패널)",
+                "message": (
+                    "속도를 내는 건 좋은데, 개인정보 사용과 외부 공유 범위를 먼저 확정해야 합니다."
+                    " GPT-4o가 말한 경량 대시보드를 감사 로그와 연동하면 속도와 신뢰를 동시에 챙길 수 있습니다."
+                ),
+                "key_takeaway": "속도를 유지하되 감사·보안 경계를 초기에 고정한다.",
+                "references": [
+                    {
+                        "panelist": "GPT-4o (모의 패널)",
+                        "quote": "일주일 안에 실험 가설 검증",
+                        "stance": "support",
+                    }
+                ],
             },
-            "Gemini 1.5 Flash": {
-                "round1": {
-                    "round": 1,
-                    "panelist": "Gemini 1.5 Flash",
-                    "message": (
-                        f"{topic}을(를) 활용하면 얼리어답터 그룹에서 얻은 피드백을 빠르게 제품 개선으로 돌릴 수 있어요. 실험을 세 단계로 나눠 각 단계마다 학습 목표를 정리해 두면 확장 타이밍을 스스로 증명할 수 있습니다."
-                    ),
-                    "key_takeaway": "세 단계 실험으로 학습과 확장을 동시에 설계.",
-                    "references": [],
-                    "no_new_arguments": False,
-                },
-                "round2": {
-                    "round": 2,
-                    "panelist": "Gemini 1.5 Flash",
-                    "message": (
-                        "GPT-4o의 속도 제안은 마음에 들어요. 다만 Claude 3 Haiku가 요구한 통제를 충족시키려면 실험 로그를 스트리밍으로 공유하고, 사용자 반응 하이라이트를 매주 시각화해 드리죠."
-                    ),
-                    "key_takeaway": "속도에 투명성을 얹어 모두가 안심하도록 만들자.",
-                    "references": [
-                        {
-                            "panelist": "GPT-4o",
-                            "round": 1,
-                            "quote": "빠르게 실험",
-                            "stance": "support",
-                        },
-                        {
-                            "panelist": "Claude 3 Haiku",
-                            "round": 1,
-                            "quote": "통제 경계를 선명하게",
-                            "stance": "build",
-                        },
-                    ],
-                    "no_new_arguments": False,
-                },
-                "round3": {
-                    "round": 3,
-                    "panelist": "Gemini 1.5 Flash",
-                    "message": (
-                        "두 분의 합의 덕분에 그림이 깔끔해졌네요. GPT-4o가 말한 30일 파일럿이 끝나면, Claude 3 Haiku가 요구한 승인 게이트를 통과한 뒤 다음 60일 동안 성장 지표를 확장 실험에 연결해보겠습니다."
-                    ),
-                    "key_takeaway": "승인 게이트 뒤에 성장 지표를 붙여 확장 속도를 유지.",
-                    "references": [
-                        {
-                            "panelist": "GPT-4o",
-                            "round": 2,
-                            "quote": "대시보드를 첫 주에 열자",
-                            "stance": "support",
-                        },
-                        {
-                            "panelist": "Claude 3 Haiku",
-                            "round": 3,
-                            "quote": "법무·보안 승인 게이트",
-                            "stance": "build",
-                        },
-                    ],
-                    "no_new_arguments": False,
-                },
+            {
+                "persona": "Gemini 1.5 Flash (모의 패널)",
+                "message": (
+                    "두 분의 의견을 묶어 보면, 베타 그룹을 두 겹으로 나눠 실험하면 어떨까요?"
+                    " 한쪽은 핵심 기능 반응을, 다른 쪽은 확장 아이디어를 검증하도록 설계하면 2주 안에 확장 타이밍을 가늠할 근거가 나올 겁니다."
+                ),
+                "key_takeaway": "베타 그룹을 이중으로 설계해 학습 범위를 넓힌다.",
+                "references": [
+                    {
+                        "panelist": "GPT-4o (모의 패널)",
+                        "quote": "실험 가설을 빠르게 검증",
+                        "stance": "build",
+                    },
+                    {
+                        "panelist": "Claude 3 Haiku (모의 패널)",
+                        "quote": "감사 로그와 연동",
+                        "stance": "support",
+                    },
+                ],
             },
+            {
+                "persona": "GPT-4o (모의 패널)",
+                "message": (
+                    "좋습니다. 그러면 1주차에는 핵심 지표를, 2주차에는 확장 아이디어를 검증하고 요약본을 같은 채널에 실시간으로 공유하겠습니다."
+                    " Claude가 요구한 통제 기준은 체크리스트 형태로 대시보드 첫 화면에 붙여두죠."
+                ),
+                "key_takeaway": "주차별 검증 목표와 통제 기준을 대시보드에 함께 노출.",
+                "references": [
+                    {
+                        "panelist": "Gemini 1.5 Flash (모의 패널)",
+                        "quote": "베타 그룹을 두 겹으로 나누자",
+                        "stance": "support",
+                    },
+                    {
+                        "panelist": "Claude 3 Haiku (모의 패널)",
+                        "quote": "감사 기준 고정",
+                        "stance": "build",
+                    },
+                ],
+            },
+            {
+                "persona": "Claude 3 Haiku (모의 패널)",
+                "message": (
+                    "그 구조라면 법무 검토도 병행할 수 있겠네요. 첫 주에는 데이터 사용 동의를 재확인하고, 둘째 주에는 확장 시나리오 별 리스크를 체크리스트로 정리하겠습니다."
+                    " 실험이 길어지지 않도록 의사결정 일정은 미리 공지하죠."
+                ),
+                "key_takeaway": "주차별 리스크 검토와 의사결정 일정을 선제적으로 공개.",
+                "references": [
+                    {
+                        "panelist": "GPT-4o (모의 패널)",
+                        "quote": "주차별 검증 목표",
+                        "stance": "support",
+                    }
+                ],
+            },
+            {
+                "persona": "Gemini 1.5 Flash (모의 패널)",
+                "message": (
+                    "마무리로, 실험 하이라이트를 주간 쇼트폼 리포트로 만들겠습니다. 데이터 지표와 이용자 코멘트를 한 화면에 보여주면 경영진도 빠르게 판단할 수 있을 거예요."
+                    " 이렇게 하면 충분히 합의가 되면 바로 실행으로 전환할 수 있습니다."
+                ),
+                "key_takeaway": "주간 하이라이트 리포트로 합의와 실행 전환을 가속.",
+                "references": [
+                    {
+                        "panelist": "Claude 3 Haiku (모의 패널)",
+                        "quote": "의사결정 일정 공지",
+                        "stance": "build",
+                    }
+                ],
+            },
+        ]
+
+        status_markers = {
+            1: "conversation_started",
+            3: "conversation_midway",
+            len(conversation_script): "conversation_complete",
         }
 
-        round_status = {
-            1: "initial_turn_complete",
-            2: "rebuttal_turn_complete",
-            3: "synthesis_turn_complete",
-        }
+        for index, entry in enumerate(conversation_script, start=1):
+            payload = {
+                "persona": entry["persona"],
+                "payload": {
+                    "panelist": entry["persona"],
+                    "message": entry["message"],
+                    "key_takeaway": entry["key_takeaway"],
+                    "references": entry.get("references", []),
+                    "no_new_arguments": entry.get("no_new_arguments", False),
+                },
+            }
 
-        for round_num in (1, 2, 3):
-            for persona, script in panel_scripts.items():
-                payload = {
-                    "persona": persona,
-                    "round": round_num,
-                    "payload": script[f"round{round_num}"],
-                }
-                message_content = json.dumps(payload, ensure_ascii=False, indent=2)
-                self._save_message_and_stream(
-                    review_id,
-                    review_room_id,
-                    message_content,
-                    timestamp=round_timestamp,
-                )
-                round_timestamp += 1
-
-            try:
-                self.storage.update_review(review_id, {"current_round": round_num})
-            except Exception as update_error:
-                logger.warning(
-                    "Failed to update current_round after round %s in mock review.",
-                    round_num,
-                    extra={"review_id": review_id, "error": str(update_error)},
-                )
-
-            status_label = round_status[round_num]
-            self._log_status_event(review_id, status_label, timestamp=round_timestamp)
+            message_content = json.dumps(payload, ensure_ascii=False)
+            self._save_message_and_stream(
+                review_id,
+                review_room_id,
+                message_content,
+                timestamp=round_timestamp,
+            )
             round_timestamp += 1
+
+            status_label = status_markers.get(index)
+            if status_label:
+                self._log_status_event(review_id, status_label, timestamp=round_timestamp)
+                round_timestamp += 1
 
         final_report = {
             "executive_summary": (
-                f"GPT-4o, Claude 3 Haiku, Gemini 1.5 Flash는 {topic}을 빠르게 실험하되 명확한 거버넌스와 단계적 확장을 병행하자는 방향으로 정렬했습니다."
+                f"패널들은 {topic_label} 실험을 빠르게 전개하되, 감사 가능한 투명성과 주차별 검증 목표를 병행해야 한다는 데 뜻을 모았습니다."
             ),
             "strongest_consensus": [
-                "베타 → 확장 검증 순으로 단계별 게이트를 운영한다.",
-                "데이터 거버넌스와 품질 체크리스트를 초기부터 준비해 투명하게 공유한다.",
+                "실험 대시보드에 검증 목표와 통제 기준을 함께 노출한다.",
+                "주간 리포트로 핵심 수치와 사용자 반응을 동시에 공유한다.",
             ],
             "remaining_disagreements": [
-                "확장 의사결정 타이밍과 투자 강도는 추가 합의가 필요합니다.",
+                "확장 단계에서 투자 강도를 어디까지 높일지는 추가 검토가 필요합니다.",
             ],
             "recommendations": [
-                "실험 로그와 감사 기록을 통합 대시보드로 공유하고 책임자를 지정한다.",
-                f"{topic} 관련 경영 리뷰를 60일째에 열어 투자/중단을 재평가한다.",
+                "베타 그룹을 이중으로 설계하고 의사결정 일정을 미리 공유한다.",
+                "감사 로그와 연동된 대시보드를 운영해 거버넌스를 선제적으로 확보한다.",
             ],
         }
 
@@ -643,7 +564,10 @@ class ReviewService:
                 )
 
                 review_id = generate_id()
-                instruction = "이 주제에 대해 최대 4 라운드에 걸쳐 심도 있게 토론하되, 추가 주장이 없으면 조기에 종료해주세요."
+                instruction = (
+                    "세 명의 패널이 하나의 단톡방에서 깊이 있게 토론하되,"
+                    " 충분한 합의가 이뤄지면 더 길게 늘리지 말고 정리하도록 요청했습니다."
+                )
                 review_meta = ReviewMeta(
                     review_id=review_id,
                     room_id=room_id,
@@ -667,8 +591,9 @@ class ReviewService:
 
                 trace_id = str(uuid.uuid4())
                 available_providers = llm_service.get_available_providers()
-                panel_configs = llm_strategy_service.get_default_panelists()
-                usable_panelists = [p for p in panel_configs if p.provider in available_providers]
+                usable_panelists = llm_strategy_service.get_panelists_for_providers(
+                    available_providers
+                )
 
                 if not usable_panelists:
                     await asyncio.to_thread(
@@ -687,12 +612,16 @@ class ReviewService:
                         trace_id=trace_id,
                     )
                 else:
+                    provider_names: List[str] = []
+                    for config in usable_panelists:
+                        if config.provider not in provider_names:
+                            provider_names.append(config.provider)
                     await self.start_review_process(
                         review_id=review_id,
                         review_room_id=room_id,
                         topic=generated_topic,
                         instruction=instruction,
-                        panelists=[p.provider for p in usable_panelists],
+                        panelists=provider_names,
                         trace_id=trace_id,
                     )
 
