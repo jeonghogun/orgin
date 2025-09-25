@@ -1,6 +1,5 @@
 import asyncio
 from types import SimpleNamespace
-from typing import Optional
 
 from app.models.schemas import Message
 from app.services.sub_room_context_service import (
@@ -21,51 +20,15 @@ class FakeStorage:
         self.saved_messages.append(message)
 
 
-class FakeLLM:
-    def __init__(self, responses=None, error: Optional[Exception] = None):
-        self._responses = responses or []
-        self._error = error
-        self.calls = []
-
-    async def invoke(self, **kwargs):
-        self.calls.append(kwargs)
-        if self._error:
-            raise self._error
-        if not self._responses:
-            raise AssertionError("No responses configured for FakeLLM")
-        return self._responses.pop(0), {"total_tokens": 1}
-
-
-class FakeMemory:
-    def __init__(self, profile=None, context=None):
-        self._profile = profile
-        self._context = context
-
-    async def get_user_profile(self, _user_id):
-        return self._profile
-
-    async def get_context(self, _room_id, _user_id):
-        return self._context
-
-
-class DummyModel:
-    def __init__(self, payload):
-        self._payload = payload
-
-    def model_dump_json(self):
-        return self._payload
-
-
-def test_initialize_sub_room_with_existing_topic(monkeypatch):
+def test_initialize_sub_room_with_related_context(monkeypatch):
     storage = FakeStorage(
         [
-            SimpleNamespace(role="user", content="Discussing Deep Learning"),
-            SimpleNamespace(role="assistant", content="Deep Learning is the topic"),
+            SimpleNamespace(role="user", content="Deep Learning의 윤리적 이슈를 논의해 봅시다."),
+            SimpleNamespace(role="assistant", content="좋습니다. 특히 deep learning 모델의 투명성을 짚어볼게요."),
+            SimpleNamespace(role="user", content="날씨도 좋고 집중하기 좋네요."),
         ]
     )
-    llm = FakeLLM(responses=["Summarized content"])
-    memory = FakeMemory()
-    service = SubRoomContextService(storage_service=storage, llm_service=llm, memory_service=memory)
+    service = SubRoomContextService(storage_service=storage)
 
     captured_alerts = []
 
@@ -88,18 +51,23 @@ def test_initialize_sub_room_with_existing_topic(monkeypatch):
         message = await service.initialize_sub_room(request)
 
         assert message is not None
-        assert message.content.startswith("이 세부룸은 메인룸의")
+        assert message.content.startswith("'Deep Learning' 세부룸이 열렸습니다.")
+        assert "윤리적 이슈" in message.content
+        assert "날씨" not in message.content, "Irrelevant chatter should be filtered out"
         assert storage.saved_messages, "Message should be persisted"
-        assert not captured_alerts, "No fallback alert should fire when summarization succeeds"
+        assert not captured_alerts, "No fallback alert should fire when highlights exist"
 
     asyncio.run(runner())
 
 
-def test_initialize_sub_room_fallback_on_llm_failure(monkeypatch):
-    storage = FakeStorage([])
-    llm = FakeLLM(error=RuntimeError("LLM unavailable"))
-    memory = FakeMemory(profile=DummyModel("{}"), context=DummyModel("{}"))
-    service = SubRoomContextService(storage_service=storage, llm_service=llm, memory_service=memory)
+def test_initialize_sub_room_fallback_when_no_related_context(monkeypatch):
+    storage = FakeStorage(
+        [
+            SimpleNamespace(role="user", content="오늘 할 일은 무엇일까요?"),
+            SimpleNamespace(role="assistant", content="파일 업로드가 완료되었습니다."),
+        ]
+    )
+    service = SubRoomContextService(storage_service=storage)
 
     captured_alerts = []
 
@@ -122,7 +90,8 @@ def test_initialize_sub_room_fallback_on_llm_failure(monkeypatch):
         message = await service.initialize_sub_room(request)
 
         assert message is not None
-        assert "자유롭게 대화를 이어가 주세요" in message.content
+        assert message.content.startswith("'Quantum' 세부룸이 열렸습니다.")
+        assert "가볍게" in message.content
         assert storage.saved_messages, "Fallback message should still be persisted"
         assert captured_alerts, "Alert must be sent when fallback is used"
 

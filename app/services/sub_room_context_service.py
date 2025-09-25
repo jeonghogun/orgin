@@ -4,16 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from dataclasses import dataclass
-from typing import Optional
+from typing import List, Optional
 
-from app.config.settings import settings
 from app.core.alerts import AlertSeverity, alert_manager
 from app.models.schemas import Message
-from app.services.llm_service import LLMService, get_llm_service
-from app.services.memory_service import MemoryService, get_memory_service
 from app.services.storage_service import StorageService, get_storage_service
-from app.utils.helpers import generate_id, get_current_timestamp, maybe_await
+from app.utils.helpers import generate_id, get_current_timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -32,18 +30,14 @@ class SubRoomContextService:
     def __init__(
         self,
         storage_service: Optional[StorageService] = None,
-        llm_service: Optional[LLMService] = None,
-        memory_service: Optional[MemoryService] = None,
     ) -> None:
         self._storage = storage_service or get_storage_service()
-        self._llm = llm_service or get_llm_service()
-        self._memory = memory_service or get_memory_service()
 
     async def initialize_sub_room(self, request: SubRoomContextRequest) -> Optional[Message]:
         """Generate and persist the initial message for a new sub room."""
-        conversation = await self._load_parent_conversation(request.parent_room_id)
+        parent_messages = await self._load_parent_messages(request.parent_room_id)
         try:
-            content = await self._build_initial_content(request, conversation)
+            content = self._build_initial_content(request, parent_messages)
         except Exception as exc:  # pragma: no cover - defensive log
             logger.warning(
                 "Sub room contextualisation failed for %s: %s",
@@ -79,7 +73,7 @@ class SubRoomContextService:
             return None
         return message
 
-    async def _load_parent_conversation(self, room_id: str) -> str:
+    async def _load_parent_messages(self, room_id: str) -> List[Message]:
         try:
             messages = await asyncio.to_thread(self._storage.get_messages, room_id)
         except Exception as fetch_error:
@@ -89,96 +83,65 @@ class SubRoomContextService:
                 fetch_error,
                 exc_info=True,
             )
-            return ""
+            return []
 
-        fragments = []
-        for message in messages:
-            role = getattr(message, "role", "")
-            content = getattr(message, "content", "")
-            if role and content:
-                fragments.append(f"{role}: {content}")
-        return "\n".join(fragments)
+        return list(messages)
 
-    async def _build_initial_content(
+    def _build_initial_content(
         self,
         request: SubRoomContextRequest,
-        conversation: str,
+        parent_messages: List[Message],
     ) -> Optional[str]:
-        if conversation and request.new_room_name.lower() in conversation.lower():
-            return await self._summarize_existing_topic(request, conversation)
-        return await self._compose_welcome_message(request)
+        highlights = self._extract_related_highlights(parent_messages, request.new_room_name)
+        if not highlights:
+            return None
 
-    async def _summarize_existing_topic(
-        self,
-        request: SubRoomContextRequest,
-        conversation: str,
-    ) -> Optional[str]:
-        system_prompt = (
-            "You are a helpful assistant. Summarize the following conversation, focusing on the key points, "
-            "facts, and decisions related to the topic. Provide a concise summary."
-        )
-        user_prompt = f"Topic: '{request.new_room_name}'\n\nConversation:\n{conversation}"
-
-        summary, _ = await self._llm.invoke(
-            provider_name="openai",
-            model=settings.LLM_MODEL,
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            request_id="sub-room-summary",
-        )
+        highlight_lines = "\n".join(f"- {item}" for item in highlights)
         return (
-            f"이 세부룸은 메인룸의 '{request.new_room_name}' 논의를 기반으로 생성되었습니다.\n\n"
-            f"**핵심 요약:**\n{summary}"
+            f"'{request.new_room_name}' 세부룸이 열렸습니다.\n"
+            "메인룸에서 이어질 만한 메모를 정리했어요:\n"
+            f"{highlight_lines}\n"
+            "이제 자유롭게 이야기를 이어가 주세요."
         )
 
-    async def _compose_welcome_message(self, request: SubRoomContextRequest) -> Optional[str]:
-        profile = await self._safe_profile(request.user_id)
-        context = await self._safe_room_context(request.parent_room_id, request.user_id)
-        system_prompt = (
-            "You are a helpful AI assistant starting a new conversation. Based on the user's profile and the "
-            "general context of the main room, generate a welcoming message to kick off the discussion about a new topic."
-        )
-        user_prompt = (
-            f"New Topic: '{request.new_room_name}'\n"
-            f"User Profile: {profile.model_dump_json() if profile else 'Not available'}\n"
-            f"Main Room Context: {context.model_dump_json() if context else 'Not available'}"
-        )
-        welcome_message, _ = await self._llm.invoke(
-            provider_name="openai",
-            model=settings.LLM_MODEL,
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            request_id="sub-room-welcome",
-        )
-        return welcome_message
+    def _extract_related_highlights(
+        self,
+        messages: List[Message],
+        topic: str,
+    ) -> List[str]:
+        if not messages or not topic:
+            return []
 
-    async def _safe_profile(self, user_id: str):
-        try:
-            return await maybe_await(self._memory.get_user_profile(user_id))
-        except Exception as profile_error:  # pragma: no cover - logging only
-            logger.warning(
-                "Failed to load user profile for %s: %s",
-                user_id,
-                profile_error,
-                exc_info=True,
-            )
-            return None
+        normalized_topic = topic.lower()
+        keywords = [
+            token
+            for token in re.split(r"[\s,.;!?()\[\]{}\-_/]+", normalized_topic)
+            if len(token) >= 2
+        ]
 
-    async def _safe_room_context(self, room_id: str, user_id: str):
-        try:
-            return await maybe_await(self._memory.get_context(room_id, user_id))
-        except Exception as context_error:  # pragma: no cover - logging only
-            logger.warning(
-                "Failed to load context for room %s and user %s: %s",
-                room_id,
-                user_id,
-                context_error,
-                exc_info=True,
-            )
-            return None
+        related: List[str] = []
+        for message in messages:
+            role = (getattr(message, "role", "") or "").lower()
+            if role not in {"user", "assistant"}:
+                continue
+            content = (getattr(message, "content", "") or "").strip()
+            if not content:
+                continue
+
+            lowered = content.lower()
+            if normalized_topic in lowered or any(keyword in lowered for keyword in keywords):
+                trimmed = content.replace("\n", " ").strip()
+                if len(trimmed) > 160:
+                    trimmed = trimmed[:157].rstrip() + "..."
+                related.append(trimmed)
+
+        # Provide the most recent highlights, keeping the room lightweight.
+        return related[-3:]
 
     def _fallback_message(self, topic: str) -> str:
-        return f"'{topic}' 주제의 세부룸이 생성되었습니다. 자유롭게 대화를 이어가 주세요!"
+        return (
+            f"'{topic}' 세부룸이 열렸습니다. 메인룸과는 독립적으로 가볍게 이야기를 시작해 보세요."
+        )
 
     async def _notify_fallback(self, request: SubRoomContextRequest) -> None:
         try:

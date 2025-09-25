@@ -4,8 +4,9 @@ Review Service - Orchestrates the multi-agent review process using Celery.
 import asyncio
 import json
 import logging
+import re
 import uuid
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 from unittest.mock import Mock
 
 from app.services.storage_service import StorageService, storage_service
@@ -111,6 +112,48 @@ class ReviewService:
                 exc_info=True,
             )
             return sanitized_fallback
+
+    def _prepare_conversation_excerpt(
+        self,
+        messages: List[Message],
+        topic: str,
+    ) -> Tuple[str, bool]:
+        """Extract topic-related utterances while skipping system summaries."""
+
+        if not messages:
+            return "", False
+
+        topic = (topic or "").strip()
+        normalized_topic = topic.lower()
+        keywords = [
+            token
+            for token in re.split(r"[\s,.;!?()\[\]{}\-_/]+", normalized_topic)
+            if len(token) >= 2
+        ]
+
+        relevant_lines: List[str] = []
+        for msg in messages:
+            user_id = getattr(msg, "user_id", "") or ""
+            content = (getattr(msg, "content", "") or "").strip()
+            role = getattr(msg, "role", "") or "unknown"
+
+            if not content:
+                continue
+            if user_id == "system" or "**핵심 요약:**" in content:
+                continue
+
+            formatted = f"{role}: {content}"
+            lowered = content.lower()
+            if normalized_topic and (
+                normalized_topic in lowered or any(keyword in lowered for keyword in keywords)
+            ):
+                relevant_lines.append(formatted)
+
+        if relevant_lines:
+            excerpt = "\n".join(relevant_lines[-10:])
+            return excerpt, True
+
+        return "", False
 
     async def start_review_process(
         self, review_id: str, review_room_id: str, topic: str, instruction: str, panelists: Optional[List[str]], trace_id: str
@@ -535,21 +578,23 @@ class ReviewService:
                 )
                 messages = []
 
-            full_conversation = ""
-            for msg in messages:
-                role = getattr(msg, "role", "unknown")
-                content = getattr(msg, "content", "")
-                full_conversation += f"{role}: {content}\n"
+            conversation_excerpt, has_related_context = self._prepare_conversation_excerpt(
+                messages,
+                topic,
+            )
 
-            context_sufficient = topic.lower() in full_conversation.lower()
-            if history and len(history) > 0:
+            context_sufficient = False
+            if has_related_context or (history and len(history) > 0):
+                context_sufficient = True
+            elif topic and len(topic) >= 5:
+                # The user provided a reasonably descriptive topic; respect it.
                 context_sufficient = True
 
             if context_sufficient:
                 generated_topic = await self._generate_review_topic_title(
                     llm_service,
                     fallback_topic=topic,
-                    conversation=full_conversation,
+                    conversation=conversation_excerpt,
                     history=history,
                 )
 
