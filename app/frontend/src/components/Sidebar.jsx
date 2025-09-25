@@ -98,11 +98,12 @@ const RoomItem = memo(({ room, level, onRenameClick, onDeleteClick, onCreateSubR
               {(room.type === ROOM_TYPES.MAIN || room.type === ROOM_TYPES.SUB) && (
                 <button 
                   onClick={room.type === ROOM_TYPES.MAIN ? handleAddSubRoom : handleAddReviewRoom}
-                  className="p-1 rounded-full hover:bg-white/10 text-muted hover:text-text"
+                  className="w-6 h-6 rounded-full hover:bg-white/10 text-muted hover:text-text flex items-center justify-center"
                   title={room.type === ROOM_TYPES.MAIN ? "세부룸 추가" : "검토룸 추가"}
                 >
-                  <svg viewBox="0 0 16 16" fill="currentColor" className="w-4 h-4">
-                    <path d="M8 0C3.6 0 0 3.6 0 8s3.6 8 8 8 8-3.6 8-8-3.6-8-8-8zm4 9H7v5H5V9H0V7h5V2h2v5h5v2z"/>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
                   </svg>
                 </button>
               )}

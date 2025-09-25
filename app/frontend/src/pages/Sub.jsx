@@ -54,7 +54,7 @@ const Sub = ({ roomId, onToggleReview, createRoomMutation }) => {
 
       {/* 채팅 입력창 - 화면 전체 하단에 고정 */}
       <div 
-        className="fixed bottom-0 border-t border-border bg-panel p-4 z-20 transition-all duration-150"
+        className="fixed bottom-0 border-t border-border bg-panel p-4 z-10 transition-all duration-150"
         style={{ 
           left: sidebarOpen ? '280px' : '0px', 
           right: '0px' 

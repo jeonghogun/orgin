@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 
 const RenameRoomModal = ({ room, isOpen, onClose, onSave }) => {
   const [name, setName] = useState('');
@@ -17,9 +18,9 @@ const RenameRoomModal = ({ room, isOpen, onClose, onSave }) => {
     }
   };
 
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex justify-center items-center">
-      <div className="bg-panel rounded-lg shadow-xl p-6 w-full max-w-md">
+  return createPortal(
+    <div className="fixed inset-0 bg-black bg-opacity-90 z-[999999] flex justify-center items-center">
+      <div className="bg-panel rounded-lg shadow-xl p-6 w-full max-w-md relative z-[9999999]">
         <h2 className="text-xl font-bold mb-4">룸 이름 변경</h2>
         <p className="text-muted mb-4">"{room.name}" 룸의 새로운 이름을 입력하세요.</p>
         <input
@@ -38,7 +39,8 @@ const RenameRoomModal = ({ room, isOpen, onClose, onSave }) => {
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };
 

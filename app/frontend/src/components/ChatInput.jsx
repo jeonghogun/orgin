@@ -533,10 +533,13 @@ const ChatInput = ({ roomId, roomData, disabled = false }) => {
           type="button"
           onClick={() => fileInputRef.current?.click()}
           disabled={disabled || isUploadingAttachments || streamMutation.isPending}
-          className="p-2 text-muted transition-colors duration-150 hover:text-text focus-ring disabled:cursor-not-allowed disabled:opacity-50"
+          className="flex items-center justify-center h-12 w-12 text-muted transition-colors duration-150 hover:text-text focus-ring disabled:cursor-not-allowed disabled:opacity-50"
           title="파일 업로드"
         >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14m-7-7h14"/></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5">
+            <line x1="12" y1="5" x2="12" y2="19"></line>
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+          </svg>
         </button>
 
         <input
@@ -611,7 +614,7 @@ const ChatInput = ({ roomId, roomData, disabled = false }) => {
                 return "무엇이든 물어보세요...";
               })()}
               disabled={disabled || streamMutation.isPending || isUploadingAttachments}
-              className="w-full resize-none rounded-lg border border-border bg-panel-elevated px-4 py-3 pr-12 text-text placeholder-muted focus:outline-none focus:ring-2 focus:ring-accent/50 disabled:cursor-not-allowed disabled:opacity-50"
+              className="w-full resize-none rounded-lg border border-border bg-panel-elevated px-4 py-3 pr-12 text-gray-900 placeholder-muted focus:outline-none focus:ring-2 focus:ring-accent/50 disabled:cursor-not-allowed disabled:opacity-50"
               rows={1}
             />
             {showCancelButton && (
