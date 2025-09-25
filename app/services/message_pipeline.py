@@ -11,7 +11,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+import json
 
 from sse_starlette.sse import EventSourceResponse
 
@@ -446,6 +449,14 @@ async def classify_intent(
     return intent, entities
 
 
+@dataclass
+class QuickIntentResult:
+    content: Optional[str] = None
+    tool: Optional[str] = None
+    data: Optional[Dict[str, Any]] = None
+    meta: Optional[Dict[str, Any]] = None
+
+
 async def build_quick_intent_response(
     *,
     intent: str,
@@ -455,7 +466,7 @@ async def build_quick_intent_response(
     user_fact_service: UserFactService,
     cache_service: CacheService,
     search_service: ExternalSearchService,
-) -> Optional[str]:
+) -> Optional[QuickIntentResult]:
     """Handle intents that can return an immediate deterministic answer."""
 
     if intent == "name_set":
@@ -477,29 +488,66 @@ async def build_quick_intent_response(
                     f"fact_query:{user_id}:{FactType.USER_NAME.value}"
                 )
             )
-            return f"알겠습니다, {name_value}님! 앞으로 그렇게 불러드릴게요."
-        return "이름을 정확히 알려주시면 기억해 둘게요."
+            return QuickIntentResult(
+                content=f"알겠습니다, {name_value}님! 앞으로 그렇게 불러드릴게요."
+            )
+        return QuickIntentResult(
+            content="이름을 정확히 알려주시면 기억해 둘게요."
+        )
 
     if intent == "name_get":
         profile = await maybe_await(user_fact_service.get_user_profile(user_id))
         if profile and getattr(profile, "name", None):
-            return f"당신의 이름은 '{profile.name}'으로 기억하고 있어요."
-        return "아직 이름을 모르고 있어요. 알려주시면 기억해 둘게요!"
+            return QuickIntentResult(
+                content=f"당신의 이름은 '{profile.name}'으로 기억하고 있어요."
+            )
+        return QuickIntentResult(
+            content="아직 이름을 모르고 있어요. 알려주시면 기억해 둘게요!"
+        )
 
     if intent == "time":
-        return search_service.now_kst()
+        return QuickIntentResult(content=search_service.now_kst())
 
     if intent == "weather":
         location = (
             entities.get("location") if isinstance(entities, dict) else None
         ) or "서울"
-        return search_service.weather(location)
+        cache_key = f"weather:{location.lower()}"
+        cached_report = await maybe_await(cache_service.get(cache_key))
+        weather_report: Optional[Dict[str, Any]] = None
+        if cached_report:
+            weather_report = cached_report
+        else:
+            weather_report = await maybe_await(search_service.weather(location))
+            if weather_report:
+                await maybe_await(
+                    cache_service.set(
+                        cache_key,
+                        weather_report,
+                        ttl=settings.WEATHER_CACHE_SECONDS,
+                    )
+                )
+
+        if not weather_report:
+            return QuickIntentResult(
+                content=f"'{location}' 날씨 정보를 가져오는 데 실패했어요. 잠시 후 다시 시도해 주세요."
+            )
+
+        return QuickIntentResult(
+            tool="weather",
+            data=weather_report,
+            meta={
+                "location": location,
+                "source": weather_report.get("source"),
+            },
+        )
 
     if intent == "wiki":
         topic = (
             entities.get("topic") if isinstance(entities, dict) else None
         ) or "인공지능"
-        return await maybe_await(search_service.wiki(topic))
+        wiki_summary = await maybe_await(search_service.wiki(topic))
+        return QuickIntentResult(content=wiki_summary)
 
     if intent == "search":
         query = (
@@ -507,13 +555,14 @@ async def build_quick_intent_response(
         ) or "AI"
         items = await maybe_await(search_service.search(query, 3))
         if items:
-            lines = [f"🔎 '{query}' 검색 결과:"]
-            for index, item in enumerate(items, 1):
-                lines.append(
-                    f"{index}. {item['title']}\n{item['link']}\n{item['snippet']}"
-                )
-            return "\n\n".join(lines)
-        return f"'{query}'에 대한 검색 결과를 찾을 수 없습니다."
+            return QuickIntentResult(
+                tool="search",
+                data={"query": query, "results": items},
+                meta={"source": "Google Custom Search"},
+            )
+        return QuickIntentResult(
+            content=f"'{query}'에 대한 검색 결과를 찾을 수 없습니다."
+        )
 
     return None
 
@@ -629,10 +678,10 @@ class MessagePipeline:
         current_room = await self._maybe_get_room(room_id)
         pending_action_key = f"pending_action:{room_id}"
         pending_action_facts = await maybe_await(
-            self.memory_service.get_user_facts(
-                user_id,
-                kind="conversation_state",
-                key=pending_action_key,
+            self.user_fact_service.list_facts(
+                user_id=user_id,
+                fact_type=None,
+                latest_only=True,
             )
         )
 
@@ -667,8 +716,17 @@ class MessagePipeline:
             search_service=self.search_service,
         )
 
-        if quick_response is not None:
-            ai_content = quick_response
+        if quick_response is not None and quick_response.content:
+            ai_content = quick_response.content
+        elif quick_response is not None and quick_response.tool:
+            ai_content = await self._compose_tool_based_response(
+                room_id=room_id,
+                message_id=str(message.message_id),
+                user_message=content,
+                tool_name=quick_response.tool,
+                tool_payload=quick_response.data or {},
+                tool_metadata=quick_response.meta or {},
+            )
         elif intent == "review":
             ai_content = await self._handle_review_intent(
                 current_room=current_room,
@@ -945,6 +1003,139 @@ class MessagePipeline:
             memory_context=memory_context,
         )
         return response
+
+    async def _compose_tool_based_response(
+        self,
+        *,
+        room_id: str,
+        message_id: str,
+        user_message: str,
+        tool_name: str,
+        tool_payload: Dict[str, Any],
+        tool_metadata: Dict[str, Any],
+    ) -> str:
+        location_hint = tool_metadata.get("location") or tool_payload.get("location")
+        start_detail = (
+            f"{location_hint}의 실시간 데이터를 확인하고 있어요."
+            if location_hint
+            else "실시간 데이터를 확인하고 있어요."
+        )
+        await self.realtime_service.publish(
+            room_id,
+            "meta",
+            {
+                "status": "tool_start",
+                "tool": tool_name,
+                "detail": start_detail,
+            },
+            meta={"message_id": message_id, "tool": tool_name, "stage": "start"},
+        )
+
+        await self.realtime_service.publish(
+            room_id,
+            "meta",
+            {
+                "status": "tool_data_ready",
+                "tool": tool_name,
+                "detail": "데이터 수집이 완료되었습니다. 답변을 정리하고 있어요.",
+            },
+            meta={"message_id": message_id, "tool": tool_name, "stage": "data_ready"},
+        )
+
+        provider_name, model_name, routing_reason = self.llm_service.select_model_for_task(
+            task=tool_name,
+            intent=tool_name,
+            metadata={**tool_metadata, "tool": tool_name},
+        )
+
+        system_prompt = (
+            "당신은 Origin이라는 AI 어시스턴트입니다. "
+            "사용자에게 따뜻하지만 전문적인 어조로 한국어 답변을 제공하세요. "
+            "도구에서 전달된 사실을 중심으로 핵심 정보를 구조화하고, "
+            "불확실한 값은 추정임을 밝히며 대안을 제시합니다. "
+            "응답 마지막에 `참고:` 라인을 추가해 사용한 데이터 출처나 기준을 요약하세요."
+        )
+
+        tool_json = json.dumps(tool_payload, ensure_ascii=False, indent=2)
+        metadata_json = (
+            json.dumps(tool_metadata, ensure_ascii=False, indent=2)
+            if tool_metadata
+            else "{}"
+        )
+
+        user_prompt_parts = [
+            f"사용자 질문:\n{user_message}",
+            f"도구 '{tool_name}' 결과(JSON):\n{tool_json}",
+            f"추가 메타데이터:\n{metadata_json}",
+            "위 정보를 기반으로 다음을 수행하세요:",
+            "1. 가장 중요한 사실 두세 가지를 우선 설명합니다.",
+            "2. 사용자가 바로 활용할 수 있는 조언이나 맥락을 덧붙입니다.",
+            "3. 모호하거나 데이터가 부족하면 그 이유와 대안을 안내합니다.",
+            "4. 마지막 줄에 `참고:` 형식으로 데이터 출처나 기준을 요약합니다.",
+        ]
+        user_prompt = "\n\n".join(user_prompt_parts)
+
+        try:
+            response_text, _ = await self.llm_service.invoke(
+                model=model_name,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                request_id=message_id,
+                provider_name=provider_name,
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to summarize %s tool output for message %s: %s",
+                tool_name,
+                message_id,
+                exc,
+                exc_info=True,
+            )
+            await self.realtime_service.publish(
+                room_id,
+                "meta",
+                {
+                    "status": "tool_failed",
+                    "tool": tool_name,
+                    "detail": "도구 결과를 요약하는 중 오류가 발생했습니다.",
+                },
+                meta={"message_id": message_id, "tool": tool_name, "stage": "failed"},
+            )
+            return "도구 결과를 요약하는 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요."
+
+        reference_tokens: List[str] = []
+        for value in [
+            tool_payload.get("source"),
+            tool_metadata.get("source"),
+            tool_metadata.get("location"),
+        ]:
+            if isinstance(value, str) and value:
+                reference_tokens.append(value)
+
+        if reference_tokens:
+            deduped = list(dict.fromkeys(reference_tokens))
+            reference_line = "참고: " + ", ".join(deduped)
+            if reference_line not in (response_text or ""):
+                response_text = f"{(response_text or '').strip()}\n\n{reference_line}".strip()
+
+        await self.realtime_service.publish(
+            room_id,
+            "meta",
+            {
+                "status": "tool_complete",
+                "tool": tool_name,
+                "detail": f"{tool_name} 데이터를 바탕으로 답변을 마쳤어요.",
+                "routing_reason": routing_reason,
+            },
+            meta={
+                "message_id": message_id,
+                "tool": tool_name,
+                "stage": "complete",
+                "routing_reason": routing_reason,
+            },
+        )
+
+        return response_text or ""
 
     async def _create_review_and_start(
         self,

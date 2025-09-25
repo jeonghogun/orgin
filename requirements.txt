@@ -37,6 +37,7 @@ cryptography==42.0.7
 
 # HTTP Client
 aiohttp==3.9.5
+httpx>=0.27,<0.28
 
 # Fact System V2 Dependencies
 prometheus-client==0.20.0

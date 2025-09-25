@@ -117,6 +117,10 @@ class Settings(BaseSettings):
     # --- External APIs ---
     GOOGLE_API_KEY: Optional[str] = None
     GOOGLE_CSE_ID: Optional[str] = None
+    WEATHER_API_BASE_URL: str = "https://api.open-meteo.com/v1/forecast"
+    WEATHER_GEOCODING_URL: str = "https://geocoding-api.open-meteo.com/v1/search"
+    WEATHER_CACHE_SECONDS: int = 900
+    WEATHER_DEFAULT_LANGUAGE: str = "ko"
 
     # --- Firebase Configuration ---
     FIREBASE_SERVICE_ACCOUNT_PATH: Optional[str] = None

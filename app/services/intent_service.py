@@ -247,22 +247,43 @@ class IntentService:
         return False
 
     def _extract_location_from_text(self, text: str) -> Optional[str]:
-        """Extract location from text using simple pattern matching"""
-        locations = [
-            "서울",
-            "부산",
-            "해운대",
-            "제주",
-            "강남",
-            "홍대",
-            "신촌",
-            "명동",
-            "동대문",
-        ]
-        text_lower = text.lower()
+        """Extract location from text using pattern matching and heuristics."""
 
-        for location in locations:
-            if location in text_lower:
-                return location
+        if not text:
+            return None
+
+        normalized = text.strip().lower()
+
+        direct_match = re.search(
+            r"([가-힣a-zA-Z]{2,12})(?:\s*(?:의)?\s*(?:날씨|기상|기온|온도|하늘|비|눈))",
+            normalized,
+        )
+        if direct_match:
+            candidate = direct_match.group(1).strip()
+            if candidate:
+                return candidate
+
+        tokens = re.split(r"\s|,", normalized)
+        for token in tokens:
+            cleaned = re.sub(r"[^가-힣a-zA-Z]", "", token)
+            if len(cleaned) >= 2 and cleaned.endswith("날씨") is False:
+                if cleaned in {
+                    "서울",
+                    "부산",
+                    "해운대",
+                    "제주",
+                    "강남",
+                    "홍대",
+                    "신촌",
+                    "명동",
+                    "동대문",
+                    "대구",
+                    "인천",
+                    "광주",
+                    "대전",
+                    "울산",
+                    "수원",
+                }:
+                    return cleaned
 
         return None

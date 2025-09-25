@@ -16,6 +16,7 @@ dependencies = [
     "openai==1.30.1",
     "firebase-admin==6.5.0",
     "aiohttp==3.9.5",
+    "httpx>=0.27,<0.28",
     "slowapi==0.1.9",
     "python-multipart==0.0.9",
 ]

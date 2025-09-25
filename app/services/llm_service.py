@@ -976,6 +976,88 @@ class LLMService:
         self._initialize_providers()
         return list(self.providers.keys())
 
+    def select_model_for_task(
+        self,
+        *,
+        task: str,
+        intent: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[str, str, str]:
+        """Choose the most suitable provider/model pair for the given task."""
+
+        self._initialize_providers()
+        available = self.get_available_providers()
+        if not available:
+            provider = "mock"
+            model = "mock-model"
+            reason = "No providers available; falling back to mock."
+            logger.info(
+                "LLM routing decision",
+                extra={
+                    "task": task,
+                    "intent": intent,
+                    "provider": provider,
+                    "model": model,
+                    "reason": reason,
+                },
+            )
+            return provider, model, reason
+
+        domain = "factual"
+        lowered_task = (task or "").lower()
+        if lowered_task in {"search", "wiki"}:
+            domain = "factual"
+        elif lowered_task in {"brainstorm", "story", "creative"}:
+            domain = "creative"
+        elif lowered_task in {"summary", "summarize"}:
+            domain = "summarization"
+        elif lowered_task in {"weather"}:
+            domain = "factual"
+
+        preference_map = {
+            "factual": ["openai", "claude", "gemini", "mock"],
+            "summarization": ["claude", "openai", "gemini", "mock"],
+            "creative": ["gemini", "openai", "claude", "mock"],
+        }
+        preferred_providers = preference_map.get(domain, [settings.LLM_PROVIDER] + available)
+
+        provider_model_defaults: Dict[str, str] = {
+            "openai": settings.LLM_MODEL or "gpt-4o-mini",
+            "claude": "claude-3-haiku-20240307",
+            "gemini": "gemini-1.5-pro-latest",
+            "mock": "mock-model",
+        }
+
+        selected_provider = None
+        for provider in preferred_providers:
+            if provider in self.providers:
+                selected_provider = provider
+                break
+
+        if not selected_provider:
+            selected_provider = available[0]
+
+        model = provider_model_defaults.get(selected_provider, settings.LLM_MODEL or "gpt-4o-mini")
+
+        reason = (
+            f"Domain '{domain}' task '{task}' routed to {selected_provider}/{model}."
+        )
+        if metadata:
+            reason += f" Metadata: {metadata}"
+
+        logger.info(
+            "LLM routing decision",
+            extra={
+                "task": task,
+                "intent": intent,
+                "provider": selected_provider,
+                "model": model,
+                "reason": reason,
+            },
+        )
+
+        return selected_provider, model, reason
+
     # --- ASYNC METHODS for FastAPI ---
     async def invoke(self, model: str, system_prompt: str, user_prompt: str, request_id: str, response_format: str = "text", provider_name: str = "openai") -> Tuple[str, Dict[str, Any]]:
         return await self.invoke_with_retry(provider_name, model, system_prompt, user_prompt, request_id, response_format)

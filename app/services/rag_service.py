@@ -177,7 +177,7 @@ class RAGService:
 
         prompt_parts = []
         if rag_context:
-            prompt_parts.append(f"Context from documents:\n{rag_context}")
+            prompt_parts.append(f"## 문서 컨텍스트\n{rag_context}")
 
         if isinstance(memory_context, ConversationContext):
             memory_lines: List[str] = []
@@ -186,10 +186,10 @@ class RAGService:
             if memory_context.key_topics:
                 memory_lines.extend(memory_context.key_topics)
             if memory_context.sentiment and memory_context.sentiment != "neutral":
-                memory_lines.append(f"Sentiment: {memory_context.sentiment}")
+                memory_lines.append(f"대화 분위기: {memory_context.sentiment}")
             if memory_lines:
                 formatted = "\n".join(f"- {line}" for line in memory_lines if line)
-                prompt_parts.append(f"Relevant memories:\n{formatted}")
+                prompt_parts.append(f"## 기억된 정보\n{formatted}")
         elif isinstance(memory_context, list) and memory_context:
             memory_lines: List[str] = []
             for item in memory_context:
@@ -217,11 +217,17 @@ class RAGService:
             filtered_lines = [line for line in memory_lines if line]
             if filtered_lines:
                 formatted = "\n".join(f"- {line}" for line in filtered_lines)
-                prompt_parts.append(f"Relevant memories:\n{formatted}")
+                prompt_parts.append(f"## 기억된 정보\n{formatted}")
 
-        prompt_parts.append(f"User message: {user_message}")
+        prompt_parts.append(f"## 사용자 질문\n{user_message}")
 
-        system_prompt = """You are a helpful AI assistant. Use the provided context and memories to give accurate, helpful responses. If the context doesn't contain relevant information, say so clearly."""
+        system_prompt = (
+            "당신은 Origin이라는 지식형 AI 어시스턴트입니다. "
+            "답변은 항상 한국어로 제공하고, 제공된 문맥과 기억을 최우선으로 활용하세요. "
+            "핵심 사실은 간결한 문장이나 불릿으로 정리하고, 출처가 불분명하면 그 사실을 명시합니다. "
+            "관련 정보가 없다면 모른다고 말하고, 대신 사용자가 다음에 취할 수 있는 행동이나 참고 경로를 제안하세요. "
+            "응답 마지막에 `참고:` 섹션을 추가해 사용한 문맥 또는 근거를 요약하세요."
+        )
         user_prompt = "\n\n".join(prompt_parts)
 
         return system_prompt, user_prompt
