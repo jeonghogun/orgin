@@ -20,6 +20,14 @@ class FakeStorage:
         self.saved_messages.append(message)
 
 
+class FakeMemoryService:
+    def __init__(self, profile=None):
+        self._profile = profile
+
+    async def get_user_profile(self, user_id):
+        return self._profile
+
+
 def test_initialize_sub_room_with_related_context(monkeypatch):
     storage = FakeStorage(
         [
@@ -28,7 +36,8 @@ def test_initialize_sub_room_with_related_context(monkeypatch):
             SimpleNamespace(role="user", content="날씨도 좋고 집중하기 좋네요."),
         ]
     )
-    service = SubRoomContextService(storage_service=storage)
+    profile = SimpleNamespace(name="미나", conversation_style="analytical", interests=["AI", "윤리"])
+    service = SubRoomContextService(storage_service=storage, memory_service=FakeMemoryService(profile))
 
     captured_alerts = []
 
@@ -51,9 +60,11 @@ def test_initialize_sub_room_with_related_context(monkeypatch):
         message = await service.initialize_sub_room(request)
 
         assert message is not None
-        assert message.content.startswith("'Deep Learning' 세부룸이 열렸습니다.")
+        assert message.content.startswith("'Deep Learning' 세부룸을 시작합니다.")
         assert "윤리적 이슈" in message.content
         assert "날씨" not in message.content, "Irrelevant chatter should be filtered out"
+        assert "사용자 페르소나 참고" in message.content
+        assert "미나" in message.content
         assert storage.saved_messages, "Message should be persisted"
         assert not captured_alerts, "No fallback alert should fire when highlights exist"
 
@@ -67,7 +78,7 @@ def test_initialize_sub_room_fallback_when_no_related_context(monkeypatch):
             SimpleNamespace(role="assistant", content="파일 업로드가 완료되었습니다."),
         ]
     )
-    service = SubRoomContextService(storage_service=storage)
+    service = SubRoomContextService(storage_service=storage, memory_service=FakeMemoryService())
 
     captured_alerts = []
 
@@ -91,7 +102,7 @@ def test_initialize_sub_room_fallback_when_no_related_context(monkeypatch):
 
         assert message is not None
         assert message.content.startswith("'Quantum' 세부룸이 열렸습니다.")
-        assert "가볍게" in message.content
+        assert "반가워요" in message.content
         assert storage.saved_messages, "Fallback message should still be persisted"
         assert captured_alerts, "Alert must be sent when fallback is used"
 

@@ -334,7 +334,16 @@ def authenticated_client(isolated_test_env, test_user_id: str):
 
     # Celery를 호출하지 않는 테스트용 ReviewService 대체
     class _NoOpReviewService:
-        async def start_review_process(self, review_id: str, review_room_id: str, topic: str, instruction: str, panelists, trace_id: str):
+        async def start_review_process(
+            self,
+            review_id: str,
+            review_room_id: str,
+            topic: str,
+            instruction: str,
+            panelists,
+            trace_id: str,
+            context_notes: Optional[str] = None,
+        ):
             # 리뷰를 즉시 완료 상태로 마킹: save_final_report는 JSON 직렬화와 status=completed을 처리
             storage = deps_module.get_storage_service()
             storage.save_final_report(review_id, {
@@ -678,7 +687,16 @@ def clean_authenticated_client(isolated_test_env, test_user_id: str):
     # ReviewService 오버라이드
     from app.services.review_service import ReviewService
     class _NoOpReviewService:
-        async def start_review_process(self, review_id: str, review_room_id: str, topic: str, instruction: str, panelists, trace_id: str):
+        async def start_review_process(
+            self,
+            review_id: str,
+            review_room_id: str,
+            topic: str,
+            instruction: str,
+            panelists,
+            trace_id: str,
+            context_notes: Optional[str] = None,
+        ):
             # 실제 Celery 태스크를 호출하지 않음 (실제 서비스 호출 방지)
             print(f"DEBUG: _NoOpReviewService.start_review_process called with review_id: {review_id}")
             # Review를 즉시 완료 상태로 변경

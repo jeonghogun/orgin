@@ -177,6 +177,7 @@ async def create_review_for_room(
         total_rounds=4,
         current_round=0,
         created_at=created_at,
+        completed_at=0,
     )
 
     try:

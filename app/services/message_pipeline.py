@@ -1162,6 +1162,7 @@ class MessagePipeline:
             instruction=instruction,
             total_rounds=4,
             created_at=get_current_timestamp(),
+            completed_at=0,
         )
         self.storage_service.save_review_meta(review_meta)
         await maybe_await(
@@ -1187,4 +1188,3 @@ class MessagePipeline:
         # This function currently mirrors the legacy placeholder implementation.
         _ = (room_id, user_id, self.llm_service)
         return None
-

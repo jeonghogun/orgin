@@ -61,7 +61,7 @@ def test_full_review_prompt_logic(
 
     assert mock_llm_instance.invoke_sync.call_count == 2
     prompt_r1 = mock_llm_instance.invoke_sync.call_args_list[0].kwargs["user_prompt"]
-    assert "Round 1 – Independent Perspective" in prompt_r1
+    assert "독립 발언 단계" in prompt_r1
     assert "JSON은 아래 스키마" in prompt_r1
 
     rebuttal_kwargs = mock_rebuttal_delay.call_args.kwargs
@@ -108,7 +108,7 @@ def test_full_review_prompt_logic(
 
     assert mock_llm_instance.invoke_sync.call_count == 2
     prompt_r2 = mock_llm_instance.invoke_sync.call_args_list[0].kwargs["user_prompt"]
-    assert "Round 2 – Response & Reflection (GPT-4o)" in prompt_r2
+    assert "자유 토론 단계" in prompt_r2
     assert "references 배열" in prompt_r2
 
     synthesis_kwargs = mock_synthesis_delay.call_args.kwargs
@@ -150,7 +150,7 @@ def test_full_review_prompt_logic(
 
     assert mock_llm_instance.invoke_sync.call_count == 2
     prompt_r3 = mock_llm_instance.invoke_sync.call_args.kwargs["user_prompt"]
-    assert "Round 3 – Joint Synthesis (GPT-4o)" in prompt_r3
+    assert "토론 심화 단계" in prompt_r3
     assert "세 패널이 함께" in prompt_r3
 
     resolution_kwargs = mock_resolution_delay.call_args.kwargs
@@ -181,9 +181,9 @@ def test_full_review_prompt_logic(
             trace_id="test-trace-id",
         )
 
-    assert mock_llm_instance.invoke_sync.call_count == 2
+    assert mock_llm_instance.invoke_sync.call_count == 1
     prompt_r4 = mock_llm_instance.invoke_sync.call_args.kwargs["user_prompt"]
-    assert "Final Alignment Round" in prompt_r4
+    assert "토론 요약 카드" in prompt_r4
 
     report_kwargs = mock_report_delay.call_args.kwargs
     panel_history_for_final = report_kwargs["panel_history"]

@@ -10,12 +10,25 @@ def build_intro_message(topic: str, instruction: str) -> str:
         "### 검토 세션 안내",
         "",
         f"**주제**: {topic}",
-        f"**지침**: {instruction}",
-        "",
-        "세 명의 패널이 하나의 단톡방에서 자연스럽게 의견을 주고받으며 합의를 만들어 갑니다.",
-        "답변은 요약 없이 본문 그대로 공유되며, 충분한 결론이 나면 더 길게 끌지 않고 정리합니다.",
-        "모든 발언은 시간순으로 기록되며 마지막에는 관찰자가 토론을 요약한 보고서를 제공합니다.",
     ]
+
+    instruction_text = (instruction or "").strip()
+    if instruction_text:
+        formatted_lines = [line.rstrip() for line in instruction_text.splitlines() if line.strip()]
+        if len(formatted_lines) == 1:
+            lines.append(f"**지침**: {formatted_lines[0]}")
+        else:
+            lines.append("**지침**:")
+            lines.extend(formatted_lines)
+
+    lines.extend(
+        [
+            "",
+            "세 명의 패널이 하나의 단톡방에서 자연스럽게 의견을 주고받으며 합의를 만들어 갑니다.",
+            "답변은 요약 없이 본문 그대로 공유되며, 충분한 결론이 나면 더 길게 끌지 않고 정리합니다.",
+            "모든 발언은 시간순으로 기록되며 마지막에는 관찰자가 토론을 요약한 보고서를 제공합니다.",
+        ]
+    )
     return "\n".join(lines)
 
 
@@ -55,4 +68,3 @@ def build_final_report_message(topic: str, final_report: Dict[str, Any]) -> str:
             sections.extend(["", formatted])
 
     return "\n".join(sections)
-

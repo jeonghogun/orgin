@@ -1,10 +1,12 @@
-import React from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import RoomHeader from '../components/RoomHeader';
 import MessageList from '../components/MessageList';
 import ChatInput from '../components/ChatInput';
 import { useQuery } from '@tanstack/react-query';
 import apiClient from '../lib/apiClient';
 import { useAppContext } from '../context/AppContext';
+import toast from 'react-hot-toast';
+import ExportRoomModal from '../components/modals/ExportRoomModal';
 
 const Sub = ({ roomId, onToggleReview, createRoomMutation }) => {
   const { sidebarOpen } = useAppContext();
@@ -20,6 +22,66 @@ const Sub = ({ roomId, onToggleReview, createRoomMutation }) => {
     enabled: !!roomId,
   });
 
+  const [isExportModalOpen, setExportModalOpen] = useState(false);
+
+  const handleExport = useCallback(async ({ format = 'json', includeInstructions = false }) => {
+    if (!roomId) {
+      toast.error('내보낼 세부 룸을 찾을 수 없습니다.');
+      return;
+    }
+
+    try {
+      const response = await apiClient.get(`/api/rooms/${roomId}/export`, {
+        params: {
+          format,
+          include_instructions: includeInstructions,
+        },
+        responseType: 'blob',
+      });
+
+      const contentDisposition = response.headers?.['content-disposition'] || '';
+      const match = contentDisposition.match(/filename=\"?([^\";]+)\"?/i);
+      const fallbackExtension = format === 'markdown' ? 'md' : 'json';
+      const filename = match ? match[1] : `export_room_${roomId}.${fallbackExtension}`;
+
+      const contentType = response.headers?.['content-type'] || (format === 'markdown' ? 'text/markdown' : 'application/json');
+      const blob = response.data instanceof Blob ? response.data : new Blob([response.data], { type: contentType });
+      const downloadUrl = window.URL.createObjectURL(blob);
+
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(downloadUrl);
+
+      toast.success('내보내기 파일 다운로드를 시작했습니다.');
+    } catch (error) {
+      const detail = error?.response?.data?.detail || error.message || '내보내기 중 오류가 발생했습니다.';
+      toast.error(detail);
+    }
+  }, [roomId]);
+
+  const headerActions = useMemo(() => {
+    if (!roomData) {
+      return [];
+    }
+
+    return [
+      {
+        label: '검토 시작',
+        onClick: () => onToggleReview(roomData),
+        variant: 'primary',
+      },
+      {
+        label: '내보내기',
+        onClick: () => setExportModalOpen(true),
+        variant: 'secondary',
+      }
+    ];
+  }, [onToggleReview, roomData]);
+
   return (
     <div className="flex flex-col h-full bg-bg relative overflow-hidden">
       {/* 헤더 - 고정 */}
@@ -28,16 +90,7 @@ const Sub = ({ roomId, onToggleReview, createRoomMutation }) => {
           title={roomData?.name || "세부 룸"}
           subtitle={roomData?.description || "세부 대화"}
           showBackButton={true}
-          actions={
-            roomData && (
-              <button
-                onClick={() => onToggleReview(roomData)}
-                className="btn-primary text-body px-4 py-2 rounded-button"
-              >
-                검토 시작
-              </button>
-            )
-          }
+          actions={headerActions}
         />
       </div>
 
@@ -68,6 +121,15 @@ const Sub = ({ roomId, onToggleReview, createRoomMutation }) => {
             />
           </div>
         </div>
+
+      <ExportRoomModal
+        isOpen={isExportModalOpen}
+        onClose={() => setExportModalOpen(false)}
+        onConfirm={(options) => {
+          setExportModalOpen(false);
+          handleExport(options);
+        }}
+      />
     </div>
   );
 };

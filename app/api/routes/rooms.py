@@ -32,7 +32,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["rooms"])
 
 
-def _format_export_as_markdown(export_data: ExportData) -> str:
+def _format_export_as_markdown(
+    export_data: ExportData,
+    include_instructions: bool = False,
+) -> str:
     """Helper function to format export data as a Markdown string."""
     lines = []
     lines.append(f"# Export for Room: {export_data.room_name} ({export_data.room_id})")
@@ -64,6 +67,14 @@ def _format_export_as_markdown(export_data: ExportData) -> str:
             else:
                 for step in review.next_steps:
                     lines.append(f"  - {step}")
+            if include_instructions:
+                lines.append("#### 지침")
+                instruction_text = (review.instruction or "").strip()
+                if instruction_text:
+                    for line in instruction_text.splitlines():
+                        lines.append(line)
+                else:
+                    lines.append("_지침이 제공되지 않았습니다._")
             lines.append("")
 
     return "\n".join(lines)
@@ -306,6 +317,10 @@ def export_room_data(
     room_id: str,
     user_info: Dict[str, str] = AUTH_DEPENDENCY,
     format: Literal["json", "markdown"] = Query("json", description="The desired export format."),
+    include_instructions: bool = Query(
+        False,
+        description="Whether to include review instructions in the export output.",
+    ),
 ):
     """Export room data, including chat history and all review summaries."""
     if not user_info or "user_id" not in user_info:
@@ -352,6 +367,7 @@ def export_room_data(
                 created_at=review.created_at,
                 final_summary=summary,
                 next_steps=next_steps,
+                instruction=review.instruction if include_instructions else None,
             )
         )
 
@@ -364,7 +380,9 @@ def export_room_data(
     )
 
     if format == "markdown":
-        markdown_content = _format_export_as_markdown(export_data)
+        markdown_content = _format_export_as_markdown(
+            export_data, include_instructions=include_instructions
+        )
         return Response(
             content=markdown_content,
             media_type=None,
@@ -374,7 +392,12 @@ def export_room_data(
             },
         )
 
-    return JSONResponse(content=export_data.model_dump())
+    return JSONResponse(
+        content=export_data.model_dump(exclude_none=True),
+        headers={
+            "Content-Disposition": f"attachment; filename=export_room_{room_id}.json",
+        },
+    )
 
 
 class CreateReviewRoomInteractiveRequest(BaseModel):

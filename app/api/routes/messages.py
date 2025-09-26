@@ -54,6 +54,7 @@ from app.services.file_validation_service import (
 from app.services.cloud_storage_service import get_cloud_storage_service
 from app.services.message_pipeline import (
     MessagePipeline,
+    QuickIntentResult,
     build_fact_query_response,
     build_fact_query_success_response,
     build_quick_intent_response,
@@ -66,6 +67,55 @@ from app.services.message_pipeline import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="", tags=["messages"])
+
+# --- QuickIntentResult Processing Helper ---
+
+async def _process_quick_intent_result(
+    quick_result: QuickIntentResult,
+    room_id: str,
+    user_id: str,
+    storage_service: StorageService,
+    memory_service: Optional[MemoryService] = None,
+    background_tasks: Optional[BackgroundTaskService] = None,
+    realtime_service: Optional[RealtimeService] = None,
+) -> EventSourceResponse:
+    """Process QuickIntentResult and return appropriate response."""
+    
+    if quick_result.content:
+        # Simple content response
+        return await stream_immediate_response(
+            room_id=room_id,
+            user_id=user_id,
+            storage_service=storage_service,
+            content=quick_result.content,
+            memory_service=memory_service,
+            background_tasks=background_tasks,
+            realtime_service=realtime_service,
+        )
+    elif quick_result.tool:
+        # Tool-based response - create a simple message for now
+        # This is a simplified version of the tool response
+        tool_content = f"도구 '{quick_result.tool}'를 사용하여 응답을 준비했습니다."
+        return await stream_immediate_response(
+            room_id=room_id,
+            user_id=user_id,
+            storage_service=storage_service,
+            content=tool_content,
+            memory_service=memory_service,
+            background_tasks=background_tasks,
+            realtime_service=realtime_service,
+        )
+    else:
+        # Fallback
+        return await stream_immediate_response(
+            room_id=room_id,
+            user_id=user_id,
+            storage_service=storage_service,
+            content="응답을 처리하는 중입니다.",
+            memory_service=memory_service,
+            background_tasks=background_tasks,
+            realtime_service=realtime_service,
+        )
 
 # --- V2 Fact Extraction/Retrieval Helpers ---
 
@@ -293,11 +343,11 @@ async def send_message_stream(
     )
 
     if direct_response is not None:
-        return await stream_immediate_response(
+        return await _process_quick_intent_result(
+            quick_result=direct_response,
             room_id=room_id,
             user_id=user_id,
             storage_service=storage_service,
-            content=direct_response,
             memory_service=memory_service,
             background_tasks=background_tasks,
             realtime_service=realtime_service,

@@ -2,19 +2,19 @@ import React, { useMemo } from 'react';
 
 const ROUND_LABELS = {
   1: {
-    title: '라운드 1 — 독립 관점',
+    title: '1단계 — 독립 관점',
     description: '각 패널이 자신의 시각을 자유롭게 펼칩니다.',
   },
   2: {
-    title: '라운드 2 — 상호 검토',
+    title: '2단계 — 상호 검토',
     description: '다른 패널의 주장에 공감하거나 반박하며 논지를 다듬습니다.',
   },
   3: {
-    title: '라운드 3 — 공동 정리',
+    title: '3단계 — 공동 정리',
     description: '합의와 남은 쟁점을 정리하며 실행 초안을 맞춥니다.',
   },
   4: {
-    title: '라운드 4 — 최종 정렬',
+    title: '최종 단계 — 요약 정리',
     description: '합의 사항과 다음 단계를 명확하게 정리합니다.',
   },
 };
@@ -160,13 +160,13 @@ const TriadDiscussionFeed = ({ messages = [] }) => {
       <header className="space-y-1">
         <h2 className="text-h2 text-text">세 패널의 라이브 토론</h2>
         <p className="text-sm text-muted">
-          복잡한 타임라인 대신, 라운드별로 세 패널이 어떤 이야기를 주고받았는지 바로 확인할 수 있습니다.
+          복잡한 타임라인 대신, 단계별로 세 패널이 어떤 이야기를 주고받았는지 바로 확인할 수 있습니다.
         </p>
       </header>
 
       {rounds.map(({ roundNumber, entries }) => {
         const meta = ROUND_LABELS[roundNumber] || {
-          title: `라운드 ${roundNumber}`,
+          title: `토론 단계 ${roundNumber}`,
           description: '',
         };
 
@@ -219,9 +219,9 @@ const TriadDiscussionFeed = ({ messages = [] }) => {
                                 <span className="rounded-full border border-border/60 px-2 py-0.5 text-[11px] font-medium text-muted">
                                   {stanceLabel[ref.stance] || '참조'}
                                 </span>
-                                <span className="text-sm text-muted">
-                                  {ref.panelist} · R{ref.round}{ref.quote ? ` — “${ref.quote.trim()}”` : ''}
-                                </span>
+              <span className="text-sm text-muted">
+                {ref.panelist} · 단계 {ref.round}{ref.quote ? ` — “${ref.quote.trim()}”` : ''}
+              </span>
                               </li>
                             ))}
                           </ul>

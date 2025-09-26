@@ -57,6 +57,14 @@ class StorageService:
         if not self.db_encryption_key:
             raise ValueError("DB_ENCRYPTION_KEY not found for StorageService.")
 
+    @staticmethod
+    def _normalise_review_row(row: Dict[str, Any]) -> Dict[str, Any]:
+        """Provide default primitives for nullable review fields."""
+        normalised = dict(row)
+        if normalised.get("completed_at") is None:
+            normalised["completed_at"] = 0
+        return normalised
+
     # Room operations
     def create_room(
         self,
@@ -223,8 +231,18 @@ class StorageService:
     def save_review_meta(self, review_meta: ReviewMeta) -> None:
         """Save review metadata to the database."""
         query = """
-            INSERT INTO reviews (review_id, room_id, topic, instruction, status, total_rounds, current_round, created_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO reviews (
+                review_id,
+                room_id,
+                topic,
+                instruction,
+                status,
+                total_rounds,
+                current_round,
+                created_at,
+                completed_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         params = (
             review_meta.review_id,
@@ -235,6 +253,7 @@ class StorageService:
             review_meta.total_rounds,
             review_meta.current_round,
             review_meta.created_at,
+            review_meta.completed_at or 0,
         )
         self.db.execute_update(query, params)
 
@@ -262,7 +281,7 @@ class StorageService:
             return None
 
         # The DB doesn't have 'started_at' or 'failed_panels'. Pydantic will use defaults.
-        return ReviewMeta(**result[0])
+        return ReviewMeta(**self._normalise_review_row(result[0]))
 
     def get_review_meta_by_room_id(self, room_id: str) -> Optional[ReviewMeta]:
         """Get the latest review for a given room_id from the database."""
@@ -288,7 +307,7 @@ class StorageService:
         if not result:
             return None
 
-        return ReviewMeta(**result[0])
+        return ReviewMeta(**self._normalise_review_row(result[0]))
 
     def get_reviews_by_room(self, room_id: str) -> List[ReviewMeta]:
         """Get all reviews for a given room and its child review rooms."""
@@ -310,7 +329,7 @@ class StorageService:
         """
         params = (room_id, room_id)
         results = self.db.execute_query(query, params)
-        return [ReviewMeta(**row) for row in results]
+        return [ReviewMeta(**self._normalise_review_row(row)) for row in results]
 
     def get_full_reviews_by_room(self, room_id: str) -> List[ReviewFull]:
         """Get all reviews for a given room, including the final_report."""
@@ -323,7 +342,7 @@ class StorageService:
         """
         params = (room_id, room_id)
         results = self.db.execute_query(query, params)
-        return [ReviewFull(**row) for row in results]
+        return [ReviewFull(**self._normalise_review_row(row)) for row in results]
 
     def update_review(self, review_id: str, review_data: Dict[str, Any]) -> None:
         """Update review metadata in the database safely."""

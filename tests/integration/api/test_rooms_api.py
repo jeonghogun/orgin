@@ -47,10 +47,13 @@ class TestRoomsAPI:
         # 2. Export the data
         response = authenticated_client.get(f"/api/rooms/{room_id}/export")
         assert response.status_code == 200
+        assert "attachment" in response.headers["content-disposition"]
         data = response.json()
         assert data["room_id"] == room_id
         assert len(data["messages"]) > 0
         assert data["messages"][0]["content"] == "Export this message"
+        if data["reviews"]:
+            assert all("instruction" not in review for review in data["reviews"])
 
     def test_file_upload_creates_message(self, authenticated_client: TestClient):
         """Uploading a file should create a persisted chat message with a download link."""

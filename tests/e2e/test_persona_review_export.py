@@ -97,9 +97,22 @@ async def test_persona_review_export_e2e(authenticated_client: TestClient):
     assert "This is the executive summary." in exported_review["final_summary"]
     assert "Alternative 1" in exported_review["next_steps"]
     assert "Final Recommendation: adopt" in exported_review["next_steps"]
+    assert "instruction" not in exported_review
+
+    response_json_with_instructions = authenticated_client.get(
+        f"/api/rooms/{sub_room['room_id']}/export",
+        params={"format": "json", "include_instructions": True},
+    )
+    assert response_json_with_instructions.status_code == 200
+    export_with_instructions = response_json_with_instructions.json()
+    review_with_instructions = export_with_instructions["reviews"][0]
+    assert review_with_instructions["instruction"] == "Analyze the impact."
 
     # Test Markdown export
-    response_md = authenticated_client.get(f"/api/rooms/{sub_room['room_id']}/export?format=markdown")
+    response_md = authenticated_client.get(
+        f"/api/rooms/{sub_room['room_id']}/export",
+        params={"format": "markdown", "include_instructions": True},
+    )
     assert response_md.status_code == 200
     assert response_md.headers["content-type"] == "text/markdown"
     assert f"export_room_{sub_room['room_id']}.md" in response_md.headers["content-disposition"]
@@ -111,6 +124,8 @@ async def test_persona_review_export_e2e(authenticated_client: TestClient):
     assert "This is the executive summary." in markdown_content
     assert "- Alternative 1" in markdown_content
     assert "- Final Recommendation: adopt" in markdown_content
+    assert "#### 지침" in markdown_content
+    assert "Analyze the impact." in markdown_content
 
     # Cleanup dependency override
     app.dependency_overrides = {}

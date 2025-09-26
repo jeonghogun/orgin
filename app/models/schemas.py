@@ -63,7 +63,7 @@ class ReviewMeta(BaseModel):
     created_at: int
     started_at: Optional[int] = None
     completed_at: Optional[int] = None
-    failed_panels: List[str] = []
+    failed_panels: List[str] = Field(default_factory=list)
 
 
 class ReviewFull(ReviewMeta):
@@ -78,6 +78,7 @@ class ExportableReview(BaseModel):
     created_at: int
     final_summary: str
     next_steps: List[str]
+    instruction: Optional[str] = None
 
 
 class PanelReport(BaseModel):

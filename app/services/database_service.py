@@ -9,6 +9,7 @@ from psycopg2.pool import SimpleConnectionPool
 from psycopg2.extensions import connection, cursor as CursorClass
 
 from app.core.secrets import SecretProvider
+from app.core.errors import AppError
 from app.models.schemas import Message
 from app.utils.helpers import generate_id
 from pgvector.psycopg2 import register_vector
@@ -42,7 +43,7 @@ class DatabaseService:
                 raise ValueError("DB_ENCRYPTION_KEY not found.")
 
         self._apply_test_overrides()
-        
+        self._fallback_attempted = False
         self.pool: Optional[SimpleConnectionPool] = None
 
     def _apply_test_overrides(self) -> None:
@@ -75,9 +76,52 @@ class DatabaseService:
 
         self.database_url = urlunparse(parsed._replace(netloc=netloc))
 
+    def _rewrite_database_url(
+        self,
+        *,
+        host: Optional[str] = None,
+        port: Optional[str] = None,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+        database: Optional[str] = None,
+    ) -> None:
+        """Rewrite the connection string with the provided host/port overrides."""
+
+        parsed = urlparse(self.database_url)
+        userinfo, at, hostport = parsed.netloc.rpartition("@")
+        current_host, _, current_port = hostport.partition(":")
+
+        current_username, _, current_password = userinfo.partition(":") if at else ("", "", "")
+
+        new_host = host or current_host
+        new_port = port or current_port
+        new_username = username if username is not None else current_username
+        new_password = password if password is not None else current_password
+
+        host_segment = new_host
+        if new_port:
+            host_segment = f"{host_segment}:{new_port}"
+
+        if new_username or new_password:
+            user_segment = new_username or ""
+            if new_password:
+                user_segment = f"{user_segment}:{new_password}"
+            netloc = f"{user_segment}@{host_segment}"
+        elif at:
+            netloc = f"{userinfo}@{host_segment}"
+        else:
+            netloc = host_segment
+
+        path = parsed.path
+        if database:
+            path = f"/{database}"
+
+        self.database_url = urlunparse(parsed._replace(netloc=netloc, path=path))
+
     def _get_or_create_pool(self) -> SimpleConnectionPool:
         """Lazily creates and returns the connection pool."""
         if self.pool is None:
+            original_db_name = urlparse(self.database_url).path.lstrip("/") or None
             try:
                 self.pool = SimpleConnectionPool(
                     minconn=5,
@@ -87,7 +131,109 @@ class DatabaseService:
                 logger.info("Database connection pool created successfully on first use.")
             except psycopg2.OperationalError as e:
                 logger.error(f"Failed to create database connection pool: {e}")
-                raise
+
+                should_retry_with_fallback = not self._fallback_attempted and (
+                    "could not translate host name" in str(e).lower()
+                    or "connection refused" in str(e).lower()
+                )
+
+                if should_retry_with_fallback:
+                    self._fallback_attempted = True
+                    fallback_url = os.getenv("DEV_DATABASE_URL")
+                    fallback_host = os.getenv("DEV_DB_FALLBACK_HOST", "localhost")
+                    fallback_port = os.getenv("DEV_DB_FALLBACK_PORT", "5432")
+                    fallback_user = os.getenv("DEV_DB_FALLBACK_USER")
+                    fallback_password = os.getenv("DEV_DB_FALLBACK_PASSWORD")
+                    fallback_db = os.getenv("DEV_DB_FALLBACK_NAME") or original_db_name
+
+                    logger.warning(
+                        "Retrying database connection using fallback configuration (host=%s, port=%s).",
+                        fallback_host,
+                        fallback_port,
+                    )
+
+                    if fallback_url:
+                        self.database_url = fallback_url
+                    else:
+                        self._rewrite_database_url(
+                            host=fallback_host,
+                            port=fallback_port,
+                            username=fallback_user,
+                            password=fallback_password,
+                            database=fallback_db,
+                        )
+
+                    secondary_error: Optional[BaseException] = None
+                    try:
+                        self.pool = SimpleConnectionPool(
+                            minconn=5,
+                            maxconn=20,
+                            dsn=self.database_url
+                        )
+                        logger.info(
+                            "Fallback database connection pool created successfully (%s:%s).",
+                            fallback_host,
+                            fallback_port,
+                        )
+                    except psycopg2.OperationalError as fallback_error:
+                        logger.error(
+                            "Fallback database connection attempt failed: %s",
+                            fallback_error,
+                        )
+                        secondary_error = fallback_error
+                        if not fallback_url:
+                            secondary_user = os.getenv("DEV_DB_SECONDARY_USER", "postgres")
+                            secondary_password = os.getenv("DEV_DB_SECONDARY_PASSWORD", "")
+
+                            logger.warning(
+                                "Attempting secondary fallback using user '%s'.",
+                                secondary_user,
+                            )
+                            self._rewrite_database_url(
+                                host=fallback_host,
+                                port=fallback_port,
+                                username=secondary_user,
+                                password=secondary_password,
+                                database=fallback_db,
+                            )
+                            try:
+                                self.pool = SimpleConnectionPool(
+                                    minconn=5,
+                                    maxconn=20,
+                                    dsn=self.database_url
+                                )
+                                logger.info(
+                                    "Secondary fallback database connection established (user=%s).",
+                                    secondary_user,
+                                )
+                                secondary_error = None
+                            except psycopg2.OperationalError as secondary_exc:
+                                logger.error(
+                                    "Secondary fallback database connection attempt failed: %s",
+                                    secondary_exc,
+                                )
+                                secondary_error = secondary_exc
+
+                        if secondary_error:
+                            raise AppError(
+                                code="DATABASE_UNAVAILABLE",
+                                message=(
+                                    "Local database connection failed. "
+                                    "Please ensure PostgreSQL is running or set DEV_DATABASE_URL/DEV_DB_FALLBACK_* environment variables."
+                                ),
+                                status_code=503,
+                                details={"error": str(secondary_error)},
+                            )
+                else:
+                    raise AppError(
+                        code="DATABASE_UNAVAILABLE",
+                        message=(
+                            "Database connection failed. Please verify DATABASE_URL configuration "
+                            "or provide DEV_DATABASE_URL for local development."
+                        ),
+                        status_code=503,
+                        details={"error": str(e)},
+                    )
         return self.pool
 
     def _clear_test_data(self, conn: connection) -> None:

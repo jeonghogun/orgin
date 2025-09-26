@@ -2,15 +2,15 @@ import React, { useMemo } from 'react';
 
 const ROUND_DETAILS = {
   1: {
-    title: '라운드 1 — 독립 관점',
+    title: '1단계 — 독립 관점',
     description: '각 모델이 자신의 시각으로 주제를 제시합니다.',
   },
   2: {
-    title: '라운드 2 — 상호 검토',
+    title: '2단계 — 상호 검토',
     description: '다른 패널 발언을 인용하며 찬반과 보완을 주고받습니다.',
   },
   3: {
-    title: '라운드 3 — 공동 정리',
+    title: '3단계 — 공동 정리',
     description: '합의와 쟁점을 조율하며 실행안을 다듬습니다.',
   },
 };
@@ -172,7 +172,7 @@ const DiscussionStoryboard = ({ messages = [] }) => {
           if (!ref) return null;
           const stanceStyle = STANCE_STYLES[ref.stance] || STANCE_STYLES.default;
           const quote = ref.quote ? `“${truncate(ref.quote, 80)}”` : '';
-          const roundInfo = Number.isFinite(ref.round) ? ` 라운드 ${ref.round}` : '';
+          const roundInfo = Number.isFinite(ref.round) ? ` ${ref.round}단계` : '';
           return (
             <li key={`ref-${idx}`} className={`flex flex-wrap items-center gap-2 ${align === 'right' ? 'justify-end' : ''}`}>
               <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${stanceStyle.className}`}>
@@ -191,14 +191,14 @@ const DiscussionStoryboard = ({ messages = [] }) => {
       <header className="mb-6 space-y-1">
         <h2 className="text-h2 text-text">토론 스토리보드</h2>
         <p className="text-sm text-muted">
-          JSON 메시지를 채팅 말풍선으로 해석해, 세 패널이 실제로 대화하는 흐름을 담았습니다. 라운드 구획은 타임라인으로, 발언은 실시간 대화처럼 이어집니다.
+          JSON 메시지를 채팅 말풍선으로 해석해, 세 패널이 실제로 대화하는 흐름을 담았습니다. 토론 단계는 타임라인으로, 발언은 실시간 대화처럼 이어집니다.
         </p>
       </header>
 
       <div className="space-y-10">
         {rounds.map((round) => {
           const roundInfo = ROUND_DETAILS[round] || {
-            title: `라운드 ${round}`,
+            title: `${round}단계`,
             description: '토론 내용을 확인하세요.',
           };
           const entries = roundGroups.get(round) || [];
@@ -236,7 +236,7 @@ const DiscussionStoryboard = ({ messages = [] }) => {
                       <div className={`flex flex-col gap-2 ${align === 'right' ? 'items-end' : 'items-start'} max-w-3xl`}>
                         <div className={`flex flex-wrap items-center gap-2 ${align === 'right' ? 'flex-row-reverse justify-end' : ''}`}>
                           <p className="text-sm font-semibold text-text">{persona}</p>
-                          <span className="text-xs text-muted">라운드 {round}</span>
+                          <span className="text-xs text-muted">{round}단계</span>
                           {timestamp && (
                             <time className="text-xs text-muted" dateTime={String(timestamp)}>
                               {formatTimestamp(timestamp)}

@@ -1077,13 +1077,19 @@ def run_resolution_turn(
 ):
     try:
         panel_configs = [ProviderPanelistConfig(**p) for p in successful_panelists]
+        if not panel_configs:
+            logger.error("No panel configurations available for resolution turn on review %s", review_id)
+            raise Ignore()
+
+        summary_panel_config = panel_configs[0]
+        target_panel_configs = [summary_panel_config]
         review_meta = storage_service.get_review_meta(review_id)
         topic = review_meta.topic if review_meta else ""
         instruction = review_meta.instruction if review_meta else ""
         all_results: List[Tuple[ProviderPanelistConfig, Union[Tuple[Any, Dict[str, Any]], BaseException]]] = []
         prompts_by_persona: Dict[str, str] = {}
 
-        for p_config in panel_configs:
+        for p_config in target_panel_configs:
             resolution_context = _build_resolution_context(panel_history, p_config.persona)
             prompt = prompt_service.get_prompt(
                 "review_resolution",
