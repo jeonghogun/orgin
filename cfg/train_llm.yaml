@@ -1,0 +1,4 @@
+learning_rate: 0.0005
+epochs: 1
+dry_run: true
+artifact_mode: use-existing

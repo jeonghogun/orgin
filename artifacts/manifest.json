@@ -1,0 +1,23 @@
+{
+  "version": "0.9.0",
+  "generated": "2025-10-17T00:00:00Z",
+  "artifacts": [
+    {
+      "phase": "P0-P28",
+      "name": "legacy_artifacts_placeholder",
+      "path": "PLACEHOLDER",
+      "sha256": null,
+      "size": 0,
+      "purpose": "Placeholder entry until legacy artifacts are migrated.",
+      "status": "planned"
+    }
+  ],
+  "summary_table": [
+    {
+      "phase": "P0-P28",
+      "count": 0,
+      "status": "planned",
+      "notes": "Populate with actual artifacts when available."
+    }
+  ]
+}

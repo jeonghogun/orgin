@@ -1,0 +1,3 @@
+max_requests: 1000
+use_cache: true
+sleep: 0.0
