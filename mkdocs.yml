@@ -1,0 +1,17 @@
+site_name: SEMM Documentation
+site_description: "Structure-Embedded Meaning Modeling"
+repo_url: https://github.com/jeonghogun/lineweave
+theme:
+  name: material
+nav:
+  - Home: docs/index.md
+  - Artifacts: docs/artifacts.md
+  - Phases:
+      - P0–P4: docs/phases/P0-P4.md
+      - P5–P10: docs/phases/P5-P10.md
+      - P11–P16: docs/phases/P11-P16.md
+      - P18–P23: docs/phases/P18-P23.md
+      - P24–P28: docs/phases/P24-P28.md
+      - P30–P39: docs/phases/P30-P39.md
+  - Tables Index: docs/tables.md
+  - Release Notes: RELEASE_NOTES.md

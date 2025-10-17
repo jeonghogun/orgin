@@ -16,3 +16,4 @@ opentelemetry-exporter-otlp-proto-http==1.24.0
 
 # --- Prompt Management ---
 PyYAML==6.0.1
+numpy==1.26.4
